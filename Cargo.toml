@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/proxy-wasm-host"]
+exclude = ["crates/test-guests"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/ethanhann/proxy-wasm-host"
+authors = ["Ethan Hann"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+must_use_candidate = "allow"
