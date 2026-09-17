@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use proxy_wasm_host::abi::AbiVersion;
 use proxy_wasm_host::abi::v0_2_1::types::{Action, LogLevel, MapType, Status};
-use proxy_wasm_host::abi::v0_2_1::{ContextId, Guest, HostCall, StreamHost};
+use proxy_wasm_host::abi::v0_2_1::{ContextId, Guest, HostCall, Plugin, StreamHost};
 use proxy_wasm_host::codec::pairs::PairVisitor;
 use proxy_wasm_host::runtime::{Engine, HostServices, Limits, LogSink, Module};
 use proxy_wasm_host::{Error, HeaderMap, NotAllowed, VecHeaderMap};
@@ -92,20 +92,26 @@ struct Lifecycle {
     sink: Arc<Sink>,
     root: Option<ContextId>,
     stream: Option<ContextId>,
+    plugin: Plugin,
 }
 
 impl Lifecycle {
     fn new(bytes: &[u8]) -> Self {
+        Self::configured(bytes, Vec::new(), Plugin::new())
+    }
+
+    fn configured(bytes: &[u8], vm_configuration: Vec<u8>, plugin: Plugin) -> Self {
         let engine = Engine::new().unwrap();
         let module = Module::new(&engine, bytes).unwrap();
         let sink = Arc::new(Sink::default());
-        let services = HostServices::new(sink.clone());
+        let services = HostServices::new(sink.clone()).with_vm_configuration(vm_configuration);
         let guest = Guest::new(&engine, &module, services, &Limits::default()).unwrap();
         Self {
             guest,
             sink,
             root: None,
             stream: None,
+            plugin,
         }
     }
 
@@ -113,8 +119,8 @@ impl Lifecycle {
     fn start_root(&mut self) -> Result<(ContextId, bool, bool), Error> {
         let mut scope = self.guest.enter_root();
         let root = scope.on_context_create(None)?;
-        let started = scope.on_vm_start(root, 0)?;
-        let configured = scope.on_configure(root, 0)?;
+        let started = scope.on_vm_start(root)?;
+        let configured = scope.on_configure(root, self.plugin.clone())?;
         self.root = Some(root);
         Ok((root, started, configured))
     }
@@ -126,7 +132,10 @@ impl Lifecycle {
     }
 
     fn through_stream(bytes: &[u8]) -> Self {
-        let mut lifecycle = Self::new(bytes);
+        Self::through_stream_of(Self::new(bytes))
+    }
+
+    fn through_stream_of(mut lifecycle: Self) -> Self {
         lifecycle.start_root().unwrap();
         lifecycle.create_stream().unwrap();
         lifecycle
@@ -266,5 +275,30 @@ fn a_refused_write_ends_the_stream_of_the_rust_sdk_guest() {
     assert_eq!(
         request.headers.0.pairs(),
         vec![(b"seed".to_vec(), b"1".to_vec())]
+    );
+}
+
+#[test]
+fn the_lifecycle_survives_a_vm_and_a_plugin_configuration() {
+    // Arrange
+    let plugin = Plugin::new()
+        .with_name(b"add-header".to_vec())
+        .with_configuration(br#"{"header":"Wasm-Context"}"#.to_vec());
+    let configured = Lifecycle::configured(RUST_SDK, b"vm bytes".to_vec(), plugin);
+    let mut lifecycle = Lifecycle::through_stream_of(configured);
+
+    // Act
+    let (action, request) = lifecycle.request_headers(Request::default());
+
+    // Assert
+    assert_eq!(action.unwrap(), Action::Continue);
+    assert_eq!(header(&request, "Wasm-Context").as_deref(), Some("2"));
+    assert_eq!(
+        lifecycle
+            .guest
+            .plugin(lifecycle.root.unwrap())
+            .unwrap()
+            .name(),
+        b"add-header"
     );
 }

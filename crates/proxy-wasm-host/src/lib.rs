@@ -29,7 +29,10 @@ pub use header_map::{HeaderMap, VecHeaderMap};
 /// The ABI allows a write to each map and buffer only from named callbacks.
 /// If you enforce that rule in your [`HeaderMap`] or [`Buffer`]
 /// implementation, return this error from the write.
-/// The host function then reports a status to the guest.
+/// The host function then reports the status that the ABI section for that
+/// resource lists when it is not available.
+/// A refused map write is `BAD_ARGUMENT` and a refused buffer write is
+/// `NOT_FOUND`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("the embedder does not allow this write")]
 pub struct NotAllowed;

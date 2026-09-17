@@ -1,13 +1,14 @@
 //! A running guest bound to ABI v0.2.1.
 
 use std::fmt;
+use std::time::Duration;
 
 use wasmtime::TypedFunc;
 
 use crate::Error;
 use crate::abi::AbiVersion;
 use crate::abi::v0_2_1::{
-    CallScope, Callback, ContextId, ContextState, ContextType, NoStream, StreamHost,
+    CallScope, Callback, ContextId, ContextState, ContextType, NoStream, Plugin, StreamHost,
 };
 use crate::runtime::{Engine, HostServices, Instance, Limits, Module};
 
@@ -28,7 +29,7 @@ use crate::runtime::{Engine, HostServices, Instance, Limits, Module};
 ///
 /// ```
 /// use proxy_wasm_host::abi::v0_2_1::types::{Action, MapType, Status};
-/// use proxy_wasm_host::abi::v0_2_1::{Guest, HostCall, StreamHost};
+/// use proxy_wasm_host::abi::v0_2_1::{Guest, HostCall, Plugin, StreamHost};
 /// use proxy_wasm_host::runtime::{Engine, HostServices, Limits, LogSink, Module};
 /// use proxy_wasm_host::{HeaderMap, VecHeaderMap};
 ///
@@ -63,8 +64,8 @@ use crate::runtime::{Engine, HostServices, Instance, Limits, Module};
 ///
 /// let mut root_scope = guest.enter_root();
 /// let root = root_scope.on_context_create(None)?;
-/// assert!(root_scope.on_vm_start(root, 0)?);
-/// assert!(root_scope.on_configure(root, 0)?);
+/// assert!(root_scope.on_vm_start(root)?);
+/// assert!(root_scope.on_configure(root, Plugin::new())?);
 /// drop(root_scope);
 ///
 /// let request = Request { headers: VecHeaderMap::default() };
@@ -196,7 +197,7 @@ impl Guest {
     /// `Configure` means the root context of `context` is refused, with
     /// every stream context under it.
     pub fn rejected_by(&self, context: ContextId) -> Option<Callback> {
-        self.instance.state().contexts().rejection_of(context)
+        self.instance.state().abi().contexts().rejection_of(context)
     }
 
     /// How far `context` is through its finalization, or `None` for a
@@ -205,18 +206,38 @@ impl Guest {
     /// A move from `Pending` to `Done` without a callback of yours means
     /// the guest called `proxy_done`.
     pub fn context_state(&self, context: ContextId) -> Option<ContextState> {
-        self.instance.state().contexts().state(context)
+        self.instance.state().abi().contexts().state(context)
     }
 
     /// Whether `context` is a root context or a stream context.
     pub fn context_type(&self, context: ContextId) -> Option<ContextType> {
-        self.instance.state().contexts().context_type(context)
+        self.instance.state().abi().contexts().context_type(context)
     }
 
     /// The root context of a stream context, or `None` for a root context
     /// and for a context this guest does not hold.
     pub fn context_parent(&self, context: ContextId) -> Option<ContextId> {
-        self.instance.state().contexts().parent(context)
+        self.instance.state().abi().contexts().parent(context)
+    }
+
+    /// The plugin of the root context of `context`.
+    ///
+    /// [`CallScope::on_configure`] records it, so this is `None` until that
+    /// callback has run on the root.
+    pub fn plugin(&self, context: ContextId) -> Option<&Plugin> {
+        self.instance.state().abi().contexts().plugin(context)
+    }
+
+    /// The tick period the guest asked for on `root`.
+    ///
+    /// A guest sets it with `proxy_set_tick_period_milliseconds`, and a
+    /// period of zero clears it.
+    /// A guest can only reach the root it is serving, so a period it sets in
+    /// any callback lands on that root.
+    /// The crate records the value and runs no timer, so read it after the
+    /// callbacks of a root and drive `proxy_on_tick` from your own timer.
+    pub fn tick_period(&self, root: ContextId) -> Option<Duration> {
+        self.instance.state().abi().contexts().tick_period(root)
     }
 
     /// The context the guest's host functions act on.
@@ -224,7 +245,7 @@ impl Guest {
     /// Every callback sets it to its own context, and the guest can change
     /// it with `proxy_set_effective_context`.
     pub fn effective_context(&self) -> Option<ContextId> {
-        self.instance.state().contexts().effective()
+        self.instance.state().abi().contexts().effective()
     }
 
     /// Lends `stream` to the guest for a group of callbacks.
@@ -236,7 +257,10 @@ impl Guest {
     /// borrow.
     /// The value replaces any stream host a forgotten scope left installed.
     pub fn enter<H: StreamHost>(&mut self, stream: H) -> CallScope<'_, H> {
-        self.instance.state_mut().set_stream_host(Box::new(stream));
+        self.instance
+            .state_mut()
+            .abi_mut()
+            .set_stream_host(Box::new(stream));
         CallScope::new(self)
     }
 

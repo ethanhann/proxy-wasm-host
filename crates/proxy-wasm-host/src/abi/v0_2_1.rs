@@ -14,6 +14,8 @@ mod callback;
 mod context;
 mod guest;
 pub(crate) mod host_functions;
+mod plugin;
+mod state;
 mod stream_host;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -22,6 +24,9 @@ pub use call_scope::CallScope;
 pub use callback::Callback;
 pub use context::{ContextId, ContextProblem, ContextState, ContextType, InvalidContextId};
 pub use guest::Guest;
+pub use plugin::Plugin;
+pub use stream_host::values::{CalloutStatus, LocalResponse, ResponseHeaders};
 pub use stream_host::{Access, HostCall, NoStream, StreamHost};
 
-pub(crate) use context::ContextTable;
+pub(crate) use context::table::ContextTable;
+pub(crate) use state::AbiState;

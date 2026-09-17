@@ -1,125 +1,17 @@
 //! The data stored in every instance's wasmtime store.
 
-use std::any::Any;
-use std::sync::{Arc, OnceLock};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
-
 use wasmtime::{Memory, StoreLimits, TypedFunc};
 
-use crate::abi::v0_2_1::types::LogLevel;
-use crate::abi::v0_2_1::{Callback, ContextTable, StreamHost};
-
-/// Where guest log output goes.
-///
-/// The WASI `fd_write` function and the `proxy_log` host function both call
-/// this.
-/// One sink usually serves a whole process, so the runtime holds it in an
-/// `Arc` and calls it through a shared reference.
-pub trait LogSink: Send + Sync {
-    /// Records one message at one level.
-    fn log(&self, level: LogLevel, message: &[u8]);
-}
-
-/// The time source for the WASI `clock_time_get` function.
-///
-/// A host may return approximate or frozen time.
-/// A test can therefore install a clock with fixed values.
-pub trait Clock: Send + Sync {
-    /// Nanoseconds since the Unix epoch.
-    fn realtime_nanos(&self) -> u64;
-    /// Nanoseconds since an origin that never moves while the process runs.
-    fn monotonic_nanos(&self) -> u64;
-}
-
-/// The clock that reads the operating system.
-///
-/// The monotonic origin is one `Instant` for the whole process.
-/// Every instance therefore reports comparable monotonic values.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemClock;
-
-fn monotonic_origin() -> Instant {
-    static ORIGIN: OnceLock<Instant> = OnceLock::new();
-    *ORIGIN.get_or_init(Instant::now)
-}
-
-fn nanos(duration: std::time::Duration) -> u64 {
-    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
-}
-
-impl Clock for SystemClock {
-    fn realtime_nanos(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, nanos)
-    }
-
-    fn monotonic_nanos(&self) -> u64 {
-        nanos(monotonic_origin().elapsed())
-    }
-}
-
-/// The services you supply to a guest: a log sink, a clock, and environment
-/// variables.
-///
-/// Build one per instance and pass it to [`crate::runtime::Instance::new`].
-/// You can change it between calls through
-/// [`crate::runtime::Instance::services_mut`].
-pub struct HostServices {
-    log: Arc<dyn LogSink>,
-    clock: Arc<dyn Clock>,
-    environment: Vec<(Vec<u8>, Vec<u8>)>,
-}
-
-impl HostServices {
-    /// Services that log to `log`, read [`SystemClock`], and have no
-    /// environment variables.
-    pub fn new(log: Arc<dyn LogSink>) -> Self {
-        Self {
-            log,
-            clock: Arc::new(SystemClock),
-            environment: Vec::new(),
-        }
-    }
-
-    /// Replaces the clock.
-    #[must_use]
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.clock = clock;
-        self
-    }
-
-    /// Sets the environment variables that the guest sees through WASI.
-    ///
-    /// The ABI document says these must be configured per guest.
-    /// They are never read from the process environment.
-    #[must_use]
-    pub fn with_environment(mut self, variables: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
-        self.environment = variables;
-        self
-    }
-
-    /// The log sink.
-    pub fn log(&self) -> &dyn LogSink {
-        self.log.as_ref()
-    }
-
-    /// The clock.
-    pub fn clock(&self) -> &dyn Clock {
-        self.clock.as_ref()
-    }
-
-    /// The environment variables, in the order given.
-    pub fn environment(&self) -> &[(Vec<u8>, Vec<u8>)] {
-        &self.environment
-    }
-}
+use crate::abi::v0_2_1::AbiState;
+use crate::runtime::HostServices;
 
 /// The store data of one instance.
 ///
-/// The runtime keeps the cached memory handle, the guest allocator, the
-/// store limits, and the poison flag here, next to the services the embedder
+/// The runtime keeps the cached memory handle, the guest allocator, the store
+/// limits, and the poison flag here, next to the services the embedder
 /// supplied.
+/// Everything the ABI layer keeps is in one [`AbiState`], which the runtime
+/// does not read.
 /// The type is crate private, so nothing outside the crate can clear the
 /// poison flag or replace the cached handles.
 pub(crate) struct HostState {
@@ -128,9 +20,7 @@ pub(crate) struct HostState {
     memory: Option<Memory>,
     allocator: Option<TypedFunc<i32, i32>>,
     poisoned: bool,
-    stream_host: Option<Box<dyn StreamHost>>,
-    contexts: ContextTable,
-    current_callback: Option<Callback>,
+    abi: AbiState,
 }
 
 impl HostState {
@@ -141,9 +31,7 @@ impl HostState {
             memory: None,
             allocator: None,
             poisoned: false,
-            stream_host: None,
-            contexts: ContextTable::new(),
-            current_callback: None,
+            abi: AbiState::new(),
         }
     }
 
@@ -187,101 +75,21 @@ impl HostState {
         self.poisoned = true;
     }
 
-    pub(crate) fn stream_host(&mut self) -> Option<&mut dyn StreamHost> {
-        self.stream_host.as_deref_mut()
+    pub(crate) fn abi(&self) -> &AbiState {
+        &self.abi
     }
 
-    pub(crate) fn set_stream_host(&mut self, stream: Box<dyn StreamHost>) {
-        self.stream_host = Some(stream);
-    }
-
-    pub(crate) fn take_stream_host(&mut self) -> Option<Box<dyn StreamHost>> {
-        self.stream_host.take()
-    }
-
-    /// The installed stream host as the concrete type `enter` stored.
-    pub(crate) fn stream_host_as<H: StreamHost>(&mut self) -> Option<&mut H> {
-        let stream: &mut dyn StreamHost = self.stream_host.as_deref_mut()?;
-        let any: &mut dyn Any = stream;
-        any.downcast_mut::<H>()
-    }
-
-    /// The installed stream host as the concrete type `enter` stored.
-    pub(crate) fn stream_host_as_ref<H: StreamHost>(&self) -> Option<&H> {
-        let stream: &dyn StreamHost = self.stream_host.as_deref()?;
-        let any: &dyn Any = stream;
-        any.downcast_ref::<H>()
-    }
-
-    pub(crate) fn contexts(&self) -> &ContextTable {
-        &self.contexts
-    }
-
-    pub(crate) fn contexts_mut(&mut self) -> &mut ContextTable {
-        &mut self.contexts
-    }
-
-    pub(crate) fn current_callback(&self) -> Option<Callback> {
-        self.current_callback
-    }
-
-    pub(crate) fn set_current_callback(&mut self, callback: Option<Callback>) {
-        self.current_callback = callback;
+    pub(crate) fn abi_mut(&mut self) -> &mut AbiState {
+        &mut self.abi
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::runtime::test_support::RecordingSink;
-
-    #[test]
-    fn system_clock_is_monotonic_and_shares_its_origin() {
-        // Arrange
-        let first = SystemClock;
-        let second = SystemClock;
-
-        // Act
-        let readings = [
-            first.monotonic_nanos(),
-            second.monotonic_nanos(),
-            first.monotonic_nanos(),
-        ];
-
-        // Assert
-        assert!(readings[0] <= readings[1]);
-        assert!(readings[1] <= readings[2]);
-        assert!(readings[2] - readings[0] < 1_000_000_000);
-    }
-
-    #[test]
-    fn system_clock_real_time_is_after_2020() {
-        // Arrange
-        let clock = SystemClock;
-        let year_2020_nanos = 1_577_836_800_u64 * 1_000_000_000;
-
-        // Act
-        let now = clock.realtime_nanos();
-
-        // Assert
-        assert!(now > year_2020_nanos);
-    }
-
-    #[test]
-    fn with_environment_keeps_the_order() {
-        // Arrange
-        let variables = vec![
-            (b"B".to_vec(), b"2".to_vec()),
-            (b"A".to_vec(), b"1".to_vec()),
-        ];
-
-        // Act
-        let services = HostServices::new(Arc::new(RecordingSink::default()))
-            .with_environment(variables.clone());
-
-        // Assert
-        assert_eq!(services.environment(), variables.as_slice());
-    }
 
     #[test]
     fn poison_is_observable() {
@@ -293,5 +101,20 @@ mod tests {
 
         // Assert
         assert!(state.is_poisoned());
+    }
+
+    #[test]
+    fn a_new_state_holds_nothing_and_is_not_poisoned() {
+        // Arrange
+        let services = HostServices::new(Arc::new(RecordingSink::default()));
+
+        // Act
+        let state = HostState::new(services);
+
+        // Assert
+        assert!(state.memory().is_none());
+        assert!(state.allocator().is_none());
+        assert!(!state.is_poisoned());
+        assert!(state.abi().current_callback().is_none());
     }
 }

@@ -487,6 +487,7 @@ mod tests {
         let services =
             HostServices::new(Arc::new(RecordingSink::default())).with_environment(variables);
         let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
+        assert!(std::env::var_os("PATH").is_some(), "the process has a PATH");
 
         // Act
         let results = [
@@ -505,10 +506,9 @@ mod tests {
             (memory.read_u32(ptr(100)), memory.read_u32(ptr(104))),
             (Ok(200), Ok(204))
         );
-        assert_eq!(
-            memory.read(GuestSlice::new(ptr(200), 14).unwrap()),
-            Ok(b"A=1\0KEY=value\0".as_slice())
-        );
+        let block = memory.read(GuestSlice::new(ptr(200), 14).unwrap()).unwrap();
+        assert_eq!(block, b"A=1\0KEY=value\0".as_slice());
+        assert!(!block.windows(5).any(|window| window == b"PATH="));
     }
 
     #[test]

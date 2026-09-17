@@ -8,6 +8,8 @@ It is a port of [proxy-wasm-go-host](https://github.com/mosn/proxy-wasm-go-host)
 
 The crate is not published yet.
 It runs the request header lifecycle of ABI v0.2.1 and does not yet serve every host function.
+It serves logging, the log level, the clock, the tick period, the header maps, the buffers, the stream operations, the callout status, and the local response.
+The HTTP and gRPC callouts, the shared data, the shared queues, the metrics, the properties, and the foreign functions answer `UNIMPLEMENTED`.
 When it is published, the facts below decide whether you can use it.
 
 - ABI: Proxy-Wasm v0.2.1, with v0.2.0 guests accepted.

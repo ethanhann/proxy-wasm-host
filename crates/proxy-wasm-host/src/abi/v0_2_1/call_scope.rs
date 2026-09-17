@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 
 use crate::Error;
 use crate::abi::v0_2_1::types::Action;
-use crate::abi::v0_2_1::{Callback, ContextId, Guest, StreamHost};
+use crate::abi::v0_2_1::{Callback, ContextId, Guest, Plugin, StreamHost};
 
 /// A group of callbacks that share one stream host.
 ///
@@ -64,6 +64,7 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
         self.guest
             .instance()
             .state()
+            .abi()
             .stream_host_as_ref::<H>()
             .unwrap_or_else(|| {
                 unreachable!("the scope holds the guest, so its stream host is installed")
@@ -81,6 +82,7 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
         self.guest
             .instance_mut()
             .state_mut()
+            .abi_mut()
             .stream_host_as::<H>()
             .unwrap_or_else(|| {
                 unreachable!("the scope holds the guest, so its stream host is installed")
@@ -114,6 +116,7 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
             .guest
             .instance_mut()
             .state_mut()
+            .abi_mut()
             .contexts_mut()
             .create(parent)?;
         let func = self.guest.callbacks().context_create.clone();
@@ -131,25 +134,29 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
 
     /// Calls `proxy_on_vm_start` on a root context.
     ///
-    /// The VM configuration buffer that `vm_configuration_size` describes
-    /// is not served yet, so a guest that reads it aborts.
+    /// The guest is told the length of the VM configuration that
+    /// [`HostServices::with_vm_configuration`](crate::runtime::HostServices::with_vm_configuration)
+    /// holds, and it reads the bytes from the `VM_CONFIGURATION` buffer.
     /// A `false` answer refuses the whole instance.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Poisoned`], [`Error::Context`] when `root` is unknown
     /// or a stream context, [`Error::GuestRejected`],
-    /// [`Error::ValueTooLarge`] for a size above `i32::MAX`,
+    /// [`Error::ValueTooLarge`] for a configuration above `i32::MAX` bytes,
     /// [`Error::UnexpectedReturn`], and the errors of a guest call.
-    pub fn on_vm_start(
-        &mut self,
-        root: ContextId,
-        vm_configuration_size: u32,
-    ) -> Result<bool, Error> {
+    pub fn on_vm_start(&mut self, root: ContextId) -> Result<bool, Error> {
         prologue::live(self.guest)?;
         prologue::require_root(self.guest, root)?;
         prologue::accepted(self.guest, root)?;
-        let size = prologue::wire_u32(vm_configuration_size)?;
+        let length = self
+            .guest
+            .instance()
+            .state()
+            .services()
+            .vm_configuration()
+            .len();
+        let size = prologue::wire_size(length)?;
         let func = self.guest.callbacks().vm_start.clone();
         let value = prologue::run(
             self.guest,
@@ -164,31 +171,37 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
             self.guest
                 .instance_mut()
                 .state_mut()
+                .abi_mut()
                 .contexts_mut()
                 .reject_vm(root);
         }
         Ok(accepted)
     }
 
-    /// Calls `proxy_on_configure` on a root context.
+    /// Calls `proxy_on_configure` on a root context with the plugin it
+    /// serves.
     ///
-    /// The plugin configuration buffer that `plugin_configuration_size`
-    /// describes is not served yet, so a guest that reads it aborts.
+    /// The crate records `plugin` on the root context before it calls the
+    /// guest, so the guest reads the bytes from the `PLUGIN_CONFIGURATION`
+    /// buffer inside the callback, and it is told their length.
+    /// [`Guest::plugin`] reads the value back.
     /// A `false` answer refuses this root context and every stream context
     /// under it.
     ///
     /// # Errors
     ///
     /// The same as [`CallScope::on_vm_start`].
-    pub fn on_configure(
-        &mut self,
-        root: ContextId,
-        plugin_configuration_size: u32,
-    ) -> Result<bool, Error> {
+    pub fn on_configure(&mut self, root: ContextId, plugin: Plugin) -> Result<bool, Error> {
         prologue::live(self.guest)?;
         prologue::require_root(self.guest, root)?;
         prologue::accepted(self.guest, root)?;
-        let size = prologue::wire_u32(plugin_configuration_size)?;
+        let size = prologue::wire_size(plugin.configuration().len())?;
+        self.guest
+            .instance_mut()
+            .state_mut()
+            .abi_mut()
+            .contexts_mut()
+            .set_plugin(root, plugin);
         let func = self.guest.callbacks().configure.clone();
         let value = prologue::run(
             self.guest,
@@ -203,6 +216,7 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
             self.guest
                 .instance_mut()
                 .state_mut()
+                .abi_mut()
                 .contexts_mut()
                 .reject(root);
         }
@@ -249,10 +263,11 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
     #[must_use]
     pub fn finish(self) -> H {
         let state = self.guest.instance_mut().state_mut();
-        if state.current_callback().is_some() {
+        if state.abi_mut().current_callback().is_some() {
             state.poison();
         }
         state
+            .abi_mut()
             .take_stream_host()
             .and_then(|boxed| {
                 let any: Box<dyn Any + Send> = boxed;
@@ -268,10 +283,10 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
 impl<H: StreamHost> Drop for CallScope<'_, H> {
     fn drop(&mut self) {
         let state = self.guest.instance_mut().state_mut();
-        let _ = state.take_stream_host();
-        if state.current_callback().is_some() {
+        let _ = state.abi_mut().take_stream_host();
+        if state.abi_mut().current_callback().is_some() {
             state.poison();
-            state.set_current_callback(None);
+            state.abi_mut().set_current_callback(None);
         }
     }
 }
@@ -287,6 +302,7 @@ mod tests {
     use crate::header_map::HeaderMap;
     use crate::runtime::test_support::{engine, services, wat_bytes};
     use crate::runtime::{Engine, GuestPtr, Limits, Module};
+    use std::time::Duration;
 
     const RECORDER: &str = r#"(module
         (memory (export "memory") 1)
@@ -346,6 +362,15 @@ mod tests {
         Guest::new(engine, &module, services(), &Limits::default()).unwrap()
     }
 
+    fn guest_with_vm_configuration(engine: &Engine, wat: &str, bytes: &[u8]) -> Guest {
+        let module = Module::new(engine, &wat_bytes(wat)).unwrap();
+        let services = crate::runtime::HostServices::new(std::sync::Arc::new(
+            crate::runtime::test_support::RecordingSink::default(),
+        ))
+        .with_vm_configuration(bytes.to_vec());
+        Guest::new(engine, &module, services, &Limits::default()).unwrap()
+    }
+
     fn recorded(guest: &mut Guest, at: u32) -> u32 {
         guest
             .instance_mut()
@@ -382,7 +407,12 @@ mod tests {
         let (mut guest, root, stream) = with_stream(engine, RECORDER);
         let other = guest.enter_root().on_context_create(None).unwrap();
         answer(&mut guest, 0);
-        assert!(!guest.enter_root().on_configure(root, 0).unwrap());
+        assert!(
+            !guest
+                .enter_root()
+                .on_configure(root, Plugin::new())
+                .unwrap()
+        );
         answer(&mut guest, 1);
         (guest, root, stream, other)
     }
@@ -436,20 +466,18 @@ mod tests {
     }
 
     #[test]
-    fn vm_start_and_configure_pass_the_root_and_the_size() {
+    fn vm_start_passes_the_root_and_the_length_of_the_vm_configuration() {
         // Arrange
         let engine = engine();
-        let (mut guest, root) = with_root(&engine, RECORDER);
+        let mut guest = guest_with_vm_configuration(&engine, RECORDER, b"12345");
+        let root = guest.enter_root().on_context_create(None).unwrap();
         let mut scope = guest.enter_root();
 
         // Act
-        let results = (
-            scope.on_vm_start(root, 5).unwrap(),
-            scope.on_configure(root, 6).unwrap(),
-        );
+        let started = scope.on_vm_start(root).unwrap();
 
         // Assert
-        assert_eq!(results, (true, true));
+        assert!(started);
         assert_eq!(
             (
                 recorded(scope.guest_mut(), 8),
@@ -457,6 +485,21 @@ mod tests {
             ),
             (1, 5)
         );
+    }
+
+    #[test]
+    fn configure_passes_the_root_and_the_length_of_the_plugin_configuration() {
+        // Arrange
+        let engine = engine();
+        let (mut guest, root) = with_root(&engine, RECORDER);
+        let plugin = Plugin::new().with_configuration(b"123456".to_vec());
+        let mut scope = guest.enter_root();
+
+        // Act
+        let configured = scope.on_configure(root, plugin).unwrap();
+
+        // Assert
+        assert!(configured);
         assert_eq!(
             (
                 recorded(scope.guest_mut(), 16),
@@ -464,6 +507,22 @@ mod tests {
             ),
             (1, 6)
         );
+    }
+
+    #[test]
+    fn configure_records_the_plugin_on_the_root() {
+        // Arrange
+        let engine = engine();
+        let (mut guest, root, stream) = with_stream(&engine, RECORDER);
+        let plugin = Plugin::new().with_name(b"auth".to_vec());
+
+        // Act
+        let configured = guest.enter_root().on_configure(root, plugin).unwrap();
+
+        // Assert
+        assert!(configured);
+        assert_eq!(guest.plugin(root).unwrap().name(), b"auth");
+        assert_eq!(guest.plugin(stream).unwrap().name(), b"auth");
     }
 
     #[test]
@@ -475,8 +534,8 @@ mod tests {
 
         // Act
         let results = (
-            scope.on_vm_start(stream, 0),
-            scope.on_configure(id(9), 0),
+            scope.on_vm_start(stream),
+            scope.on_configure(id(9), Plugin::new()),
             scope.on_request_headers(root, 0, true),
         );
 
@@ -503,7 +562,7 @@ mod tests {
         answer(&mut guest, 7);
 
         // Act
-        let result = guest.enter_root().on_configure(root, 0);
+        let result = guest.enter_root().on_configure(root, Plugin::new());
 
         // Assert
         assert!(matches!(
@@ -522,7 +581,7 @@ mod tests {
         let engine = engine();
         let (mut guest, root) = with_root(&engine, RECORDER);
         answer(&mut guest, 0);
-        let refused = guest.enter_root().on_vm_start(root, 0).unwrap();
+        let refused = guest.enter_root().on_vm_start(root).unwrap();
         answer(&mut guest, 1);
 
         // Act
@@ -729,8 +788,8 @@ mod tests {
         // Act
         let results = (
             scope.on_context_create(None).unwrap(),
-            scope.on_vm_start(id(1), 0).unwrap(),
-            scope.on_configure(id(1), 0).unwrap(),
+            scope.on_vm_start(id(1)).unwrap(),
+            scope.on_configure(id(1), Plugin::new()).unwrap(),
             scope.on_context_create(Some(id(1))).unwrap(),
             scope.on_request_headers(id(2), 0, true).unwrap(),
             scope.on_done(id(2)).unwrap(),
@@ -911,8 +970,8 @@ mod tests {
         // Act
         let results = (
             scope.on_context_create(None),
-            scope.on_vm_start(id(9), 0),
-            scope.on_configure(id(9), 0),
+            scope.on_vm_start(id(9)),
+            scope.on_configure(id(9), Plugin::new()),
             scope.on_request_headers(id(9), 0, true),
             scope.on_done(id(9)),
             scope.on_log(id(9)),
@@ -988,5 +1047,64 @@ mod tests {
         fn guest_mut(&mut self) -> &mut Guest {
             self.guest
         }
+    }
+
+    const CONFIGURATION_READER: &str = r#"(module
+        (import "env" "proxy_get_buffer_bytes" (func $get (param i32 i32 i32 i32 i32) (result i32)))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 4096)
+        (func (export "proxy_abi_version_0_2_1"))
+        (func (export "proxy_on_configure") (param i32 i32) (result i32)
+            (i32.store (i32.const 0)
+                (call $get (i32.const 7) (i32.const 0) (i32.const -1)
+                    (i32.const 64) (i32.const 68)))
+            i32.const 1))"#;
+
+    #[test]
+    fn a_guest_reads_its_plugin_configuration_inside_configure() {
+        // Arrange
+        let engine = engine();
+        let (mut guest, root) = with_root(&engine, CONFIGURATION_READER);
+        let plugin = Plugin::new().with_configuration(b"plugin bytes".to_vec());
+
+        // Act
+        let configured = guest.enter_root().on_configure(root, plugin).unwrap();
+
+        // Assert
+        assert!(configured);
+        assert_eq!(recorded(&mut guest, 0), 0);
+        let (address, size) = (recorded(&mut guest, 64), recorded(&mut guest, 68));
+        let slice = crate::runtime::GuestSlice::new(GuestPtr::from_address(address), size).unwrap();
+        assert_eq!(
+            guest.instance_mut().memory().unwrap().read(slice).unwrap(),
+            b"plugin bytes"
+        );
+    }
+
+    const TICKER: &str = r#"(module
+        (import "env" "proxy_set_tick_period_milliseconds" (func $tick (param i32) (result i32)))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 4096)
+        (func (export "proxy_abi_version_0_2_1"))
+        (func (export "proxy_on_configure") (param i32 i32) (result i32)
+            (i32.store (i32.const 0) (call $tick (i32.const 250)))
+            i32.const 1))"#;
+
+    #[test]
+    fn a_period_a_guest_sets_is_reported_through_the_guest() {
+        // Arrange
+        let engine = engine();
+        let (mut guest, root) = with_root(&engine, TICKER);
+
+        // Act
+        let configured = guest
+            .enter_root()
+            .on_configure(root, Plugin::new())
+            .unwrap();
+
+        // Assert
+        assert!(configured);
+        assert_eq!(recorded(&mut guest, 0), 0);
+        assert_eq!(guest.tick_period(root), Some(Duration::from_millis(250)));
     }
 }

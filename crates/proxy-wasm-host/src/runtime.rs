@@ -15,17 +15,18 @@ mod instance;
 mod limits;
 mod memory;
 mod module;
+mod services;
 mod wasi;
 
 #[cfg(test)]
 pub(crate) mod test_support;
 
 pub use engine::{Engine, EngineConfig};
-pub use host_state::{Clock, HostServices, LogSink, SystemClock};
 pub use instance::Instance;
 pub use limits::Limits;
 pub use memory::{GuestMemory, GuestPtr, GuestSlice};
 pub use module::Module;
+pub use services::{Clock, HostServices, LogSink, SystemClock};
 
 pub(crate) use alloc::write_return;
 pub(crate) use host_state::HostState;

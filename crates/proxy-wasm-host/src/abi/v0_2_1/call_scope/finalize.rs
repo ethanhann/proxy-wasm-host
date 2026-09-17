@@ -29,6 +29,7 @@ impl<H: StreamHost> CallScope<'_, H> {
         self.guest
             .instance_mut()
             .state_mut()
+            .abi_mut()
             .contexts_mut()
             .set_state(context, state);
         Ok(done)
@@ -69,6 +70,7 @@ impl<H: StreamHost> CallScope<'_, H> {
         self.guest
             .instance_mut()
             .state_mut()
+            .abi_mut()
             .contexts_mut()
             .remove(context);
         Ok(())

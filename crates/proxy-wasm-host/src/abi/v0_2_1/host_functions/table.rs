@@ -4,7 +4,9 @@
 use wasmtime::{Caller, Linker};
 
 use crate::Error;
-use crate::abi::v0_2_1::host_functions::{complete, context, header_map, log, stub};
+use crate::abi::v0_2_1::host_functions::{
+    buffer, callout, clock, complete, context, header_map, local_response, log, stream, stub, timer,
+};
 use crate::runtime::HostState;
 
 /// One row of the host function table.
@@ -98,12 +100,12 @@ host_functions! {
     proxy_done() = [context::proxy_done];
     proxy_set_effective_context(context_id: I32) = [context::proxy_set_effective_context];
     proxy_log(log_level: I32, message_data: I32, message_size: I32) = [log::proxy_log];
-    proxy_get_log_level(return_log_level: I32) = [stub];
-    proxy_get_current_time_nanoseconds(return_time: I32) = [stub];
-    proxy_set_tick_period_milliseconds(tick_period: I32) = [stub];
-    proxy_set_buffer_bytes(buffer_id: I32, start: I32, size: I32, value_data: I32, value_size: I32) = [stub];
-    proxy_get_buffer_bytes(buffer_id: I32, start: I32, max_size: I32, return_value_data: I32, return_value_size: I32) = [stub];
-    proxy_get_buffer_status(buffer_id: I32, return_buffer_size: I32, return_unused: I32) = [stub];
+    proxy_get_log_level(return_log_level: I32) = [log::proxy_get_log_level];
+    proxy_get_current_time_nanoseconds(return_time: I32) = [clock::proxy_get_current_time_nanoseconds];
+    proxy_set_tick_period_milliseconds(tick_period: I32) = [timer::proxy_set_tick_period_milliseconds];
+    proxy_set_buffer_bytes(buffer_id: I32, start: I32, size: I32, value_data: I32, value_size: I32) = [buffer::proxy_set_buffer_bytes];
+    proxy_get_buffer_bytes(buffer_id: I32, start: I32, max_size: I32, return_value_data: I32, return_value_size: I32) = [buffer::proxy_get_buffer_bytes];
+    proxy_get_buffer_status(buffer_id: I32, return_buffer_size: I32, return_unused: I32) = [buffer::proxy_get_buffer_status];
     proxy_get_header_map_size(map_id: I32, return_size: I32) = [header_map::proxy_get_header_map_size];
     proxy_get_header_map_pairs(map_id: I32, return_data: I32, return_size: I32) = [header_map::proxy_get_header_map_pairs];
     proxy_set_header_map_pairs(map_id: I32, serialized_pairs_data: I32, serialized_pairs_size: I32) = [header_map::proxy_set_header_map_pairs];
@@ -111,10 +113,10 @@ host_functions! {
     proxy_add_header_map_value(map_id: I32, key_data: I32, key_size: I32, value_data: I32, value_size: I32) = [header_map::proxy_add_header_map_value];
     proxy_replace_header_map_value(map_id: I32, key_data: I32, key_size: I32, value_data: I32, value_size: I32) = [header_map::proxy_replace_header_map_value];
     proxy_remove_header_map_value(map_id: I32, key_data: I32, key_size: I32) = [header_map::proxy_remove_header_map_value];
-    proxy_continue_stream(stream_type: I32) = [stub];
-    proxy_close_stream(stream_type: I32) = [stub];
-    proxy_get_status(return_status_code: I32, return_status_message_data: I32, return_status_message_size: I32) = [stub];
-    proxy_send_local_response(status_code: I32, status_code_details_data: I32, status_code_details_size: I32, body_data: I32, body_size: I32, serialized_headers_data: I32, serialized_headers_size: I32, grpc_status: I32) = [stub];
+    proxy_continue_stream(stream_type: I32) = [stream::proxy_continue_stream];
+    proxy_close_stream(stream_type: I32) = [stream::proxy_close_stream];
+    proxy_get_status(return_status_code: I32, return_status_message_data: I32, return_status_message_size: I32) = [callout::proxy_get_status];
+    proxy_send_local_response(status_code: I32, status_code_details_data: I32, status_code_details_size: I32, body_data: I32, body_size: I32, serialized_headers_data: I32, serialized_headers_size: I32, grpc_status: I32) = [local_response::proxy_send_local_response];
     proxy_http_call(upstream_name_data: I32, upstream_name_size: I32, serialized_headers_data: I32, serialized_headers_size: I32, body_data: I32, body_size: I32, serialized_trailers_data: I32, serialized_trailers_size: I32, timeout: I32, return_call_id: I32) = [stub];
     proxy_grpc_call(upstream_name_data: I32, upstream_name_size: I32, service_name_data: I32, service_name_size: I32, method_name_data: I32, method_name_size: I32, serialized_initial_metadata_data: I32, serialized_initial_metadata_size: I32, message_data: I32, message_size: I32, timeout: I32, return_call_id: I32) = [stub];
     proxy_grpc_stream(upstream_name_data: I32, upstream_name_size: I32, service_name_data: I32, service_name_size: I32, method_name_data: I32, method_name_size: I32, serialized_initial_metadata_data: I32, serialized_initial_metadata_size: I32, return_stream_id: I32) = [stub];
@@ -213,10 +215,10 @@ mod tests {
         // Arrange
         let engine = engine();
         let wat = r#"(module
-            (import "env" "proxy_get_log_level" (func $f (param i32) (result i32)))
+            (import "env" "proxy_get_metric" (func $f (param i32 i32) (result i32)))
             (memory (export "memory") 1)
             (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
-            (func (export "call") (result i32) i32.const 0 call $f))"#;
+            (func (export "call") (result i32) i32.const 0 i32.const 16 call $f))"#;
         let mut instance = instance(&engine, wat).unwrap();
 
         // Act
@@ -225,6 +227,24 @@ mod tests {
         // Assert
         assert_eq!(result.unwrap(), Status::Unimplemented);
         assert!(!instance.is_poisoned());
+    }
+
+    #[test]
+    fn a_row_with_a_body_no_longer_answers_unimplemented() {
+        // Arrange
+        let engine = engine();
+        let wat = r#"(module
+            (import "env" "proxy_get_current_time_nanoseconds" (func $f (param i32) (result i32)))
+            (memory (export "memory") 1)
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+            (func (export "call") (result i32) i32.const 16 call $f))"#;
+        let mut instance = instance(&engine, wat).unwrap();
+
+        // Act
+        let result = instance.call::<(), i32>("call", ()).map(status);
+
+        // Assert
+        assert_eq!(result.unwrap(), Status::Ok);
     }
 
     #[test]

@@ -1,10 +1,10 @@
-//! `proxy_log`.
+//! `proxy_log` and `proxy_get_log_level`.
 
 use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::LogLevel;
-use crate::runtime::{GuestSlice, HostState, split};
+use crate::runtime::{GuestPtr, GuestSlice, HostState, split};
 
 pub(super) fn proxy_log(
     ctx: &mut impl AsContextMut<Data = HostState>,
@@ -17,6 +17,17 @@ pub(super) fn proxy_log(
     let (memory, state) = split(ctx)?;
     let message = memory.read(slice)?;
     state.services().log().log(level, message);
+    Ok(())
+}
+
+pub(super) fn proxy_get_log_level(
+    ctx: &mut impl AsContextMut<Data = HostState>,
+    return_log_level: i32,
+) -> Result<(), Failure> {
+    let return_log_level = GuestPtr::try_from(return_log_level)?;
+    let (mut memory, state) = split(ctx)?;
+    let level = i32::from(state.services().log_level()).cast_unsigned();
+    memory.write_u32(return_log_level, level)?;
     Ok(())
 }
 
@@ -95,5 +106,65 @@ mod tests {
             )
         );
         assert!(sink.entries().is_empty());
+    }
+
+    const LEVEL_GUEST: &str = r#"(module
+        (import "env" "proxy_get_log_level" (func $level (param i32) (result i32)))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+        (func (export "level") (param i32) (result i32) local.get 0 call $level))"#;
+
+    #[test]
+    fn the_level_in_the_services_is_written() {
+        // Arrange
+        let engine = engine();
+        let sink = Arc::new(RecordingSink::default());
+        let mut instance = instance_with_sink(&engine, LEVEL_GUEST, sink).unwrap();
+
+        // Act
+        let result = instance.call::<i32, i32>("level", 16).map(status);
+
+        // Assert
+        assert_eq!(result.unwrap(), Status::Ok);
+        assert_eq!(read_level(&mut instance, 16), LogLevel::Info);
+    }
+
+    #[test]
+    fn a_changed_level_is_written() {
+        // Arrange
+        let engine = engine();
+        let sink = Arc::new(RecordingSink::default());
+        let mut instance = instance_with_sink(&engine, LEVEL_GUEST, sink).unwrap();
+        instance.services_mut().set_log_level(LogLevel::Critical);
+
+        // Act
+        let result = instance.call::<i32, i32>("level", 16).map(status);
+
+        // Assert
+        assert_eq!(result.unwrap(), Status::Ok);
+        assert_eq!(read_level(&mut instance, 16), LogLevel::Critical);
+    }
+
+    #[test]
+    fn a_level_return_pointer_past_memory_is_an_invalid_access() {
+        // Arrange
+        let engine = engine();
+        let sink = Arc::new(RecordingSink::default());
+        let mut instance = instance_with_sink(&engine, LEVEL_GUEST, sink).unwrap();
+
+        // Act
+        let result = outcome(proxy_get_log_level(instance.store_mut(), 65_534));
+
+        // Assert
+        assert_eq!(result, Status::InvalidMemoryAccess);
+    }
+
+    fn read_level(instance: &mut crate::runtime::Instance, at: u32) -> LogLevel {
+        let value = instance
+            .memory()
+            .unwrap()
+            .read_u32(crate::runtime::GuestPtr::from_address(at))
+            .unwrap();
+        LogLevel::try_from(value.cast_signed()).unwrap()
     }
 }

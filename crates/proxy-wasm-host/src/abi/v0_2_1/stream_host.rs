@@ -1,10 +1,14 @@
 //! The per stream state an embedder lends to a guest.
 
+pub(crate) mod values;
+
 use std::any::Any;
 
-use crate::abi::v0_2_1::types::{MapType, Status};
+use crate::Buffer;
+use crate::abi::v0_2_1::types::{BufferType, MapType, Status, StreamType};
 use crate::abi::v0_2_1::{Callback, ContextId};
 use crate::header_map::HeaderMap;
+use values::{CalloutStatus, LocalResponse};
 
 /// Whether a host function reads or writes the value it asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -17,8 +21,8 @@ pub enum Access {
 
 /// What the guest is doing when it calls a host function.
 ///
-/// The ABI allows each map only in named callbacks, and only the crate knows
-/// which callback is running.
+/// The ABI allows each map and each buffer only in named callbacks, and only
+/// the crate knows which callback is running.
 /// A [`StreamHost`] method receives this so that you can apply those rules.
 /// Build one with [`HostCall::new`] when you test your own stream host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +35,11 @@ pub struct HostCall {
     /// its start sequence or from a raw call.
     pub callback: Option<Callback>,
     /// Whether the guest reads or writes.
+    ///
+    /// [`StreamHost::header_map`] and [`StreamHost::buffer`] read it as the
+    /// direction in which the guest uses the resource they name.
+    /// The three methods that change the stream always receive
+    /// [`Access::Write`].
     pub access: Access,
 }
 
@@ -55,7 +64,30 @@ impl HostCall {
 /// borrowing it.
 /// Every method has a default body, so you implement only what your stream
 /// serves.
+///
+/// Each default body reports the status that the ABI section for that family
+/// lists for a resource that is not available.
+/// The crate reports the same status when it cannot reach you at all, which
+/// happens when no callback has run, when the guest refused the root context,
+/// and when no stream host is installed.
+///
+/// | Method | Default status | A refusal from the value you return |
+/// |---|---|---|
+/// | [`header_map`](StreamHost::header_map) | [`Status::BadArgument`] | [`Status::BadArgument`] |
+/// | [`buffer`](StreamHost::buffer) | [`Status::NotFound`] | [`Status::NotFound`] |
+/// | [`continue_stream`](StreamHost::continue_stream) | [`Status::Unimplemented`] | none |
+/// | [`close_stream`](StreamHost::close_stream) | [`Status::Unimplemented`] | none |
+/// | [`callout_status`](StreamHost::callout_status) | [`Status::Unimplemented`] | none |
+/// | [`send_local_response`](StreamHost::send_local_response) | [`Status::Unimplemented`] | none |
+///
+/// A guest built with the Rust SDK ends its stream on any status other than
+/// `OK` from these functions, and reads `NOT_FOUND` from a buffer as an empty
+/// answer.
 pub trait StreamHost: Any + Send {
+    // `Any` lets the scope give your own value back without a downcast of
+    // your own, and it requires `Self: 'static`, which wasmtime requires of
+    // store data.
+
     /// The map the guest asked for, or the status to report instead.
     ///
     /// The ABI allows `HttpRequestHeaders` to be read in `proxy_on_log` and
@@ -105,6 +137,119 @@ pub trait StreamHost: Any + Send {
         let _ = (call, map);
         Err(Status::BadArgument)
     }
+
+    /// The buffer the guest asked for, or the status to report instead.
+    ///
+    /// The ABI allows each buffer only in named callbacks.
+    /// `HttpRequestBody` and `HttpResponseBody` are read and written in the
+    /// body callback of their own direction, or while that direction is
+    /// paused from it.
+    /// `DownstreamData` and `UpstreamData` are read and written in the data
+    /// callbacks.
+    /// `HttpCallResponseBody` is read in `proxy_on_http_call_response`, and
+    /// `GrpcCallMessage` in `proxy_on_grpc_receive`.
+    /// `ForeignFunctionArguments` is read in `proxy_on_foreign_function`.
+    /// The crate does not enforce those rules, and you can apply them by
+    /// matching on `call.callback` and `call.access`.
+    ///
+    /// The crate never asks you for `VmConfiguration` or
+    /// `PluginConfiguration`, because it serves both itself from the values
+    /// you gave it.
+    /// The crate clamps `start` and the length against
+    /// [`Buffer::len`](crate::Buffer::len) before it calls your buffer, so a
+    /// range you receive is inside it.
+    /// You can refuse a write by returning `Err(NotAllowed)` from
+    /// [`Buffer::replace`](crate::Buffer::replace), which the guest sees as
+    /// [`Status::NotFound`].
+    /// The default body reports [`Status::NotFound`], the status for a buffer
+    /// that is not available.
+    ///
+    /// # Errors
+    ///
+    /// The status you return goes to the guest unchanged, except that
+    /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`], because
+    /// no buffer was touched.
+    fn buffer(&mut self, call: HostCall, buffer: BufferType) -> Result<&mut dyn Buffer, Status> {
+        let _ = (call, buffer);
+        Err(Status::NotFound)
+    }
+
+    /// Resumes the stream the guest paused.
+    ///
+    /// The stream type names which half of the exchange the guest means, and
+    /// a guest resumes the half it paused from a callback that returned
+    /// [`Action::Pause`](crate::abi::v0_2_1::types::Action::Pause).
+    /// `call.access` is always [`Access::Write`].
+    /// The default body reports [`Status::Unimplemented`], which is the
+    /// status the ABI names for a stream a host cannot resume.
+    ///
+    /// # Errors
+    ///
+    /// The status you return goes to the guest unchanged, except that
+    /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
+    fn continue_stream(&mut self, call: HostCall, stream: StreamType) -> Result<(), Status> {
+        let _ = (call, stream);
+        Err(Status::Unimplemented)
+    }
+
+    /// Closes or resets the stream.
+    ///
+    /// The stream type names which half of the exchange the guest means.
+    /// `call.access` is always [`Access::Write`].
+    /// The default body reports [`Status::Unimplemented`].
+    ///
+    /// # Errors
+    ///
+    /// The status you return goes to the guest unchanged, except that
+    /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
+    fn close_stream(&mut self, call: HostCall, stream: StreamType) -> Result<(), Status> {
+        let _ = (call, stream);
+        Err(Status::Unimplemented)
+    }
+
+    /// The status of the callout the guest is handling.
+    ///
+    /// The guest asks in `proxy_on_http_call_response` and in
+    /// `proxy_on_grpc_close`, so `call.callback` names which callout it
+    /// means.
+    /// One context can have several callouts in flight, and the contract
+    /// that delivers a callout and names it here arrives with the callout
+    /// functions.
+    /// `call.access` is [`Access::Read`].
+    /// The default body reports [`Status::Unimplemented`].
+    ///
+    /// # Errors
+    ///
+    /// The status you return goes to the guest unchanged, except that
+    /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
+    fn callout_status(&mut self, call: HostCall) -> Result<CalloutStatus<'_>, Status> {
+        let _ = call;
+        Err(Status::Unimplemented)
+    }
+
+    /// Sends a response in place of the upstream one.
+    ///
+    /// The ABI allows the call while the response headers have not gone
+    /// downstream, and it says nothing about a second call, so you decide
+    /// what one means.
+    /// `call.access` is always [`Access::Write`].
+    /// The response borrows guest memory, so call
+    /// [`LocalResponse::into_owned`] if you send it after the callback
+    /// returns.
+    /// The default body reports [`Status::Unimplemented`].
+    ///
+    /// # Errors
+    ///
+    /// The status you return goes to the guest unchanged, except that
+    /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
+    fn send_local_response(
+        &mut self,
+        call: HostCall,
+        response: LocalResponse<'_>,
+    ) -> Result<(), Status> {
+        let _ = (call, response);
+        Err(Status::Unimplemented)
+    }
 }
 
 /// A stream host that serves nothing, for the callbacks of a root context.
@@ -147,5 +292,50 @@ mod tests {
             (Some(Status::BadArgument), Some(Status::BadArgument))
         );
         assert_eq!(call().callback, Some(Callback::RequestHeaders));
+    }
+
+    #[test]
+    fn the_default_buffer_reports_not_found() {
+        // Arrange
+        let mut empty = Empty;
+        let mut none = NoStream;
+
+        // Act
+        let results = (
+            empty.buffer(call(), BufferType::HttpRequestBody).err(),
+            none.buffer(call(), BufferType::HttpResponseBody).err(),
+        );
+
+        // Assert
+        assert_eq!(results, (Some(Status::NotFound), Some(Status::NotFound)));
+    }
+
+    fn unimplemented_answers(stream: &mut dyn StreamHost) -> [Option<Status>; 4] {
+        [
+            stream
+                .continue_stream(call(), StreamType::HttpRequest)
+                .err(),
+            stream.close_stream(call(), StreamType::HttpRequest).err(),
+            stream.callout_status(call()).err(),
+            stream
+                .send_local_response(call(), LocalResponse::new(200))
+                .err(),
+        ]
+    }
+
+    #[test]
+    fn the_other_four_defaults_report_unimplemented() {
+        // Arrange
+        let mut empty = Empty;
+        let mut none = NoStream;
+
+        // Act
+        let results = [
+            unimplemented_answers(&mut empty),
+            unimplemented_answers(&mut none),
+        ];
+
+        // Assert
+        assert_eq!(results, [[Some(Status::Unimplemented); 4]; 2]);
     }
 }

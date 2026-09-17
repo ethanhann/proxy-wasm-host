@@ -13,6 +13,9 @@ use crate::NotAllowed;
 ///
 /// `Vec<u8>` implements this trait, so a test or a simple embedder can lend a
 /// plain vector.
+/// The crate reads [`Buffer::len`] and clamps the range with [`clamp_range`]
+/// before it calls you, so a `start` and a length you receive are inside the
+/// buffer even when the guest asked for the largest range the ABI allows.
 pub trait Buffer {
     /// The number of bytes in the buffer.
     fn len(&self) -> usize;
@@ -24,9 +27,10 @@ pub trait Buffer {
 
     /// Appends up to `max_size` bytes that start at `start` to `out`.
     ///
-    /// A `start` at or past the end appends nothing.
-    /// A range that runs past the end is cut at the end.
-    /// [`clamp_range`] computes the range.
+    /// The crate clamps the range before it calls this, so `start` and
+    /// `max_size` are inside the buffer.
+    /// If you call it yourself with a range you did not compute, use
+    /// [`clamp_range`], which cuts a range that runs past the end.
     fn copy_range_into(&self, start: usize, max_size: usize, out: &mut Vec<u8>);
 
     /// Copies up to `max_size` bytes that start at `start`.
@@ -45,12 +49,18 @@ pub trait Buffer {
     /// A `start` at or past the end appends.
     /// A `size` of zero inside the buffer injects.
     /// Any other range replaces the bytes in it.
-    /// A range that runs past the end is cut at the end.
-    /// [`clamp_range`] computes the range.
+    /// The crate clamps the range before it calls this, so an append arrives
+    /// as an empty range at the end.
+    /// If you call it yourself with a range you did not compute, use
+    /// [`clamp_range`], which cuts a range that runs past the end.
     ///
     /// # Errors
     ///
-    /// Returns [`NotAllowed`] when the embedder refuses the write.
+    /// Returns [`NotAllowed`] when you refuse the write.
+    /// The guest then reads `NOT_FOUND`, the status the ABI lists for a
+    /// buffer that is not available.
+    /// A refused write to a header map reads `BAD_ARGUMENT` instead, because
+    /// that is the status the ABI lists for a map.
     fn replace(&mut self, start: usize, size: usize, value: &[u8]) -> Result<(), NotAllowed>;
 }
 

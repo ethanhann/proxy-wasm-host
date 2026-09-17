@@ -8,9 +8,10 @@ use std::borrow::Cow;
 
 use wasmtime::AsContextMut;
 
+use crate::abi::v0_2_1::Access;
 use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_stream};
 use crate::abi::v0_2_1::types::{MapType, Status};
-use crate::abi::v0_2_1::{Access, HostCall};
 use crate::codec::pairs::decode_pairs;
 use crate::header_map::HeaderMap;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
@@ -20,24 +21,8 @@ fn map(
     map_type: MapType,
     access: Access,
 ) -> Result<&mut dyn HeaderMap, Failure> {
-    let Some(context) = state.contexts().effective() else {
-        return Err(Status::BadArgument.into());
-    };
-    if state.contexts().is_rejected(context) {
-        return Err(Status::BadArgument.into());
-    }
-    let call = HostCall::new(context, state.current_callback(), access);
-    let Some(stream) = state.stream_host() else {
-        return Err(Status::BadArgument.into());
-    };
-    match stream.header_map(call, map_type) {
-        Ok(map) => Ok(map),
-        Err(Status::Ok) => {
-            tracing::warn!(?map_type, "StreamHost::header_map refused with Status::Ok");
-            Err(Status::InternalFailure.into())
-        }
-        Err(status) => Err(Failure::Status(status)),
-    }
+    let (call, stream) = with_stream(state, access, Status::BadArgument)?;
+    from_embedder("header_map", stream.header_map(call, map_type))
 }
 
 pub(super) fn proxy_get_header_map_size(
@@ -165,7 +150,7 @@ pub(super) fn proxy_remove_header_map_value(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::v0_2_1::test_support::{RecordingStream, outcome, status};
+    use crate::abi::v0_2_1::test_support::{RecordingStream, hosted, outcome, status, write};
     use crate::abi::v0_2_1::{Callback, ContextId};
     use crate::codec::pairs::encode_pairs;
     use crate::runtime::test_support::{engine, instance};
@@ -206,12 +191,7 @@ mod tests {
 
     fn setup(stream: RecordingStream) -> (Engine, Instance, ContextId) {
         let engine = engine();
-        let mut instance = instance(&engine, GUEST).unwrap();
-        let state = instance.state_mut();
-        let root = state.contexts_mut().create(None).unwrap();
-        state.contexts_mut().set_effective(root);
-        state.set_current_callback(Some(Callback::RequestHeaders));
-        state.set_stream_host(Box::new(stream));
+        let (instance, root) = hosted(&engine, GUEST, stream);
         (engine, instance, root)
     }
 
@@ -219,19 +199,12 @@ mod tests {
         RecordingStream::new().with_map(MapType::HttpRequestHeaders, &[("a", "1"), ("b", "22")])
     }
 
-    fn write(instance: &mut Instance, at: i32, bytes: &[u8]) -> (i32, i32) {
-        let len = i32::try_from(bytes.len()).unwrap();
-        let slice = GuestSlice::try_from((at, len)).unwrap();
-        instance.memory().unwrap().write(slice, bytes).unwrap();
-        (at, len)
-    }
-
     fn read(instance: &mut Instance, at: u32, len: u32) -> Vec<u8> {
         let slice = GuestSlice::new(GuestPtr::from_address(at), len).unwrap();
         instance.memory().unwrap().read(slice).unwrap().to_vec()
     }
 
-    fn returned(instance: &mut Instance) -> (u32, u32) {
+    fn return_slots(instance: &mut Instance) -> (u32, u32) {
         let memory = instance.memory().unwrap();
         let data = memory.read_u32(GuestPtr::from_address(2000)).unwrap();
         let size = memory.read_u32(GuestPtr::from_address(2004)).unwrap();
@@ -299,8 +272,8 @@ mod tests {
         // Assert
         assert_eq!(results.0.unwrap(), Status::Ok);
         assert_eq!(results.1.unwrap(), Status::Ok);
-        assert_eq!(returned(&mut full).1, 4 + 16 + 4 + 5);
-        assert_eq!(returned(&mut empty).1, 0);
+        assert_eq!(return_slots(&mut full).1, 4 + 16 + 4 + 5);
+        assert_eq!(return_slots(&mut empty).1, 0);
     }
 
     #[test]
@@ -315,7 +288,7 @@ mod tests {
 
         // Assert
         assert_eq!(result.unwrap(), Status::Ok);
-        let (data, size) = returned(&mut instance);
+        let (data, size) = return_slots(&mut instance);
         assert_eq!(data, 4096);
         let bytes = read(&mut instance, data, size);
         let decoded = decode_pairs(&bytes).unwrap();
@@ -338,7 +311,7 @@ mod tests {
 
         // Assert
         assert_eq!(result.unwrap(), Status::Ok);
-        assert_eq!(returned(&mut instance), (0, 0));
+        assert_eq!(return_slots(&mut instance), (0, 0));
         assert_eq!(allocator_calls(&mut instance), 0);
     }
 
@@ -445,7 +418,7 @@ mod tests {
         assert_eq!(results[1].as_ref().unwrap(), &Status::NotFound);
         assert_eq!(results[2].as_ref().unwrap(), &Status::Ok);
         assert_eq!(results[3].as_ref().unwrap(), &Status::Ok);
-        let (data, size) = returned(&mut instance);
+        let (data, size) = return_slots(&mut instance);
         assert_eq!(read(&mut instance, data, size), b"empty-key");
         assert_eq!(allocator_calls(&mut instance), 2);
     }
@@ -468,7 +441,7 @@ mod tests {
 
         // Assert
         assert_eq!(result.unwrap(), Status::Ok);
-        assert_eq!(returned(&mut instance), (0, 0));
+        assert_eq!(return_slots(&mut instance), (0, 0));
         assert_eq!(allocator_calls(&mut instance), 0);
     }
 
@@ -601,9 +574,9 @@ mod tests {
     fn without_a_stream_host_or_an_effective_context_every_function_is_bad_argument() {
         // Arrange
         let (_engine, mut no_stream, _) = setup(two_pairs());
-        let _ = no_stream.state_mut().take_stream_host();
+        let _ = no_stream.state_mut().abi_mut().take_stream_host();
         let (_engine2, mut no_context, root) = setup(two_pairs());
-        let _ = no_context.state_mut().contexts_mut().remove(root);
+        let _ = no_context.state_mut().abi_mut().contexts_mut().remove(root);
 
         // Act
         let results = (
@@ -620,7 +593,7 @@ mod tests {
     fn a_refused_root_is_not_served() {
         // Arrange
         let (_engine, mut instance, root) = setup(two_pairs());
-        instance.state_mut().contexts_mut().reject(root);
+        instance.state_mut().abi_mut().contexts_mut().reject(root);
 
         // Act
         let results = drive_all(&mut instance, REQUEST);
@@ -695,9 +668,9 @@ mod tests {
             .map(|wat| {
                 let mut instance = instance(&engine, wat).unwrap();
                 let state = instance.state_mut();
-                let root = state.contexts_mut().create(None).unwrap();
-                state.contexts_mut().set_effective(root);
-                state.set_stream_host(Box::new(two_pairs()));
+                let root = state.abi_mut().contexts_mut().create(None).unwrap();
+                state.abi_mut().contexts_mut().set_effective(root);
+                state.abi_mut().set_stream_host(Box::new(two_pairs()));
                 instance
             })
             .collect();
@@ -725,6 +698,7 @@ mod tests {
         let (_engine, mut instance, root) = setup(two_pairs());
         let stream = instance
             .state_mut()
+            .abi_mut()
             .contexts_mut()
             .create(Some(root))
             .unwrap();
