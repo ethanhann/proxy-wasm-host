@@ -209,7 +209,8 @@ pub fn decode_pairs(data: &[u8]) -> Result<Pairs<'_>, DecodeError> {
         pos: table_end,
         pair: 0,
     };
-    for lengths in data[COUNT_SIZE..table_end].chunks_exact(2 * LENGTH_SIZE) {
+    let (table, _) = data[COUNT_SIZE..table_end].as_chunks::<{ 2 * LENGTH_SIZE }>();
+    for lengths in table {
         let key_len = lengths
             .first_chunk::<LENGTH_SIZE>()
             .ok_or(truncated_lengths)?;

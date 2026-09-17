@@ -102,7 +102,9 @@ fn fd_write_impl(
     let entries = memory
         .read(table)
         .map_err(fault)?
-        .chunks_exact(IOVEC_SIZE as usize)
+        .as_chunks::<{ IOVEC_SIZE as usize }>()
+        .0
+        .iter()
         .map(|entry| {
             GuestSlice::new(
                 GuestPtr::from_address(read_u32(entry)),
