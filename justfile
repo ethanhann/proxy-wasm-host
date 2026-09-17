@@ -2,6 +2,10 @@
 _list:
     @just --list
 
+# Install development tooling
+install-dev-tools:
+    cargo install --locked cargo-deny cargo-audit
+
 # Build every workspace target.
 build:
     cargo build --workspace --all-targets --locked
@@ -27,8 +31,13 @@ fmt-check:
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
+# Check depene
+check-deps:
+    cargo audit
+    cargo deny check
+
 # Run every check that CI runs.
-check: fmt-check lint build test doc
+check: fmt-check lint build test check-deps doc
 
 # Run the code quality checks.
 check-code-quality: lint
