@@ -27,4 +27,11 @@ pub use limits::Limits;
 pub use memory::{GuestMemory, GuestPtr, GuestSlice};
 pub use module::Module;
 
+pub(crate) use alloc::write_return;
 pub(crate) use host_state::HostState;
+pub(crate) use memory::split;
+
+#[cfg(test)]
+pub(crate) use guest_call::map_guest_error;
+#[cfg(test)]
+pub(crate) use wasi::WASI_FUNCTIONS;

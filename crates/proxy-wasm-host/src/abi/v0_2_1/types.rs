@@ -7,7 +7,10 @@
 //! `TryFrom<i32>` rejects a value that the ABI document does not list.
 //! A rejection converts into [`Status::BadArgument`] for a host function.
 
-use crate::codec::pairs::DecodeError;
+use crate::NotAllowed;
+use crate::abi::v0_2_1::InvalidContextId;
+use crate::codec::pairs::{DecodeError, EncodeError};
+use crate::error::MemoryError;
 
 /// An `i32` that is not a listed value of an ABI enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -79,6 +82,30 @@ impl From<UnknownValue> for Status {
 
 impl From<DecodeError> for Status {
     fn from(_: DecodeError) -> Self {
+        Self::BadArgument
+    }
+}
+
+impl From<MemoryError> for Status {
+    fn from(_: MemoryError) -> Self {
+        Self::InvalidMemoryAccess
+    }
+}
+
+impl From<EncodeError> for Status {
+    fn from(_: EncodeError) -> Self {
+        Self::SerializationFailure
+    }
+}
+
+impl From<NotAllowed> for Status {
+    fn from(_: NotAllowed) -> Self {
+        Self::BadArgument
+    }
+}
+
+impl From<InvalidContextId> for Status {
+    fn from(_: InvalidContextId) -> Self {
         Self::BadArgument
     }
 }
@@ -167,6 +194,33 @@ mod tests {
 
         // Assert
         assert_eq!(status, Status::BadArgument);
+    }
+
+    #[test]
+    fn every_failure_converts_to_its_status() {
+        // Arrange
+        let memory = MemoryError::NegativePointer { ptr: -1 };
+        let encode = EncodeError::TooManyPairs { count: 5 };
+        let context = InvalidContextId { value: 0 };
+
+        // Act
+        let statuses = (
+            Status::from(memory),
+            Status::from(encode),
+            Status::from(NotAllowed),
+            Status::from(context),
+        );
+
+        // Assert
+        assert_eq!(
+            statuses,
+            (
+                Status::InvalidMemoryAccess,
+                Status::SerializationFailure,
+                Status::BadArgument,
+                Status::BadArgument
+            )
+        );
     }
 
     #[test]

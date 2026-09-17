@@ -115,6 +115,19 @@ impl Instance {
         self.store.data().is_poisoned()
     }
 
+    pub(crate) fn state(&self) -> &HostState {
+        self.store.data()
+    }
+
+    pub(crate) fn state_mut(&mut self) -> &mut HostState {
+        self.store.data_mut()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn store_mut(&mut self) -> &mut Store<HostState> {
+        &mut self.store
+    }
+
     /// Whether the module exports `name`.
     pub fn has_export(&self, name: &str) -> bool {
         self.module.has_export(name)

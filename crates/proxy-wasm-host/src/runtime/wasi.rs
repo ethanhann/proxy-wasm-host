@@ -16,6 +16,19 @@ use crate::runtime::HostState;
 use crate::runtime::memory::{GuestMemory, GuestPtr, GuestSlice, split};
 
 const MODULE: &str = "wasi_snapshot_preview1";
+
+/// The eight function names this module registers under `MODULE`.
+#[cfg(test)]
+pub(crate) const WASI_FUNCTIONS: &[&str] = &[
+    "fd_write",
+    "clock_time_get",
+    "random_get",
+    "environ_sizes_get",
+    "environ_get",
+    "args_sizes_get",
+    "args_get",
+    "proc_exit",
+];
 const IOVEC_SIZE: u32 = 8;
 const MAX_RANDOM_BYTES: u32 = 64 * 1024;
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
@@ -561,5 +574,23 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Err(Error::GuestExit { code: 9 })));
+    }
+
+    #[test]
+    fn every_listed_wasi_name_is_registered() {
+        // Arrange
+        let engine = crate::runtime::test_support::engine();
+        let services = crate::runtime::test_support::services();
+        let mut store = wasmtime::Store::new(engine.wasmtime(), HostState::new(services));
+
+        // Act
+        let defined: Vec<bool> = WASI_FUNCTIONS
+            .iter()
+            .map(|name| engine.linker().get(&mut store, MODULE, name).is_ok())
+            .collect();
+
+        // Assert
+        assert_eq!(WASI_FUNCTIONS.len(), 8);
+        assert!(defined.iter().all(|defined| *defined));
     }
 }

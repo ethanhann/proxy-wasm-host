@@ -1,11 +1,13 @@
 //! The data stored in every instance's wasmtime store.
 
+use std::any::Any;
 use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use wasmtime::{Memory, StoreLimits, TypedFunc};
 
 use crate::abi::v0_2_1::types::LogLevel;
+use crate::abi::v0_2_1::{Callback, ContextTable, StreamHost};
 
 /// Where guest log output goes.
 ///
@@ -126,6 +128,9 @@ pub(crate) struct HostState {
     memory: Option<Memory>,
     allocator: Option<TypedFunc<i32, i32>>,
     poisoned: bool,
+    stream_host: Option<Box<dyn StreamHost>>,
+    contexts: ContextTable,
+    current_callback: Option<Callback>,
 }
 
 impl HostState {
@@ -136,6 +141,9 @@ impl HostState {
             memory: None,
             allocator: None,
             poisoned: false,
+            stream_host: None,
+            contexts: ContextTable::new(),
+            current_callback: None,
         }
     }
 
@@ -177,6 +185,48 @@ impl HostState {
 
     pub(crate) fn poison(&mut self) {
         self.poisoned = true;
+    }
+
+    pub(crate) fn stream_host(&mut self) -> Option<&mut dyn StreamHost> {
+        self.stream_host.as_deref_mut()
+    }
+
+    pub(crate) fn set_stream_host(&mut self, stream: Box<dyn StreamHost>) {
+        self.stream_host = Some(stream);
+    }
+
+    pub(crate) fn take_stream_host(&mut self) -> Option<Box<dyn StreamHost>> {
+        self.stream_host.take()
+    }
+
+    /// The installed stream host as the concrete type `enter` stored.
+    pub(crate) fn stream_host_as<H: StreamHost>(&mut self) -> Option<&mut H> {
+        let stream: &mut dyn StreamHost = self.stream_host.as_deref_mut()?;
+        let any: &mut dyn Any = stream;
+        any.downcast_mut::<H>()
+    }
+
+    /// The installed stream host as the concrete type `enter` stored.
+    pub(crate) fn stream_host_as_ref<H: StreamHost>(&self) -> Option<&H> {
+        let stream: &dyn StreamHost = self.stream_host.as_deref()?;
+        let any: &dyn Any = stream;
+        any.downcast_ref::<H>()
+    }
+
+    pub(crate) fn contexts(&self) -> &ContextTable {
+        &self.contexts
+    }
+
+    pub(crate) fn contexts_mut(&mut self) -> &mut ContextTable {
+        &mut self.contexts
+    }
+
+    pub(crate) fn current_callback(&self) -> Option<Callback> {
+        self.current_callback
+    }
+
+    pub(crate) fn set_current_callback(&mut self, callback: Option<Callback>) {
+        self.current_callback = callback;
     }
 }
 

@@ -41,7 +41,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-machete,cargo-audit, cargo-deny
+          tool: cargo-machete,cargo-audit,cargo-deny
       - run: just check-code-quality
 
   msrv:
@@ -68,6 +68,6 @@ jobs:
       - run: just build-guests
       - run: |
           if ! git diff --exit-code -- crates/proxy-wasm-host/tests/fixtures; then
-            echo "the committed fixtures differ from a fresh build, rebuild them with: just build-guests"
+            echo "the committed fixtures differ from a fresh build, rebuild them with just build-guests and commit the result"
             exit 1
           fi

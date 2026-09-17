@@ -58,10 +58,34 @@ pub(crate) fn write_to_guest(
     Ok(slice)
 }
 
+/// Writes `bytes` into the guest and stores the address and the size at the
+/// two return pointers.
+///
+/// Both return pointers are checked before the allocator runs, so a bad
+/// pointer costs the guest no allocation.
+pub(crate) fn write_return(
+    ctx: &mut impl AsContextMut<Data = HostState>,
+    bytes: &[u8],
+    return_data: GuestPtr,
+    return_size: GuestPtr,
+) -> Result<(), Error> {
+    {
+        let (memory, _) = split(ctx)?;
+        memory.read_u32(return_data)?;
+        memory.read_u32(return_size)?;
+    }
+    let slice = write_to_guest(ctx, bytes)?;
+    let (mut memory, _) = split(ctx)?;
+    memory.write_u32(return_data, slice.ptr().address())?;
+    memory.write_u32(return_size, slice.len())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::MemoryError;
+    use crate::runtime::Instance;
     use crate::runtime::test_support::{engine, instance};
 
     const FIXED: &str = r#"(module
@@ -241,5 +265,78 @@ mod tests {
             Ok(b"grown".as_slice())
         );
         assert_eq!(instance.memory().unwrap().size(), 2 * 65_536);
+    }
+
+    const COUNTING: &str = r#"(module
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32)
+            (i32.store8 (i32.const 0) (i32.add (i32.load8_u (i32.const 0)) (i32.const 1)))
+            i32.const 1024)
+        (func (export "_start")))"#;
+
+    fn allocator_calls(instance: &mut Instance) -> u8 {
+        instance
+            .memory()
+            .unwrap()
+            .read(GuestSlice::new(GuestPtr::from_address(0), 1).unwrap())
+            .unwrap()[0]
+    }
+
+    #[test]
+    fn write_return_stores_the_address_and_the_size() {
+        // Arrange
+        let engine = engine();
+        let mut instance = instance(&engine, COUNTING).unwrap();
+        let (data_ptr, size_ptr) = (GuestPtr::from_address(100), GuestPtr::from_address(104));
+
+        // Act
+        let result = write_return(instance.store_mut(), b"abc", data_ptr, size_ptr);
+
+        // Assert
+        assert!(result.is_ok());
+        let memory = instance.memory().unwrap();
+        assert_eq!(memory.read_u32(data_ptr), Ok(1024));
+        assert_eq!(memory.read_u32(size_ptr), Ok(3));
+        assert_eq!(
+            memory.read(GuestSlice::new(GuestPtr::from_address(1024), 3).unwrap()),
+            Ok(b"abc".as_slice())
+        );
+    }
+
+    #[test]
+    fn write_return_of_an_empty_value_writes_two_zeros_without_allocating() {
+        // Arrange
+        let engine = engine();
+        let mut instance = instance(&engine, COUNTING).unwrap();
+        let (data_ptr, size_ptr) = (GuestPtr::from_address(100), GuestPtr::from_address(104));
+        instance.memory().unwrap().write_u32(data_ptr, 7).unwrap();
+
+        // Act
+        let result = write_return(instance.store_mut(), b"", data_ptr, size_ptr);
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(allocator_calls(&mut instance), 0);
+        let memory = instance.memory().unwrap();
+        assert_eq!(memory.read_u32(data_ptr), Ok(0));
+        assert_eq!(memory.read_u32(size_ptr), Ok(0));
+    }
+
+    #[test]
+    fn write_return_with_a_bad_return_pointer_does_not_allocate() {
+        // Arrange
+        let engine = engine();
+        let mut instance = instance(&engine, COUNTING).unwrap();
+        let (data_ptr, size_ptr) = (GuestPtr::from_address(100), GuestPtr::from_address(65_534));
+
+        // Act
+        let result = write_return(instance.store_mut(), b"abc", data_ptr, size_ptr);
+
+        // Assert
+        assert!(matches!(
+            result,
+            Err(Error::Memory(MemoryError::OutOfBounds { .. }))
+        ));
+        assert_eq!(allocator_calls(&mut instance), 0);
     }
 }

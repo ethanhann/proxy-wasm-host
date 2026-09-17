@@ -10,6 +10,8 @@
 //! [`HeaderMap`] and [`Buffer`] traits.
 //! The [`runtime`] module compiles and runs a guest, bounds its resources,
 //! and gives host functions safe access to guest memory.
+//! [`abi::v0_2_1::Guest`] binds an instance to the ABI and drives its
+//! callbacks.
 
 pub mod abi;
 pub mod buffer;

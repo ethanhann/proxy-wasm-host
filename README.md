@@ -6,7 +6,8 @@ It is a port of [proxy-wasm-go-host](https://github.com/mosn/proxy-wasm-go-host)
 
 ## Status
 
-The crate is not published yet and has no ABI code yet.
+The crate is not published yet.
+It runs the request header lifecycle of ABI v0.2.1 and does not yet serve every host function.
 When it is published, the facts below decide whether you can use it.
 
 - ABI: Proxy-Wasm v0.2.1, with v0.2.0 guests accepted.
@@ -25,6 +26,8 @@ just check
 `check` runs the format check, clippy with warnings denied, the build, the tests, and rustdoc with warnings denied.
 CI runs the same recipe.
 Run `just` with no arguments to list every recipe.
+`just build-guests` rebuilds the test guests under `crates/test-guests`.
+It needs rustup, and it installs the pinned toolchain and the `wasm32-wasip1` target on first use.
 
 ## License
 

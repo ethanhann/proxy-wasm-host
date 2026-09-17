@@ -8,6 +8,8 @@
 
 use std::fmt;
 
+use crate::abi::v0_2_1::{Callback, ContextId, ContextProblem};
+
 /// Why the runtime could not do what the embedder asked.
 ///
 /// The variant tells you whether the guest is still usable.
@@ -98,6 +100,35 @@ pub enum Error {
     ValueTooLarge {
         /// The value size.
         size: usize,
+    },
+    /// An earlier `proxy_on_vm_start` or `proxy_on_configure` returned
+    /// false, so this callback and every later one on the same root is
+    /// refused.
+    #[error("the guest rejected root context {root} in {callback}")]
+    GuestRejected {
+        /// The callback that returned false.
+        callback: Callback,
+        /// The root context that callback served.
+        root: ContextId,
+    },
+    /// A context argument does not satisfy the callback's precondition.
+    #[error("context {id} {problem}")]
+    Context {
+        /// The context the embedder passed.
+        id: ContextId,
+        /// What is wrong with it.
+        problem: ContextProblem,
+    },
+    /// The instance has allocated every context identifier.
+    #[error("no context identifier is left")]
+    ContextIdsExhausted,
+    /// A callback returned a value outside its enumeration.
+    #[error("{callback} returned {value}, which is not a valid result")]
+    UnexpectedReturn {
+        /// The callback that returned the value.
+        callback: Callback,
+        /// The value it returned.
+        value: i32,
     },
 }
 
@@ -230,5 +261,41 @@ mod tests {
             error,
             Error::Memory(MemoryError::NegativePointer { ptr: -1 })
         ));
+    }
+
+    #[test]
+    fn the_context_errors_display_their_subject() {
+        // Arrange
+        let id = ContextId::try_from(4).unwrap();
+        let errors = [
+            Error::GuestRejected {
+                callback: Callback::Configure,
+                root: id,
+            },
+            Error::Context {
+                id,
+                problem: ContextProblem::NotDone,
+            },
+            Error::ContextIdsExhausted,
+            Error::UnexpectedReturn {
+                callback: Callback::Done,
+                value: 7,
+            },
+        ];
+
+        // Act
+        let texts: Vec<String> = errors.iter().map(ToString::to_string).collect();
+
+        // Assert
+        assert_eq!(
+            texts[0],
+            "the guest rejected root context 4 in proxy_on_configure"
+        );
+        assert_eq!(texts[1], "context 4 is not done");
+        assert_eq!(texts[2], "no context identifier is left");
+        assert_eq!(
+            texts[3],
+            "proxy_on_done returned 7, which is not a valid result"
+        );
     }
 }

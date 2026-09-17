@@ -83,7 +83,8 @@ impl EngineConfig {
         self
     }
 
-    /// Builds the engine, its linker, and unless disabled its ticker thread.
+    /// Builds the engine, its linker with the WASI functions and the ABI
+    /// v0.2.1 host functions, and unless disabled its ticker thread.
     ///
     /// # Errors
     ///
@@ -91,7 +92,7 @@ impl EngineConfig {
     /// [`Error::Instantiate`] when wasmtime rejects the configuration or a
     /// WASI function cannot be registered.
     pub fn build(self) -> Result<Engine, Error> {
-        self.build_with(|_| Ok(()))
+        self.build_with(crate::abi::v0_2_1::host_functions::register)
     }
 
     /// Builds the engine and lets `register` add imports to the linker after
@@ -378,5 +379,25 @@ mod tests {
 
         // Assert
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn the_linker_defines_the_abi_host_functions() {
+        // Arrange
+        let engine = EngineConfig::new()
+            .with_external_ticks(true)
+            .build()
+            .unwrap();
+        let wat = r#"(module
+            (import "env" "proxy_log" (func (param i32 i32 i32) (result i32)))
+            (import "env" "proxy_call_foreign_function" (func (param i32 i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024))"#;
+
+        // Act
+        let result = crate::runtime::test_support::instance(&engine, wat);
+
+        // Assert
+        assert!(result.is_ok());
     }
 }

@@ -2,9 +2,9 @@
 _list:
     @just --list
 
-# Install development tooling
+# Install the development tooling that the quality checks use.
 install-dev-tools:
-    cargo install --locked cargo-deny cargo-audit
+    cargo install --locked cargo-machete cargo-deny cargo-audit
 
 # Build every workspace target.
 build:
@@ -84,6 +84,7 @@ build-guests:
             exit 1
         fi
         cp "$artifact" "$fixtures_dir/$name.wasm"
+        chmod 644 "$fixtures_dir/$name.wasm"
         echo "built crates/proxy-wasm-host/tests/fixtures/$name.wasm"
     done
 
