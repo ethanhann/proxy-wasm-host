@@ -16,4 +16,10 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+getrandom = "0.4"
 thiserror = "2"
+tracing = "0.1"
+wasmtime = { version = "48.0", default-features = false, features = ["runtime", "cranelift", "std", "addr2line", "demangle"] }
+
+[dev-dependencies]
+wat = "1"

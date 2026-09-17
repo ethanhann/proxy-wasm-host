@@ -8,15 +8,18 @@
 //! The serialization rules for maps and property paths live under [`codec`].
 //! You lend your own header maps and buffers to the crate through the
 //! [`HeaderMap`] and [`Buffer`] traits.
-//!
-//! The runtime, the host functions, and the callbacks are under construction.
+//! The [`runtime`] module compiles and runs a guest, bounds its resources,
+//! and gives host functions safe access to guest memory.
 
 pub mod abi;
 pub mod buffer;
 pub mod codec;
+pub mod error;
 pub mod header_map;
+pub mod runtime;
 
 pub use buffer::Buffer;
+pub use error::{Error, Limit, MemoryError};
 pub use header_map::{HeaderMap, VecHeaderMap};
 
 /// The embedder refused a write to a header map or a buffer.
