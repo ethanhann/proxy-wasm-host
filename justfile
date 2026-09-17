@@ -31,48 +31,60 @@ fmt-check:
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
-# Check depene
-check-deps:
-    cargo audit
-    cargo deny check
-
 # Run every check that CI runs.
-check: fmt-check lint build test check-deps doc
+check: fmt-check lint build test doc
 
 # Run the code quality checks.
 check-code-quality: lint
     cargo machete
     cargo audit
+    cargo deny check
 
 # Build the test guests for wasm32-wasip1 and copy them into the fixtures directory.
 build-guests:
     #!/usr/bin/env bash
     set -euo pipefail
-    guests_dir="crates/test-guests"
-    fixtures_dir="crates/proxy-wasm-host/tests/fixtures"
+    root="$(pwd)"
+    guests_dir="$root/crates/test-guests"
+    fixtures_dir="$root/crates/proxy-wasm-host/tests/fixtures"
     target="wasm32-wasip1"
-    target_dir="$guests_dir/target"
     shopt -s nullglob
-    guests=("$guests_dir"/*/)
-    if [ "${#guests[@]}" -eq 0 ]; then
-        echo "no guests under $guests_dir, nothing to build"
+    members=()
+    for guest in "$guests_dir"/*/; do
+        [ -f "$guest/Cargo.toml" ] && members+=("$guest")
+    done
+    if [ "${#members[@]}" -eq 0 ]; then
+        echo "no guests under crates/test-guests, nothing to build"
         exit 0
     fi
-    if ! rustup target list --installed | grep -qx "$target"; then
-        echo "FAIL the $target target is not installed, run: rustup target add $target"
+    cd "$guests_dir"
+    rustup toolchain install --no-self-update
+    pinned="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+    running="$(rustc -vV | sed -n 's/^release: //p')"
+    if [ "$running" != "$pinned" ]; then
+        echo "FAIL rustc $running is running but rust-toolchain.toml pins $pinned"
         exit 1
     fi
+    if ! rustup target list --installed | grep -qx "$target"; then
+        echo "FAIL the $target target is not installed, run: rustup target add $target --toolchain $pinned"
+        exit 1
+    fi
+    cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    sysroot="$(rustc --print sysroot)"
+    commit="$(rustc -vV | sed -n 's/^commit-hash: //p')"
+    export RUSTFLAGS="--remap-path-prefix=$cargo_home/registry/src=/cargo/registry --remap-path-prefix=$guests_dir=/guest --remap-path-prefix=$sysroot/lib/rustlib/src/rust=/rustc/$commit"
+    echo "RUSTFLAGS=$RUSTFLAGS"
+    cargo build --release --locked --workspace --target "$target"
     mkdir -p "$fixtures_dir"
-    for guest in "${guests[@]}"; do
-        name=$(basename "$guest")
-        artifact="$target_dir/$target/release/${name//-/_}.wasm"
-        cargo build --release --locked --target "$target" --target-dir "$target_dir" --manifest-path "$guest/Cargo.toml"
+    for guest in "${members[@]}"; do
+        name="$(basename "$guest")"
+        artifact="$guests_dir/target/$target/release/${name//-/_}.wasm"
         if [ ! -f "$artifact" ]; then
             echo "FAIL expected artifact $artifact after building $name"
             exit 1
         fi
         cp "$artifact" "$fixtures_dir/$name.wasm"
-        echo "built $fixtures_dir/$name.wasm"
+        echo "built crates/proxy-wasm-host/tests/fixtures/$name.wasm"
     done
 
 # Run the benchmarks.

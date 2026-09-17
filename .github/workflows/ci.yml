@@ -41,7 +41,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-machete,cargo-audit
+          tool: cargo-machete,cargo-audit, cargo-deny
       - run: just check-code-quality
 
   msrv:
@@ -59,9 +59,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/test-guests
       - uses: extractions/setup-just@v4
       - run: just build-guests
-      - run: git diff --exit-code -- crates/proxy-wasm-host/tests/fixtures
+      - run: |
+          if ! git diff --exit-code -- crates/proxy-wasm-host/tests/fixtures; then
+            echo "the committed fixtures differ from a fresh build, rebuild them with: just build-guests"
+            exit 1
+          fi
