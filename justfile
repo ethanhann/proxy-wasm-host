@@ -1,5 +1,3 @@
-import? '~/.claude/agentic_dev.just'
-
 # List recipes.
 _list:
     @just --list
