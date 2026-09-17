@@ -16,5 +16,4 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-
-[dev-dependencies]
+thiserror = "2"
