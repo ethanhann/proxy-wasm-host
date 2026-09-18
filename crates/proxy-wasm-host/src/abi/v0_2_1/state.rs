@@ -218,7 +218,7 @@ mod tests {
     fn the_trait_reaches_the_state_the_abi_root_built() {
         // Arrange
         let services = crate::runtime::test_support::services();
-        let state = HostState::new(services, crate::abi::new_state());
+        let state = HostState::new(services, crate::abi::state());
 
         // Act
         let found = state.abi().current_callback();
@@ -231,7 +231,7 @@ mod tests {
     fn a_write_through_the_trait_is_read_back_through_it() {
         // Arrange
         let services = crate::runtime::test_support::services();
-        let mut state = HostState::new(services, crate::abi::new_state());
+        let mut state = HostState::new(services, crate::abi::state());
 
         // Act
         state
@@ -243,5 +243,19 @@ mod tests {
             state.abi().current_callback(),
             Some(Callback::RequestHeaders)
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "the ABI layer fills the slot")]
+    fn a_slot_of_another_type_is_reported_as_an_unreachable_state() {
+        // Arrange
+        let services = crate::runtime::test_support::services();
+        let state = HostState::new(services, Box::new(0_u8));
+
+        // Act
+        let _ = state.abi();
+
+        // Assert
+        // The panic is the assertion, which the attribute above states.
     }
 }

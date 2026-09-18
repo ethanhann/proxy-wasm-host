@@ -1,9 +1,9 @@
 //! The checks and the call every callback method shares.
 
-use crate::abi::v0_2_1::AbiAccess;
 use wasmtime::{TypedFunc, WasmParams, WasmResults};
 
 use crate::Error;
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::{Callback, ContextId, ContextProblem, ContextState, ContextType, Guest};
 
 /// Refuses a poisoned instance, and poisons an instance whose last callback

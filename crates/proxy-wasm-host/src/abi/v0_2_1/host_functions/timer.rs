@@ -1,10 +1,10 @@
 //! `proxy_set_tick_period_milliseconds`.
 
-use crate::abi::v0_2_1::AbiAccess;
 use std::time::Duration;
 
 use wasmtime::AsContextMut;
 
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::call::context;
 use crate::abi::v0_2_1::types::Status;

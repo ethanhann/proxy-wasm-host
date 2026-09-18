@@ -2,12 +2,12 @@
 
 mod callbacks;
 
-use crate::abi::v0_2_1::AbiAccess;
 use std::fmt;
 use std::time::Duration;
 
 use crate::Error;
 use crate::abi::AbiVersion;
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::{
     CallScope, Callback, ContextId, ContextState, ContextType, NoStream, Plugin, StreamHost,
 };

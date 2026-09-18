@@ -53,7 +53,7 @@ impl Instance {
         let budget = Budget::new(limits, engine);
         let mut store = Store::new(
             engine.wasmtime(),
-            HostState::new(services, crate::abi::new_state()),
+            HostState::new(services, crate::abi::state()),
         );
         budget.refill(&mut store)?;
         let mut builder = StoreLimitsBuilder::new();

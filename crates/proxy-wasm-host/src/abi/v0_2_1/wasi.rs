@@ -5,6 +5,10 @@
 //! services in the host state, the environment functions serve the per guest
 //! variables, and the argument functions report no arguments.
 //! A guest that imports any other WASI function fails to instantiate.
+//!
+//! A file descriptor maps to a log level, which is a Proxy-Wasm decision
+//! rather than a WASI one, so the module sits with the version that makes it.
+//! This version's registrar adds these functions before its own.
 
 use std::fmt::Display;
 
@@ -583,7 +587,7 @@ mod tests {
         let services = crate::runtime::test_support::services();
         let mut store = wasmtime::Store::new(
             engine.wasmtime(),
-            HostState::new(services, crate::abi::new_state()),
+            HostState::new(services, crate::abi::state()),
         );
 
         // Act

@@ -11,8 +11,8 @@ use crate::runtime::HostServices;
 /// The runtime keeps the cached memory handle, the guest allocator, the store
 /// limits, and the poison flag here, next to the services the embedder
 /// supplied.
-/// Everything the ABI layer keeps is in one [`AbiState`], which the runtime
-/// does not read.
+/// Everything the ABI layer keeps is in one opaque slot, which the ABI layer
+/// fills and only the ABI layer reads inside.
 /// The type is crate private, so nothing outside the crate can clear the
 /// poison flag or replace the cached handles.
 pub(crate) struct HostState {
@@ -76,12 +76,12 @@ impl HostState {
         self.poisoned = true;
     }
 
-    /// The ABI state, which only the ABI layer reads inside.
+    /// The slot the ABI layer filled, which only that layer reads inside.
     pub(crate) fn abi_slot(&self) -> &(dyn Any + Send) {
         self.abi.as_ref()
     }
 
-    /// The ABI state, for the layer that owns it.
+    /// The slot the ABI layer filled, which only that layer reads inside.
     pub(crate) fn abi_slot_mut(&mut self) -> &mut (dyn Any + Send) {
         self.abi.as_mut()
     }
@@ -99,7 +99,7 @@ mod tests {
         // Arrange
         let mut state = HostState::new(
             HostServices::new(Arc::new(RecordingSink::default())),
-            crate::abi::new_state(),
+            crate::abi::state(),
         );
 
         // Act
@@ -115,7 +115,7 @@ mod tests {
         let services = HostServices::new(Arc::new(RecordingSink::default()));
 
         // Act
-        let state = HostState::new(services, crate::abi::new_state());
+        let state = HostState::new(services, crate::abi::state());
 
         // Assert
         assert!(state.memory().is_none());

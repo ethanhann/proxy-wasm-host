@@ -1,14 +1,16 @@
 //! The direction the runtime layer depends in.
 //!
-//! The runtime compiles and runs a guest and bounds its resources, and it
-//! does that the same way whichever ABI version the guest speaks. It
-//! therefore names the versioned module only where a version has to be
-//! chosen, and the list below records every such place and why it is there.
+//! The runtime compiles and runs a guest and bounds its resources.
+//! It does that the same way whichever ABI version the guest speaks.
+//! It therefore names the versioned module only where a version has to be
+//! chosen, and the list below records every such place and why.
 //!
-//! This is a text search, so it sees a name only where a name is written. A
-//! dependency carried by a type alias, by a re-export, or by a value whose
-//! type is never spelled at the call site is invisible to it. It is a
-//! stand-in until the two layers are separate compilation units, which is
+//! This is a text search, so it finds a name only where a name is written.
+//! A dependency held by a type alias, by a re-export outside this directory,
+//! by a macro that builds the path, or by a value whose type is never spelled
+//! at the call site is invisible to it.
+//! It deters an accident and it does not resist intent.
+//! It stands in until the two layers are separate compilation units, which is
 //! what makes the direction the compiler's job.
 
 #[cfg(test)]
@@ -23,26 +25,30 @@ mod tests {
 
     const ALLOWED: &[Allowed] = &[
         Allowed {
-            file: "engine.rs",
+            file: "runtime/engine.rs",
             reason: "the linker takes its host functions through a registrar, \
                      and the default one is this version's",
         },
         Allowed {
-            file: "services.rs",
+            file: "runtime/services.rs",
             reason: "the services an embedder supplies carry a log level and \
                      the shared services, and the type moves to the ABI layer \
                      with its rename",
         },
         Allowed {
-            file: "test_support.rs",
+            file: "runtime/test_support.rs",
             reason: "the test services build a log level, and they follow the \
                      services",
         },
         Allowed {
-            file: "layering.rs",
+            file: "runtime/layering.rs",
             reason: "the check holds the text it searches for",
         },
     ];
+
+    fn src_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+    }
 
     fn runtime_sources() -> Vec<PathBuf> {
         fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
@@ -58,78 +64,165 @@ mod tests {
                 }
             }
         }
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let root = src_root();
         let mut found = vec![root.join("runtime.rs")];
         walk(&root.join("runtime"), &mut found);
         found
     }
 
-    /// The versioned module, spelled so that a wrapped line still matches.
+    /// The version segment, which is unique in this crate.
+    ///
+    /// The search is for the bare segment rather than for a whole path.
+    /// A formatter cannot split an identifier, so a wrapped path still
+    /// matches, and a braced import that renames the module still matches
+    /// because the segment is written either way.
     fn names_the_version(source: &str) -> bool {
-        let stripped: String = source.chars().filter(|c| !c.is_whitespace()).collect();
-        stripped.contains("abi::v0_2_1") || stripped.contains("v0_2_1::")
+        source.contains("v0_2_1")
     }
 
-    #[test]
-    fn the_walk_finds_the_runtime_sources() {
-        // Arrange
-        let expected = "engine.rs";
+    /// The path a listing and a message name a source by.
+    fn listed(path: &Path) -> String {
+        path.strip_prefix(src_root())
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
 
-        // Act
-        let found = runtime_sources();
+    /// Every line of `sources` that names the version in a file the list does
+    /// not allow.
+    fn offenders(sources: &[(String, String)]) -> Vec<String> {
+        sources
+            .iter()
+            .filter(|(name, _)| !ALLOWED.iter().any(|a| a.file == name))
+            .flat_map(|(name, body)| {
+                body.lines()
+                    .enumerate()
+                    .filter(|(_, line)| names_the_version(line))
+                    .map(move |(at, line)| format!("{name}:{}: {}", at + 1, line.trim()))
+            })
+            .collect()
+    }
 
-        // Assert
+    fn read_runtime_sources() -> Vec<(String, String)> {
+        let sources = runtime_sources();
         assert!(
-            found.len() > 5,
-            "a walk that finds nothing would pass every other test over nothing"
+            sources.iter().any(|p| p.ends_with("runtime.rs")),
+            "the walk must reach the module root, where a re-export would go"
         );
-        assert!(found.iter().any(|p| p.ends_with(expected)));
+        assert!(
+            sources.len() > 5,
+            "a walk that found nothing would report nothing and pass"
+        );
+        sources
+            .iter()
+            .map(|p| (listed(p), std::fs::read_to_string(p).unwrap_or_default()))
+            .collect()
     }
 
     #[test]
     fn the_runtime_names_the_version_only_where_the_list_allows() {
         // Arrange
-        let sources = runtime_sources();
+        let sources = read_runtime_sources();
 
         // Act
-        let offenders: Vec<String> = sources
+        let found = offenders(&sources);
+
+        // Assert
+        let allowed: Vec<String> = ALLOWED
             .iter()
-            .filter(|path| {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                !ALLOWED.iter().any(|a| a.file == name)
-                    && std::fs::read_to_string(path).is_ok_and(|s| names_the_version(&s))
-            })
-            .map(|path| {
-                path.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into()
-            })
+            .map(|a| format!("{} because {}", a.file, a.reason))
             .collect();
-
-        // Assert
-        assert_eq!(offenders, Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_name_wrapped_across_two_lines_is_still_found() {
-        // Arrange
-        let wrapped = "use crate::abi::\n    v0_2_1::AbiState;";
-
-        // Act
-        let found = names_the_version(wrapped);
-
-        // Assert
         assert!(
-            found,
-            "a formatter may wrap a long path, so the search ignores spacing"
+            found.is_empty(),
+            "the runtime layer names the versioned ABI module here:\n  {}\n\
+             Reach it through something the ABI layer owns, or add the file \
+             below with the reason it has to.\nAllowed today:\n  {}",
+            found.join("\n  "),
+            allowed.join("\n  ")
         );
     }
 
     #[test]
-    fn every_allowed_file_still_names_the_version() {
+    fn a_file_the_list_does_not_allow_is_reported_with_its_line() {
         // Arrange
-        let sources = runtime_sources();
+        let sources = [(
+            "runtime/limits.rs".to_owned(),
+            "fn f() {}\nuse crate::abi::v0_2_1::AbiState;\n".to_owned(),
+        )];
+
+        // Act
+        let found = offenders(&sources);
+
+        // Assert
+        assert_eq!(
+            found,
+            ["runtime/limits.rs:2: use crate::abi::v0_2_1::AbiState;"]
+        );
+    }
+
+    #[test]
+    fn a_file_the_list_allows_is_not_reported() {
+        // Arrange
+        let sources = [(
+            "runtime/engine.rs".to_owned(),
+            "crate::abi::v0_2_1::host_functions::register\n".to_owned(),
+        )];
+
+        // Act
+        let found = offenders(&sources);
+
+        // Assert
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn a_nested_file_is_not_exempt_by_sharing_a_name() {
+        // Arrange
+        let sources = [(
+            "runtime/nested/engine.rs".to_owned(),
+            "use crate::abi::v0_2_1::AbiState;\n".to_owned(),
+        )];
+
+        // Act
+        let found = offenders(&sources);
+
+        // Assert
+        assert_eq!(found.len(), 1, "the list names a path, not a file name");
+    }
+
+    #[test]
+    fn a_spelling_that_hides_the_path_is_still_found() {
+        // Arrange
+        // Neither of these holds the path as one string, and both write the
+        // version segment in the file.
+        let hidden = [
+            "use crate::abi::\n    v0_2_1\n    ::AbiState;",
+            "use crate::abi::{version, v0_2_1 as v};",
+        ];
+
+        // Act
+        let found = hidden.map(names_the_version);
+
+        // Assert
+        assert_eq!(found, [true; 2]);
+    }
+
+    #[test]
+    fn a_file_that_names_no_version_is_not_reported() {
+        // Arrange
+        let plain = "use crate::runtime::HostState;";
+
+        // Act
+        let found = names_the_version(plain);
+
+        // Assert
+        assert!(!found);
+    }
+
+    #[test]
+    fn every_allowed_file_exists_and_still_names_the_version() {
+        // Arrange
+        let sources = read_runtime_sources();
 
         // Act
         let stale: Vec<&str> = ALLOWED
@@ -137,35 +230,16 @@ mod tests {
             .filter(|allowed| {
                 sources
                     .iter()
-                    .find(|p| p.file_name().unwrap_or_default() == allowed.file)
-                    .is_some_and(|p| {
-                        std::fs::read_to_string(p).is_ok_and(|s| !names_the_version(&s))
-                    })
+                    .find(|(name, _)| name == allowed.file)
+                    .is_none_or(|(_, body)| !names_the_version(body))
             })
             .map(|allowed| allowed.file)
             .collect();
 
         // Assert
-        assert_eq!(
-            stale,
-            Vec::<&str>::new(),
-            "an entry that is no longer needed must go"
+        assert!(
+            stale.is_empty(),
+            "these entries name a file that is gone or no longer needs one: {stale:?}"
         );
-    }
-
-    #[test]
-    fn every_allowed_file_carries_a_reason() {
-        // Arrange
-        let entries = ALLOWED;
-
-        // Act
-        let silent: Vec<&str> = entries
-            .iter()
-            .filter(|a| a.reason.len() < 20)
-            .map(|a| a.file)
-            .collect();
-
-        // Assert
-        assert_eq!(silent, Vec::<&str>::new());
     }
 }

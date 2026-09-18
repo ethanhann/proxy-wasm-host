@@ -7,9 +7,9 @@
 //! section lists for a resource that is not available, which the caller
 //! passes as `absent`.
 
-use crate::abi::v0_2_1::AbiAccess;
 use std::sync::Arc;
 
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::SharedServices;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::Status;

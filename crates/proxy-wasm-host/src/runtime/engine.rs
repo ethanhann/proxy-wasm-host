@@ -94,8 +94,11 @@ impl EngineConfig {
         self.build_with(crate::abi::v0_2_1::host_functions::register)
     }
 
-    /// Builds the engine and lets `register` add imports to the linker after
-    /// the WASI functions.
+    /// Builds the engine and lets `register` supply every import the linker
+    /// offers.
+    ///
+    /// The registrar supplies the WASI functions as well as the ABI functions,
+    /// so a registrar that adds nothing yields an engine that links neither.
     pub(crate) fn build_with(
         self,
         register: impl FnOnce(&mut Linker<HostState>) -> Result<(), Error>,

@@ -64,10 +64,10 @@ pub(super) fn proxy_get_shared_data(
 
 #[cfg(test)]
 mod tests {
-    use crate::abi::v0_2_1::AbiAccess;
     use std::sync::Arc;
 
     use super::*;
+    use crate::abi::v0_2_1::AbiAccess;
     use crate::abi::v0_2_1::test_support::services::{RecordingServices, SharedCall};
     use crate::abi::v0_2_1::test_support::{
         VM_ID, bare, outcome, returned, shared_hosted, status, write,

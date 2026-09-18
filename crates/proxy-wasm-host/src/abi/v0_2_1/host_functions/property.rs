@@ -5,12 +5,13 @@
 //! services.
 //! Every other path goes to the stream host.
 
-use crate::abi::v0_2_1::AbiAccess;
 use wasmtime::AsContextMut;
 
+use crate::abi::v0_2_1::AbiAccess;
+use crate::abi::v0_2_1::Plugin;
 use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::host_functions::Served;
 use crate::abi::v0_2_1::host_functions::call::{context, from_embedder, with_stream};
-use crate::abi::v0_2_1::host_functions::served::Served;
 use crate::abi::v0_2_1::types::Status;
 use crate::codec::path::decode_path;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
@@ -20,46 +21,52 @@ const PLUGIN_NAME: &[u8] = b"plugin_name";
 const PLUGIN_ROOT_ID: &[u8] = b"plugin_root_id";
 const PLUGIN_VM_ID: &[u8] = b"plugin_vm_id";
 
-/// The value of a property the crate answers itself.
-///
-/// A path that is one of the three is answered or refused here and never
-/// reaches the stream host, which is what the plugin configuration buffer
-/// does.
-/// The VM id needs no context, as the VM configuration needs none.
-/// The plugin name and the plugin root id hang on a root context, so they
-/// follow the rule every other body follows and refuse a root the guest
-/// rejected.
+/// A property the ABI assigns to Proxy-Wasm, which the crate answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WellKnown {
+    Name,
+    RootId,
+    VmId,
+}
+
 /// Whether the crate serves this property itself.
 ///
 /// The three names the ABI assigns to Proxy-Wasm come from what the embedder
-/// supplied before the call, so no implementation ever sees them.
-fn served(path: &[&[u8]]) -> Served {
+/// supplied before the call, so no implementation sees them.
+///
+/// See [`Served`] for the rule.
+fn served(path: &[&[u8]]) -> Served<WellKnown> {
     match path {
-        [PLUGIN_NAME | PLUGIN_ROOT_ID | PLUGIN_VM_ID] => Served::Crate,
+        [PLUGIN_NAME] => Served::Crate(WellKnown::Name),
+        [PLUGIN_ROOT_ID] => Served::Crate(WellKnown::RootId),
+        [PLUGIN_VM_ID] => Served::Crate(WellKnown::VmId),
         _ => Served::Embedder,
     }
 }
 
-fn well_known(state: &HostState, path: &[&[u8]]) -> Result<Vec<u8>, Failure> {
-    match path {
-        [PLUGIN_VM_ID] => Ok(state.services().vm_id().to_vec()),
-        [segment] => plugin_value(state, segment),
-        _ => unreachable!("the predicate already sent every other path to the embedder"),
+/// The value of a property the crate answers itself.
+///
+/// The VM id needs no context, as the VM configuration needs none.
+/// The plugin name and the plugin root id hang on a root context, so they
+/// follow the rule every other body follows and refuse a root the guest
+/// rejected.
+fn well_known(state: &HostState, name: WellKnown) -> Result<Vec<u8>, Failure> {
+    match name {
+        WellKnown::VmId => Ok(state.services().vm_id().to_vec()),
+        WellKnown::Name => Ok(plugin_of(state)?.name().to_vec()),
+        WellKnown::RootId => Ok(plugin_of(state)?.root_id().to_vec()),
     }
 }
 
-fn plugin_value(state: &HostState, segment: &[u8]) -> Result<Vec<u8>, Failure> {
+/// The plugin of the effective context, which a root the guest rejected does
+/// not have.
+fn plugin_of(state: &HostState) -> Result<&Plugin, Failure> {
     let effective = context(state, Status::NotFound)?;
-    let plugin = state
+    state
         .abi()
         .contexts()
         .plugin(effective)
-        .ok_or(Status::NotFound)?;
-    if segment == PLUGIN_NAME {
-        Ok(plugin.name().to_vec())
-    } else {
-        Ok(plugin.root_id().to_vec())
-    }
+        .ok_or_else(|| Status::NotFound.into())
 }
 
 pub(super) fn proxy_get_property(
@@ -76,11 +83,12 @@ pub(super) fn proxy_get_property(
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
     let path = decode_path(memory.read(path)?);
-    let value = if served(&path) == Served::Crate {
-        well_known(state, &path)?
-    } else {
-        let (call, stream) = with_stream(state, Status::NotFound)?;
-        from_embedder("property", stream.property(call, &path))?
+    let value = match served(&path) {
+        Served::Crate(name) => well_known(state, name)?,
+        Served::Embedder => {
+            let (call, stream) = with_stream(state, Status::NotFound)?;
+            from_embedder("property", stream.property(call, &path))?
+        }
     };
     write_return(ctx, &value, data_ptr, size_ptr)?;
     Ok(())
@@ -98,11 +106,13 @@ pub(super) fn proxy_set_property(
     let (memory, state) = split(ctx)?;
     let path = decode_path(memory.read(path)?);
     let value = memory.read(value)?;
-    if served(&path) == Served::Crate {
-        return Err(Status::NotFound.into());
+    match served(&path) {
+        Served::Crate(_) => Err(Status::NotFound.into()),
+        Served::Embedder => {
+            let (call, stream) = with_stream(state, Status::NotFound)?;
+            from_embedder("set_property", stream.set_property(call, &path, value))
+        }
     }
-    let (call, stream) = with_stream(state, Status::NotFound)?;
-    from_embedder("set_property", stream.set_property(call, &path, value))
 }
 
 #[cfg(test)]
@@ -462,6 +472,35 @@ mod tests {
             RecordingStream::take(instance.state_mut())
                 .property_reads()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_predicate_names_the_three_well_known_paths_and_sends_the_rest_to_the_embedder() {
+        // Arrange
+        let asked: [&[&[u8]]; 6] = [
+            &[b"plugin_name"],
+            &[b"plugin_root_id"],
+            &[b"plugin_vm_id"],
+            &[b"something_else"],
+            &[b"plugin_name", b"extra"],
+            &[],
+        ];
+
+        // Act
+        let answers = asked.map(served);
+
+        // Assert
+        assert_eq!(
+            answers,
+            [
+                Served::Crate(WellKnown::Name),
+                Served::Crate(WellKnown::RootId),
+                Served::Crate(WellKnown::VmId),
+                Served::Embedder,
+                Served::Embedder,
+                Served::Embedder,
+            ]
         );
     }
 }

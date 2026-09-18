@@ -2,12 +2,12 @@
 
 mod host;
 
-use crate::abi::v0_2_1::AbiAccess;
 use std::any::Any;
 use std::collections::HashMap;
 
 use super::doubles::{Ranges, ReadOnlyBuffer, ReadOnlyMap, RecordingBuffer, owned};
 use crate::Buffer;
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::types::{BufferType, MapType, Status, StreamType};
 use crate::abi::v0_2_1::{Access, ForeignCall, HostCall, LocalResponse};
 use crate::header_map::HeaderMap;

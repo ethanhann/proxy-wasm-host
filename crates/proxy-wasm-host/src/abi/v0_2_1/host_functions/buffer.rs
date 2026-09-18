@@ -6,13 +6,13 @@
 //! Each body resolves the buffer type before the context, so a configuration
 //! read never needs a callback to be running.
 
-use crate::abi::v0_2_1::AbiAccess;
 use wasmtime::AsContextMut;
 
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::Access;
 use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::host_functions::Served;
 use crate::abi::v0_2_1::host_functions::call::{context, from_embedder, with_stream};
-use crate::abi::v0_2_1::host_functions::served::Served;
 use crate::abi::v0_2_1::types::{BufferType, Status};
 use crate::buffer::clamp_range;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
@@ -64,28 +64,33 @@ fn as_usize(value: i32) -> usize {
     usize::try_from(value.cast_unsigned()).unwrap_or(usize::MAX)
 }
 
+/// A buffer the crate answers from what the embedder supplied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Configuration {
+    Vm,
+    Plugin,
+}
+
 /// Whether the crate serves this buffer itself.
 ///
 /// The configuration buffers come from what the embedder supplied before the
-/// call, so no implementation ever sees them.
-fn served(buffer_type: BufferType) -> Served {
+/// call, so no implementation sees them.
+///
+/// See [`Served`] for the rule.
+fn served(buffer_type: BufferType) -> Served<Configuration> {
     match buffer_type {
-        BufferType::VmConfiguration | BufferType::PluginConfiguration => Served::Crate,
+        BufferType::VmConfiguration => Served::Crate(Configuration::Vm),
+        BufferType::PluginConfiguration => Served::Crate(Configuration::Plugin),
         _ => Served::Embedder,
     }
 }
 
 fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<'_>, Failure> {
-    if served(buffer_type) == Served::Embedder {
-        let (call, stream) = with_stream(state, Status::NotFound)?;
-        let buffer = from_embedder("buffer", stream.buffer(call, Access::Read, buffer_type))?;
-        return Ok(Source::Stream(buffer));
-    }
-    match buffer_type {
-        BufferType::VmConfiguration => {
+    match served(buffer_type) {
+        Served::Crate(Configuration::Vm) => {
             Ok(Source::Configuration(state.services().vm_configuration()))
         }
-        BufferType::PluginConfiguration => {
+        Served::Crate(Configuration::Plugin) => {
             let root = context(state, Status::NotFound)?;
             let plugin = state
                 .abi()
@@ -94,7 +99,11 @@ fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<
                 .ok_or(Status::NotFound)?;
             Ok(Source::Configuration(plugin.configuration()))
         }
-        _ => unreachable!("the predicate already sent every other buffer to the embedder"),
+        Served::Embedder => {
+            let (call, stream) = with_stream(state, Status::NotFound)?;
+            let buffer = from_embedder("buffer", stream.buffer(call, Access::Read, buffer_type))?;
+            Ok(Source::Stream(buffer))
+        }
     }
 }
 
@@ -102,11 +111,13 @@ fn write_buffer(
     state: &mut HostState,
     buffer_type: BufferType,
 ) -> Result<&mut dyn Buffer, Failure> {
-    if served(buffer_type) == Served::Crate {
-        return Err(Status::NotFound.into());
+    match served(buffer_type) {
+        Served::Crate(_) => Err(Status::NotFound.into()),
+        Served::Embedder => {
+            let (call, stream) = with_stream(state, Status::NotFound)?;
+            from_embedder("buffer", stream.buffer(call, Access::Write, buffer_type))
+        }
     }
-    let (call, stream) = with_stream(state, Status::NotFound)?;
-    from_embedder("buffer", stream.buffer(call, Access::Write, buffer_type))
 }
 
 pub(super) fn proxy_get_buffer_bytes(
@@ -800,5 +811,32 @@ mod tests {
 
         // Assert
         assert_eq!(result, Status::NotFound);
+    }
+
+    #[test]
+    fn the_predicate_names_the_two_configurations_and_sends_the_rest_to_the_embedder() {
+        // Arrange
+        let asked = [
+            BufferType::VmConfiguration,
+            BufferType::PluginConfiguration,
+            BufferType::HttpRequestBody,
+            BufferType::HttpResponseBody,
+            BufferType::HttpCallResponseBody,
+        ];
+
+        // Act
+        let answers = asked.map(served);
+
+        // Assert
+        assert_eq!(
+            answers,
+            [
+                Served::Crate(Configuration::Vm),
+                Served::Crate(Configuration::Plugin),
+                Served::Embedder,
+                Served::Embedder,
+                Served::Embedder,
+            ]
+        );
     }
 }

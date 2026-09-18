@@ -103,10 +103,12 @@ macro_rules! host_functions {
         ];
 
         /// Registers every host function under the `env` module.
-        /// Adds the WASI functions and then this version's host functions.
+        /// Registers the WASI functions and then every host function under
+        /// the `env` module.
         ///
-        /// The WASI functions come first, which is the order the engine used
-        /// before this module owned them.
+        /// The WASI functions come first, so a guest that imports a name from
+        /// both modules resolves it the same way whichever order it wrote its
+        /// imports in.
         pub(crate) fn register(linker: &mut Linker<HostState>) -> Result<(), Error> {
             crate::abi::v0_2_1::wasi::add_to_linker(linker)?;
             $( host_function!(linker, $name, ( $( $param : $ty ),* ), $imp); )*
