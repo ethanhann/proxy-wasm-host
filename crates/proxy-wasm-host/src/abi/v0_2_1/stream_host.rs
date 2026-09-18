@@ -78,7 +78,7 @@ impl HostCall {
 /// A guest built with the Rust SDK ends its stream on any status other than
 /// `OK` from most of these functions, and reads `NOT_FOUND` from a buffer or
 /// from a property read as an absent value.
-/// Every default body reports itself through `tracing` at the debug level,
+/// Every default body reports itself through `tracing` at the warn level,
 /// so a method you forgot reaches your log before it reaches a guest.
 pub trait StreamHost: Any + Send {
     // `Any` lets the scope give your own value back without a downcast of

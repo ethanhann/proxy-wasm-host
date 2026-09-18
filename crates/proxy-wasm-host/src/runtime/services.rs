@@ -181,6 +181,13 @@ impl HostServices {
 
     /// Replaces the shared data, the shared queues, and the metrics.
     ///
+    /// An instance reads this value, so replacing it between calls through
+    /// [`crate::runtime::Instance::services_mut`] changes the store the guest
+    /// reaches.
+    /// The queue and metric identifiers the guest obtained belong to the
+    /// store that issued them, so the crate drops them when the store
+    /// changes, and the guest registers or resolves again.
+    ///
     /// Several instances that hold the same value share that state, which is
     /// what lets one VM resolve a queue another registered.
     /// The default is an [`Arc`] of [`MemoryServices`], which serves one

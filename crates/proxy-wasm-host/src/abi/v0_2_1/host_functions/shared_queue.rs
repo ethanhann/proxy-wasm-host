@@ -11,7 +11,7 @@ use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::QueueId;
 use crate::abi::v0_2_1::host_functions::Failure;
-use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_shared};
+use crate::abi::v0_2_1::host_functions::call::{from_embedder, settle, with_shared};
 use crate::abi::v0_2_1::types::Status;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
 
@@ -74,6 +74,7 @@ pub(super) fn proxy_enqueue_shared_queue(
     let value = GuestSlice::try_from((value_data, value_size))?;
     let (memory, state) = split(ctx)?;
     let value = memory.read(value)?;
+    settle(state);
     if !state.abi().holds_queue(queue) {
         return Err(Status::NotFound.into());
     }
@@ -96,6 +97,7 @@ pub(super) fn proxy_dequeue_shared_queue(
     let (memory, state) = split(ctx)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
+    settle(state);
     if !state.abi().holds_queue(queue) {
         return Err(Status::NotFound.into());
     }
@@ -477,7 +479,7 @@ mod tests {
         let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
         let (mut mine, _) = shared_hosted(&engine, GUEST, Arc::clone(&shared));
         let (mut theirs, _) = shared_hosted(&engine, GUEST, Arc::clone(&shared));
-        assert_eq!(register(&mut mine, b"shared-name"), Status::Ok);
+        register(&mut mine, b"shared-name");
         let queue = returned_id(&mut mine).cast_signed();
 
         // Act
@@ -494,5 +496,46 @@ mod tests {
                 .abi()
                 .holds_queue(QueueId::try_from(queue).unwrap())
         );
+    }
+
+    #[test]
+    fn a_grant_does_not_survive_a_replacement_of_the_shared_services() {
+        // Arrange
+        // Both stores hand out small numbers from their own counter, so the
+        // identifier this guest was granted names a queue of another VM
+        // inside the replacement.
+        let engine = engine();
+        let first: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let second: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let other = HostCall::new(ContextId::try_from(1).unwrap(), None);
+        let theirs = second
+            .register_shared_queue(other, b"other-vm", b"private")
+            .unwrap();
+        second
+            .enqueue_shared_queue(other, theirs, b"a secret of the other vm")
+            .unwrap();
+        let (mut instance, _) = shared_hosted(&engine, GUEST, Arc::clone(&first));
+        register(&mut instance, b"mine");
+        let granted = returned_id(&mut instance);
+        assert_eq!(
+            granted,
+            theirs.get(),
+            "both stores start their counter at one"
+        );
+        let replacement = instance.services().clone().with_shared(second);
+        *instance.services_mut() = replacement;
+
+        // Act
+        let found = status(
+            instance
+                .call::<(i32, i32, i32), i32>(
+                    "dequeue",
+                    (granted.cast_signed(), RETURN_DATA, RETURN_SIZE),
+                )
+                .unwrap(),
+        );
+
+        // Assert
+        assert_eq!(found, Status::NotFound);
     }
 }

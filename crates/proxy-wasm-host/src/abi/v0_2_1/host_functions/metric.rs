@@ -12,7 +12,7 @@ use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::MetricId;
 use crate::abi::v0_2_1::host_functions::Failure;
-use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_shared};
+use crate::abi::v0_2_1::host_functions::call::{from_embedder, settle, with_shared};
 use crate::abi::v0_2_1::types::{MetricType, Status};
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split};
 
@@ -48,6 +48,7 @@ pub(super) fn proxy_record_metric(
 ) -> Result<(), Failure> {
     let metric = MetricId::try_from(metric_id).map_err(|_| Status::NotFound)?;
     let (_, state) = split(ctx)?;
+    settle(state);
     if !state.abi().holds_metric(metric) {
         return Err(Status::NotFound.into());
     }
@@ -65,6 +66,7 @@ pub(super) fn proxy_increment_metric(
 ) -> Result<(), Failure> {
     let metric = MetricId::try_from(metric_id).map_err(|_| Status::NotFound)?;
     let (_, state) = split(ctx)?;
+    settle(state);
     if !state.abi().holds_metric(metric) {
         return Err(Status::NotFound.into());
     }
@@ -84,6 +86,7 @@ pub(super) fn proxy_get_metric(
     let return_value = GuestPtr::try_from(return_value)?;
     let (memory, state) = split(ctx)?;
     memory.read_u64(return_value)?;
+    settle(state);
     if !state.abi().holds_metric(metric) {
         return Err(Status::NotFound.into());
     }
@@ -260,10 +263,15 @@ mod tests {
                     .unwrap(),
             ),
             status(instance.call::<(i32, i64), i32>("record", (id, 0)).unwrap()),
+            status(
+                instance
+                    .call::<(i32, i64), i32>("increment", (id, 1))
+                    .unwrap(),
+            ),
         ];
 
         // Assert
-        assert_eq!(results, [Status::NotFound; 2]);
+        assert_eq!(results, [Status::NotFound; 3]);
     }
 
     #[test]

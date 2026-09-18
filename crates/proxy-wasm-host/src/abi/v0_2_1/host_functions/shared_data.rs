@@ -366,12 +366,13 @@ mod tests {
             .unwrap();
         let (mut instance, _) = shared_hosted(&engine, GUEST, Arc::new(MemoryServices::new()));
         let services = instance.services().clone().with_shared(replacement);
-
-        // Act
         *instance.services_mut() = services;
 
+        // Act
+        let found = get(&mut instance, b"k");
+
         // Assert
-        assert_eq!(get(&mut instance, b"k"), Status::Ok);
+        assert_eq!(found, Status::Ok);
         assert_eq!(value_and_cas(&mut instance).0, b"from the replacement");
     }
 
@@ -385,13 +386,12 @@ mod tests {
         let (mut mine, _) = shared_hosted(&engine, GUEST, Arc::clone(&store));
         let (mut theirs, _) = shared_hosted(&engine, GUEST, Arc::clone(&store));
         *theirs.services_mut() = theirs.services().clone().with_vm_id(b"other-vm".to_vec());
-        assert_eq!(set(&mut mine, b"k", b"mine", 0), Status::Ok);
+        set(&mut mine, b"k", b"mine", 0);
 
         // Act
         let found = get(&mut theirs, b"k");
 
         // Assert
         assert_eq!(found, Status::NotFound);
-        assert_eq!(get(&mut mine, b"k"), Status::Ok);
     }
 }

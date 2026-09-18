@@ -2,8 +2,9 @@
 
 use std::any::Any;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
-use crate::abi::v0_2_1::{Callback, ContextTable, MetricId, QueueId, StreamHost};
+use crate::abi::v0_2_1::{Callback, ContextTable, MetricId, QueueId, SharedServices, StreamHost};
 
 /// Everything ABI v0.2.1 keeps for one instance.
 ///
@@ -15,6 +16,7 @@ pub(crate) struct AbiState {
     current_callback: Option<Callback>,
     queues: BTreeSet<QueueId>,
     metrics: BTreeSet<MetricId>,
+    granted_against: Option<Arc<dyn SharedServices>>,
 }
 
 impl AbiState {
@@ -25,7 +27,28 @@ impl AbiState {
             current_callback: None,
             queues: BTreeSet::new(),
             metrics: BTreeSet::new(),
+            granted_against: None,
         }
+    }
+
+    /// Drops the grants when the shared services are not the ones that issued
+    /// them.
+    ///
+    /// A queue or metric identifier is a small number that means one thing
+    /// inside one store and something else inside another, so a grant cannot
+    /// outlive the store it came from.
+    /// An embedder that replaces the services between calls therefore starts
+    /// with no grants, and the guest registers or resolves again.
+    /// The store that issued the grants is held until then, so its address
+    /// cannot be reused by a different store while the comparison still
+    /// matters.
+    pub(crate) fn settle_grants(&mut self, shared: &Arc<dyn SharedServices>) {
+        if matches!(&self.granted_against, Some(seen) if Arc::ptr_eq(seen, shared)) {
+            return;
+        }
+        self.queues.clear();
+        self.metrics.clear();
+        self.granted_against = Some(Arc::clone(shared));
     }
 
     /// Records that this guest obtained a queue identifier.

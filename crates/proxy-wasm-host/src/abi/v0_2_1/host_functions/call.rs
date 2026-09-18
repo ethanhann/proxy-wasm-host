@@ -7,6 +7,8 @@
 //! section lists for a resource that is not available, which the caller
 //! passes as `absent`.
 
+use std::sync::Arc;
+
 use crate::abi::v0_2_1::SharedServices;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::Status;
@@ -34,14 +36,29 @@ pub(super) fn with_stream(
     Ok((call, stream))
 }
 
+/// Drops the grants when the embedder has replaced the shared services.
+///
+/// A body that consults a grant calls this first, because a queue or metric
+/// identifier means one thing inside one store and something else inside
+/// another.
+pub(super) fn settle(state: &mut HostState) {
+    let shared = std::sync::Arc::clone(state.services().shared());
+    state.abi_mut().settle_grants(&shared);
+}
+
 /// The call to report and the shared services to ask.
+///
+/// The grants are settled first, so a guest never names an identifier that a
+/// store the embedder has since replaced handed out.
 pub(super) fn with_shared(
-    state: &HostState,
+    state: &mut HostState,
     absent: Status,
-) -> Result<(HostCall, &dyn SharedServices), Failure> {
+) -> Result<(HostCall, Arc<dyn SharedServices>), Failure> {
+    let shared = Arc::clone(state.services().shared());
+    state.abi_mut().settle_grants(&shared);
     let context = context(state, absent)?;
     let call = HostCall::new(context, state.abi().current_callback());
-    Ok((call, state.services().shared().as_ref()))
+    Ok((call, shared))
 }
 
 /// The embedder's answer, with a success for a resource it never touched
@@ -182,10 +199,10 @@ mod tests {
     fn with_shared_reports_the_call_the_embedder_sees() {
         // Arrange
         let engine = engine();
-        let (instance, root) = unhosted(&engine, MINIMAL_GUEST);
+        let (mut instance, root) = unhosted(&engine, MINIMAL_GUEST);
 
         // Act
-        let found = with_shared(instance.state(), Status::NotFound);
+        let found = with_shared(instance.state_mut(), Status::NotFound);
 
         // Assert
         let (call, _) = found.expect("the services are always installed");
@@ -197,10 +214,10 @@ mod tests {
     fn with_shared_reports_the_status_the_caller_gave_with_no_context() {
         // Arrange
         let engine = engine();
-        let instance = bare(&engine, MINIMAL_GUEST);
+        let mut instance = bare(&engine, MINIMAL_GUEST);
 
         // Act
-        let found = with_shared(instance.state(), Status::NotFound);
+        let found = with_shared(instance.state_mut(), Status::NotFound);
 
         // Assert
         assert!(matches!(

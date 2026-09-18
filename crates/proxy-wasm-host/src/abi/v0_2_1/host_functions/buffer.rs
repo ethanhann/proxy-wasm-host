@@ -751,4 +751,44 @@ mod tests {
         assert_eq!(result, Status::Ok);
         assert_eq!(returned(&mut instance), b"mine");
     }
+
+    #[test]
+    fn a_write_to_a_configuration_the_crate_serves_is_never_asked_of_the_stream_host() {
+        // Arrange
+        let mut instance = configured(b"vm bytes", b"plugin bytes");
+        instance
+            .state_mut()
+            .abi_mut()
+            .set_stream_host(Box::new(RecordingStream::new()));
+
+        // Act
+        let results = [
+            set(&mut instance, VM, 0, -1, b"new"),
+            set(&mut instance, PLUGIN, 0, -1, b"new"),
+        ];
+
+        // Assert
+        assert_eq!(results, [Status::NotFound; 2]);
+        assert!(
+            RecordingStream::take(instance.state_mut())
+                .buffer_calls()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_guest_under_a_refused_root_is_not_served_the_plugin_configuration() {
+        // Arrange
+        // The existing test drives the body. This one drives a guest, so it
+        // dies if the rejection is not consulted before the read.
+        let mut instance = configured(b"vm", b"plugin bytes");
+        let root = instance.state().abi().contexts().effective().unwrap();
+        instance.state_mut().abi_mut().contexts_mut().reject(root);
+
+        // Act
+        let result = get(&mut instance, PLUGIN, 0, -1);
+
+        // Assert
+        assert_eq!(result, Status::NotFound);
+    }
 }

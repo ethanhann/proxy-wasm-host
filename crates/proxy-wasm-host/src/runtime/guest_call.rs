@@ -154,8 +154,7 @@ mod tests {
     fn a_poisoned_store_is_refused_before_the_guest_runs() {
         // Arrange
         // Every public caller of `call_on` checks first, so this reaches the
-        // check directly. The guest writes a byte, so the assertion can tell a
-        // refusal from a call that ran.
+        // check directly.
         let engine = engine();
         let mut instance = instance(&engine, MINIMAL_GUEST).unwrap();
         let allocator = instance.state().allocator().unwrap();

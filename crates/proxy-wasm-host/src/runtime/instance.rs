@@ -155,6 +155,10 @@ impl Instance {
 
     /// Asks the guest allocator for `size` bytes.
     ///
+    /// This refills the CPU and fuel budget before it runs, as a callback
+    /// does, so bytes handed to a guest between callbacks are not charged to
+    /// the budget of the next one.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::Poisoned`] after an earlier failure,
@@ -168,6 +172,9 @@ impl Instance {
     }
 
     /// Allocates room for `bytes` in the guest and copies them there.
+    ///
+    /// This refills the CPU and fuel budget before it runs, for the reason
+    /// given on [`Instance::allocate`].
     ///
     /// # Errors
     ///
@@ -288,11 +295,28 @@ mod tests {
             i32.const 1024)
         (func (export "burn") (result i32) call $spend))"#;
 
-    /// The loop of `BOUNDED` costs about this much fuel, so a budget above it
-    /// serves one call and a budget below two serves only the first.
-    const LOOP_FUEL: u64 = 8_000;
+    /// The fuel one call of `burn` costs on this engine.
+    ///
+    /// The cost is measured rather than recorded, so a change to the loop or
+    /// to wasmtime's cost model cannot leave a budget that covers two calls
+    /// and a refill test that passes for the wrong reason.
+    fn burn_cost(engine: &Engine, wat: &str) -> u64 {
+        let module = Module::new(engine, &wat_bytes(wat)).unwrap();
+        let limits = Limits::new().with_fuel(u64::from(u32::MAX));
+        let mut instance = Instance::new(engine, &module, services(), &limits).unwrap();
+        let before = instance.store_mut().get_fuel().unwrap();
+        instance.call::<(), i32>("burn", ()).unwrap();
+        before - instance.store_mut().get_fuel().unwrap()
+    }
 
-    fn fuelled_engine() -> Engine {
+    /// A budget that serves one call of `burn` and never two.
+    fn one_call_of(engine: &Engine, wat: &str) -> u64 {
+        let cost = burn_cost(engine, wat);
+        cost + cost / 2
+    }
+
+    /// An engine that meters fuel, which [`Limits::with_fuel`] requires.
+    fn metered_engine() -> Engine {
         EngineConfig::new()
             .with_external_ticks(true)
             .with_fuel_enabled(true)
@@ -614,9 +638,9 @@ mod tests {
     #[test]
     fn a_bounded_guest_is_stopped_by_fuel() {
         // Arrange
-        let engine = fuelled_engine();
+        let engine = metered_engine();
         let module = Module::new(&engine, &wat_bytes(BOUNDED)).unwrap();
-        let limits = Limits::new().with_fuel(LOOP_FUEL / 4);
+        let limits = Limits::new().with_fuel(burn_cost(&engine, BOUNDED) / 4);
         let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
 
         // Act
@@ -632,11 +656,11 @@ mod tests {
     #[test]
     fn a_second_call_gets_a_fresh_fuel_budget() {
         // Arrange
-        let engine = fuelled_engine();
+        let engine = metered_engine();
         let module = Module::new(&engine, &wat_bytes(BOUNDED)).unwrap();
-        let limits = Limits::new().with_fuel(LOOP_FUEL + LOOP_FUEL / 2);
+        let limits = Limits::new().with_fuel(one_call_of(&engine, BOUNDED));
         let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
-        assert!(instance.call::<(), i32>("burn", ()).is_ok());
+        instance.call::<(), i32>("burn", ()).unwrap();
 
         // Act
         let second = instance.call::<(), i32>("burn", ());
@@ -707,11 +731,11 @@ mod tests {
     #[test]
     fn an_allocation_after_a_call_that_spent_the_fuel_gets_a_fresh_budget() {
         // Arrange
-        let engine = fuelled_engine();
+        let engine = metered_engine();
         let module = Module::new(&engine, &wat_bytes(COSTLY_ALLOCATOR)).unwrap();
-        let limits = Limits::new().with_fuel(LOOP_FUEL + LOOP_FUEL / 2);
+        let limits = Limits::new().with_fuel(one_call_of(&engine, COSTLY_ALLOCATOR));
         let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
-        assert!(instance.call::<(), i32>("burn", ()).is_ok());
+        instance.call::<(), i32>("burn", ()).unwrap();
 
         // Act
         let allocated = instance.allocate(16);
@@ -726,11 +750,11 @@ mod tests {
     #[test]
     fn a_write_after_a_call_that_spent_the_fuel_gets_a_fresh_budget() {
         // Arrange
-        let engine = fuelled_engine();
+        let engine = metered_engine();
         let module = Module::new(&engine, &wat_bytes(COSTLY_ALLOCATOR)).unwrap();
-        let limits = Limits::new().with_fuel(LOOP_FUEL + LOOP_FUEL / 2);
+        let limits = Limits::new().with_fuel(one_call_of(&engine, COSTLY_ALLOCATOR));
         let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
-        assert!(instance.call::<(), i32>("burn", ()).is_ok());
+        instance.call::<(), i32>("burn", ()).unwrap();
 
         // Act
         let written = instance.write_to_guest(b"bytes for the guest");

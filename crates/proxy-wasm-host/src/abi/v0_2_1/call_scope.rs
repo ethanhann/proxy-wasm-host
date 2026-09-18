@@ -1115,15 +1115,22 @@ mod tests {
     #[test]
     fn a_dropped_scope_leaves_the_guest_ready_for_a_new_stream() {
         // Arrange
+        // The dropped stream holds a recorded call, so the assertion can tell
+        // it apart from the one this scope installs.
         let engine = engine();
-        let (mut guest, _, _) = with_stream(&engine, HEADER_WRITER);
-        drop(guest.enter(RecordingStream::new()));
+        let (mut guest, _, stream) = with_stream(&engine, HEADER_WRITER);
+        let mut first = guest.enter(RecordingStream::new());
+        assert_eq!(
+            first.on_request_headers(stream, 0, true).unwrap(),
+            Action::Continue
+        );
+        drop(first);
 
         // Act
-        let scope = guest.enter(RecordingStream::new());
+        let second = guest.enter(RecordingStream::new()).finish();
 
         // Assert
-        let stream = scope.finish();
-        assert!(stream.calls().is_empty());
+        assert!(second.calls().is_empty());
+        assert!(!guest.instance().is_poisoned());
     }
 }
