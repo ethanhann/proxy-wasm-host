@@ -51,7 +51,10 @@ impl Instance {
             });
         }
         let budget = Budget::new(limits, engine);
-        let mut store = Store::new(engine.wasmtime(), HostState::new(services));
+        let mut store = Store::new(
+            engine.wasmtime(),
+            HostState::new(services, crate::abi::new_state()),
+        );
         budget.refill(&mut store)?;
         let mut builder = StoreLimitsBuilder::new();
         if let Some(bytes) = limits.memory_bytes() {

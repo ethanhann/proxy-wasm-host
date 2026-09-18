@@ -3,6 +3,7 @@
 mod finalize;
 mod prologue;
 
+use crate::abi::v0_2_1::AbiAccess;
 use std::any::Any;
 use std::fmt;
 use std::marker::PhantomData;

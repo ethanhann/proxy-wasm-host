@@ -1,8 +1,9 @@
 //! The data stored in every instance's wasmtime store.
 
+use std::any::Any;
+
 use wasmtime::{Memory, StoreLimits, TypedFunc};
 
-use crate::abi::v0_2_1::AbiState;
 use crate::runtime::HostServices;
 
 /// The store data of one instance.
@@ -20,12 +21,11 @@ pub(crate) struct HostState {
     memory: Option<Memory>,
     allocator: Option<TypedFunc<i32, i32>>,
     poisoned: bool,
-    abi: AbiState,
+    abi: Box<dyn Any + Send>,
 }
 
 impl HostState {
-    pub(crate) fn new(services: HostServices) -> Self {
-        let abi = AbiState::new();
+    pub(crate) fn new(services: HostServices, abi: Box<dyn Any + Send>) -> Self {
         Self {
             services,
             store_limits: StoreLimits::default(),
@@ -76,12 +76,14 @@ impl HostState {
         self.poisoned = true;
     }
 
-    pub(crate) fn abi(&self) -> &AbiState {
-        &self.abi
+    /// The ABI state, which only the ABI layer reads inside.
+    pub(crate) fn abi_slot(&self) -> &(dyn Any + Send) {
+        self.abi.as_ref()
     }
 
-    pub(crate) fn abi_mut(&mut self) -> &mut AbiState {
-        &mut self.abi
+    /// The ABI state, for the layer that owns it.
+    pub(crate) fn abi_slot_mut(&mut self) -> &mut (dyn Any + Send) {
+        self.abi.as_mut()
     }
 }
 
@@ -95,7 +97,10 @@ mod tests {
     #[test]
     fn poison_is_observable() {
         // Arrange
-        let mut state = HostState::new(HostServices::new(Arc::new(RecordingSink::default())));
+        let mut state = HostState::new(
+            HostServices::new(Arc::new(RecordingSink::default())),
+            crate::abi::new_state(),
+        );
 
         // Act
         state.poison();
@@ -110,12 +115,11 @@ mod tests {
         let services = HostServices::new(Arc::new(RecordingSink::default()));
 
         // Act
-        let state = HostState::new(services);
+        let state = HostState::new(services, crate::abi::new_state());
 
         // Assert
         assert!(state.memory().is_none());
         assert!(state.allocator().is_none());
         assert!(!state.is_poisoned());
-        assert!(state.abi().current_callback().is_none());
     }
 }

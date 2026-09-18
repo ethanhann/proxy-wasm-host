@@ -2,6 +2,7 @@
 
 mod host;
 
+use crate::abi::v0_2_1::AbiAccess;
 use std::any::Any;
 use std::collections::HashMap;
 

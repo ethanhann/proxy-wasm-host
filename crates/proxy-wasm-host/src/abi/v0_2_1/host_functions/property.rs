@@ -5,10 +5,12 @@
 //! services.
 //! Every other path goes to the stream host.
 
+use crate::abi::v0_2_1::AbiAccess;
 use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::call::{context, from_embedder, with_stream};
+use crate::abi::v0_2_1::host_functions::served::Served;
 use crate::abi::v0_2_1::types::Status;
 use crate::codec::path::decode_path;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
@@ -27,14 +29,22 @@ const PLUGIN_VM_ID: &[u8] = b"plugin_vm_id";
 /// The plugin name and the plugin root id hang on a root context, so they
 /// follow the rule every other body follows and refuse a root the guest
 /// rejected.
-fn well_known(state: &HostState, path: &[&[u8]]) -> Option<Result<Vec<u8>, Failure>> {
-    let [segment] = path else {
-        return None;
-    };
-    match *segment {
-        PLUGIN_VM_ID => Some(Ok(state.services().vm_id().to_vec())),
-        PLUGIN_NAME | PLUGIN_ROOT_ID => Some(plugin_value(state, segment)),
-        _ => None,
+/// Whether the crate serves this property itself.
+///
+/// The three names the ABI assigns to Proxy-Wasm come from what the embedder
+/// supplied before the call, so no implementation ever sees them.
+fn served(path: &[&[u8]]) -> Served {
+    match path {
+        [PLUGIN_NAME | PLUGIN_ROOT_ID | PLUGIN_VM_ID] => Served::Crate,
+        _ => Served::Embedder,
+    }
+}
+
+fn well_known(state: &HostState, path: &[&[u8]]) -> Result<Vec<u8>, Failure> {
+    match path {
+        [PLUGIN_VM_ID] => Ok(state.services().vm_id().to_vec()),
+        [segment] => plugin_value(state, segment),
+        _ => unreachable!("the predicate already sent every other path to the embedder"),
     }
 }
 
@@ -52,10 +62,6 @@ fn plugin_value(state: &HostState, segment: &[u8]) -> Result<Vec<u8>, Failure> {
     }
 }
 
-fn is_well_known(path: &[&[u8]]) -> bool {
-    matches!(path, [PLUGIN_NAME | PLUGIN_ROOT_ID | PLUGIN_VM_ID])
-}
-
 pub(super) fn proxy_get_property(
     ctx: &mut impl AsContextMut<Data = HostState>,
     path_data: i32,
@@ -70,8 +76,8 @@ pub(super) fn proxy_get_property(
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
     let path = decode_path(memory.read(path)?);
-    let value = if let Some(value) = well_known(state, &path) {
-        value?
+    let value = if served(&path) == Served::Crate {
+        well_known(state, &path)?
     } else {
         let (call, stream) = with_stream(state, Status::NotFound)?;
         from_embedder("property", stream.property(call, &path))?
@@ -92,7 +98,7 @@ pub(super) fn proxy_set_property(
     let (memory, state) = split(ctx)?;
     let path = decode_path(memory.read(path)?);
     let value = memory.read(value)?;
-    if is_well_known(&path) {
+    if served(&path) == Served::Crate {
         return Err(Status::NotFound.into());
     }
     let (call, stream) = with_stream(state, Status::NotFound)?;

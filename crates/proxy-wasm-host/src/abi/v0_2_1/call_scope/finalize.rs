@@ -1,6 +1,7 @@
 //! The callbacks that end a context.
 
 use crate::Error;
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
 use crate::abi::v0_2_1::{Callback, ContextId, ContextState, StreamHost};
 

@@ -12,11 +12,12 @@ mod engine;
 mod guest_call;
 mod host_state;
 mod instance;
+#[cfg(test)]
+mod layering;
 mod limits;
 mod memory;
 mod module;
 mod services;
-mod wasi;
 
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -34,5 +35,3 @@ pub(crate) use memory::split;
 
 #[cfg(test)]
 pub(crate) use guest_call::map_guest_error;
-#[cfg(test)]
-pub(crate) use wasi::WASI_FUNCTIONS;

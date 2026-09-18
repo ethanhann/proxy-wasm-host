@@ -13,7 +13,7 @@ use wasmtime::{Caller, Linker};
 use crate::Error;
 use crate::abi::v0_2_1::types::{LogLevel, WasiClockId, WasiErrno, WasiFdId};
 use crate::runtime::HostState;
-use crate::runtime::memory::{GuestMemory, GuestPtr, GuestSlice, split};
+use crate::runtime::{GuestMemory, GuestPtr, GuestSlice, split};
 
 const MODULE: &str = "wasi_snapshot_preview1";
 
@@ -581,7 +581,10 @@ mod tests {
         // Arrange
         let engine = crate::runtime::test_support::engine();
         let services = crate::runtime::test_support::services();
-        let mut store = wasmtime::Store::new(engine.wasmtime(), HostState::new(services));
+        let mut store = wasmtime::Store::new(
+            engine.wasmtime(),
+            HostState::new(services, crate::abi::new_state()),
+        );
 
         // Act
         let defined: Vec<bool> = WASI_FUNCTIONS
@@ -592,5 +595,45 @@ mod tests {
         // Assert
         assert_eq!(WASI_FUNCTIONS.len(), 8);
         assert!(defined.iter().all(|defined| *defined));
+    }
+
+    /// A guest that imports one WASI function, which resolves only when the
+    /// registrar supplied it.
+    const WASI_IMPORTER: &str = r#"(module
+        (import "wasi_snapshot_preview1" "proc_exit" (func (param i32)))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024))"#;
+
+    #[test]
+    fn the_default_build_links_the_wasi_functions() {
+        // Arrange
+        let engine = crate::runtime::test_support::engine();
+
+        // Act
+        let built = crate::runtime::test_support::instance(&engine, WASI_IMPORTER);
+
+        // Assert
+        assert!(
+            built.is_ok(),
+            "the default registrar supplies the wasi functions"
+        );
+    }
+
+    #[test]
+    fn a_registrar_that_adds_nothing_links_no_wasi_function() {
+        // Arrange
+        let engine = crate::runtime::EngineConfig::new()
+            .with_external_ticks(true)
+            .build_with(|_| Ok(()))
+            .unwrap();
+
+        // Act
+        let built = crate::runtime::test_support::instance(&engine, WASI_IMPORTER);
+
+        // Assert
+        assert!(
+            built.is_err(),
+            "the wasi functions come from the registrar, so one that adds nothing leaves them unresolved"
+        );
     }
 }

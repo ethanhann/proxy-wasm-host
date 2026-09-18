@@ -10,3 +10,13 @@ pub mod v0_2_1;
 mod version;
 
 pub use version::AbiVersion;
+
+/// The ABI state of one instance, boxed for the store data to hold.
+///
+/// The runtime keeps this as an opaque value and never reads inside it, so
+/// the ABI layer adds state without a change under `runtime/`.
+/// The runtime decides when an instance gets one, and the ABI layer decides
+/// what it is.
+pub(crate) fn new_state() -> Box<dyn std::any::Any + Send> {
+    Box::new(v0_2_1::AbiState::new())
+}

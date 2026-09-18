@@ -41,6 +41,7 @@ pub(super) fn proxy_call_foreign_function(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::v0_2_1::AbiAccess;
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, returned, status, unhosted, write,
     };

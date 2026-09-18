@@ -32,6 +32,7 @@ pub(super) fn proxy_close_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::v0_2_1::AbiAccess;
     use crate::abi::v0_2_1::test_support::stream::Operation;
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, status, unhosted,

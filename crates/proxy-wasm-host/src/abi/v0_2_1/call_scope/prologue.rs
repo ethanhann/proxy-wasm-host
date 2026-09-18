@@ -1,5 +1,6 @@
 //! The checks and the call every callback method shares.
 
+use crate::abi::v0_2_1::AbiAccess;
 use wasmtime::{TypedFunc, WasmParams, WasmResults};
 
 use crate::Error;

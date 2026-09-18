@@ -21,6 +21,7 @@ mod stream_host;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub(crate) mod unserved;
+pub(crate) mod wasi;
 
 pub use call_scope::CallScope;
 pub use callback::Callback;
@@ -35,4 +36,4 @@ pub use stream_host::values::{CalloutStatus, ForeignCall, HeaderPairs, LocalResp
 pub use stream_host::{Access, HostCall, NoStream, StreamHost};
 
 pub(crate) use context::table::ContextTable;
-pub(crate) use state::AbiState;
+pub(crate) use state::{AbiAccess, AbiState};

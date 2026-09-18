@@ -17,6 +17,7 @@ mod local_response;
 mod log;
 mod metric;
 mod property;
+mod served;
 mod shared_data;
 mod shared_queue;
 mod stream;

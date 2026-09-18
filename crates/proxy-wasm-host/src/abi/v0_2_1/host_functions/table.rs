@@ -103,7 +103,12 @@ macro_rules! host_functions {
         ];
 
         /// Registers every host function under the `env` module.
+        /// Adds the WASI functions and then this version's host functions.
+        ///
+        /// The WASI functions come first, which is the order the engine used
+        /// before this module owned them.
         pub(crate) fn register(linker: &mut Linker<HostState>) -> Result<(), Error> {
+            crate::abi::v0_2_1::wasi::add_to_linker(linker)?;
             $( host_function!(linker, $name, ( $( $param : $ty ),* ), $imp); )*
             Ok(())
         }
@@ -161,8 +166,9 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::test_support::{import_everything, status};
     use crate::abi::v0_2_1::types::Status;
+    use crate::abi::v0_2_1::wasi::WASI_FUNCTIONS;
+    use crate::runtime::Module;
     use crate::runtime::test_support::{engine, instance};
-    use crate::runtime::{Module, WASI_FUNCTIONS};
 
     #[test]
     fn the_table_has_39_distinct_proxy_functions_returning_i32() {

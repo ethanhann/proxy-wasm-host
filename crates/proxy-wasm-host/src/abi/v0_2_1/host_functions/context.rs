@@ -1,5 +1,6 @@
 //! `proxy_done` and `proxy_set_effective_context`.
 
+use crate::abi::v0_2_1::AbiAccess;
 use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::ContextId;

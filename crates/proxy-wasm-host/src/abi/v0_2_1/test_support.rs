@@ -6,6 +6,7 @@ pub(crate) mod stream;
 
 pub(crate) use stream::RecordingStream;
 
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{Callback, ContextId};

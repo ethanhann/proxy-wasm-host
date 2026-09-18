@@ -58,6 +58,7 @@ pub(super) fn proxy_send_local_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::v0_2_1::AbiAccess;
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, status, unhosted, write,
     };

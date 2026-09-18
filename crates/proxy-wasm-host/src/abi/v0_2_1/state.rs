@@ -5,6 +5,30 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::abi::v0_2_1::{Callback, ContextTable, MetricId, QueueId, SharedServices, StreamHost};
+use crate::runtime::HostState;
+
+/// Reaches the ABI state the store data holds.
+///
+/// The store data keeps it as an opaque value, so the layer that owns the
+/// state is the layer that reads it.
+pub(crate) trait AbiAccess {
+    fn abi(&self) -> &AbiState;
+    fn abi_mut(&mut self) -> &mut AbiState;
+}
+
+impl AbiAccess for HostState {
+    fn abi(&self) -> &AbiState {
+        self.abi_slot()
+            .downcast_ref()
+            .unwrap_or_else(|| unreachable!("the ABI layer fills the slot of every instance"))
+    }
+
+    fn abi_mut(&mut self) -> &mut AbiState {
+        self.abi_slot_mut()
+            .downcast_mut()
+            .unwrap_or_else(|| unreachable!("the ABI layer fills the slot of every instance"))
+    }
+}
 
 /// Everything ABI v0.2.1 keeps for one instance.
 ///
@@ -188,5 +212,36 @@ mod tests {
         // Assert
         assert!(mine.holds_queue(queue));
         assert!(!theirs.holds_queue(queue));
+    }
+
+    #[test]
+    fn the_trait_reaches_the_state_the_abi_root_built() {
+        // Arrange
+        let services = crate::runtime::test_support::services();
+        let state = HostState::new(services, crate::abi::new_state());
+
+        // Act
+        let found = state.abi().current_callback();
+
+        // Assert
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn a_write_through_the_trait_is_read_back_through_it() {
+        // Arrange
+        let services = crate::runtime::test_support::services();
+        let mut state = HostState::new(services, crate::abi::new_state());
+
+        // Act
+        state
+            .abi_mut()
+            .set_current_callback(Some(Callback::RequestHeaders));
+
+        // Assert
+        assert_eq!(
+            state.abi().current_callback(),
+            Some(Callback::RequestHeaders)
+        );
     }
 }

@@ -7,6 +7,7 @@
 //! ABI gives the guest no VM id on those two calls, so the crate checks it
 //! here rather than asking every implementation to.
 
+use crate::abi::v0_2_1::AbiAccess;
 use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::QueueId;

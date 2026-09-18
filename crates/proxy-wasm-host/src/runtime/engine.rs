@@ -9,7 +9,6 @@ use wasmtime::{Config, Linker};
 
 use crate::Error;
 use crate::runtime::HostState;
-use crate::runtime::wasi;
 
 const DEFAULT_EPOCH_PERIOD: Duration = Duration::from_millis(10);
 
@@ -116,7 +115,6 @@ impl EngineConfig {
             source: source.into(),
         })?;
         let mut linker = Linker::new(&engine);
-        wasi::add_to_linker(&mut linker)?;
         register(&mut linker)?;
         let ticks = Arc::new(AtomicU64::new(0));
         let ticker = if self.external_ticks {

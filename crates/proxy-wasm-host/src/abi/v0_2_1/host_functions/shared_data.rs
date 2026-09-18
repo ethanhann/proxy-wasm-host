@@ -64,6 +64,7 @@ pub(super) fn proxy_get_shared_data(
 
 #[cfg(test)]
 mod tests {
+    use crate::abi::v0_2_1::AbiAccess;
     use std::sync::Arc;
 
     use super::*;

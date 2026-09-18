@@ -8,6 +8,7 @@
 //! The value is carried at its full width in every direction, which the Go
 //! host does not do.
 
+use crate::abi::v0_2_1::AbiAccess;
 use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::MetricId;

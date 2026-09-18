@@ -6,11 +6,13 @@
 //! Each body resolves the buffer type before the context, so a configuration
 //! read never needs a callback to be running.
 
+use crate::abi::v0_2_1::AbiAccess;
 use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::Access;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::call::{context, from_embedder, with_stream};
+use crate::abi::v0_2_1::host_functions::served::Served;
 use crate::abi::v0_2_1::types::{BufferType, Status};
 use crate::buffer::clamp_range;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
@@ -62,7 +64,23 @@ fn as_usize(value: i32) -> usize {
     usize::try_from(value.cast_unsigned()).unwrap_or(usize::MAX)
 }
 
+/// Whether the crate serves this buffer itself.
+///
+/// The configuration buffers come from what the embedder supplied before the
+/// call, so no implementation ever sees them.
+fn served(buffer_type: BufferType) -> Served {
+    match buffer_type {
+        BufferType::VmConfiguration | BufferType::PluginConfiguration => Served::Crate,
+        _ => Served::Embedder,
+    }
+}
+
 fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<'_>, Failure> {
+    if served(buffer_type) == Served::Embedder {
+        let (call, stream) = with_stream(state, Status::NotFound)?;
+        let buffer = from_embedder("buffer", stream.buffer(call, Access::Read, buffer_type))?;
+        return Ok(Source::Stream(buffer));
+    }
     match buffer_type {
         BufferType::VmConfiguration => {
             Ok(Source::Configuration(state.services().vm_configuration()))
@@ -76,11 +94,7 @@ fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<
                 .ok_or(Status::NotFound)?;
             Ok(Source::Configuration(plugin.configuration()))
         }
-        _ => {
-            let (call, stream) = with_stream(state, Status::NotFound)?;
-            let buffer = from_embedder("buffer", stream.buffer(call, Access::Read, buffer_type))?;
-            Ok(Source::Stream(buffer))
-        }
+        _ => unreachable!("the predicate already sent every other buffer to the embedder"),
     }
 }
 
@@ -88,15 +102,11 @@ fn write_buffer(
     state: &mut HostState,
     buffer_type: BufferType,
 ) -> Result<&mut dyn Buffer, Failure> {
-    match buffer_type {
-        BufferType::VmConfiguration | BufferType::PluginConfiguration => {
-            Err(Status::NotFound.into())
-        }
-        _ => {
-            let (call, stream) = with_stream(state, Status::NotFound)?;
-            from_embedder("buffer", stream.buffer(call, Access::Write, buffer_type))
-        }
+    if served(buffer_type) == Served::Crate {
+        return Err(Status::NotFound.into());
     }
+    let (call, stream) = with_stream(state, Status::NotFound)?;
+    from_embedder("buffer", stream.buffer(call, Access::Write, buffer_type))
 }
 
 pub(super) fn proxy_get_buffer_bytes(
