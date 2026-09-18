@@ -6,9 +6,10 @@ use std::any::Any;
 
 use crate::Buffer;
 use crate::abi::v0_2_1::types::{BufferType, MapType, Status, StreamType};
+use crate::abi::v0_2_1::unserved::unserved;
 use crate::abi::v0_2_1::{Callback, ContextId};
 use crate::header_map::HeaderMap;
-use values::{CalloutStatus, LocalResponse};
+use values::{CalloutStatus, ForeignCall, LocalResponse};
 
 /// Whether a host function reads or writes the value it asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,6 +25,8 @@ pub enum Access {
 /// The ABI allows each map and each buffer only in named callbacks, and only
 /// the crate knows which callback is running.
 /// A [`StreamHost`] method receives this so that you can apply those rules.
+/// The two methods that name a resource the guest can read or write receive
+/// an [`Access`] beside it.
 /// Build one with [`HostCall::new`] when you test your own stream host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -34,23 +37,12 @@ pub struct HostCall {
     /// The callback that is running, or `None` when the guest called from
     /// its start sequence or from a raw call.
     pub callback: Option<Callback>,
-    /// Whether the guest reads or writes.
-    ///
-    /// [`StreamHost::header_map`] and [`StreamHost::buffer`] read it as the
-    /// direction in which the guest uses the resource they name.
-    /// The three methods that change the stream always receive
-    /// [`Access::Write`].
-    pub access: Access,
 }
 
 impl HostCall {
-    /// A call on `context` from `callback` with the given access.
-    pub fn new(context: ContextId, callback: Option<Callback>, access: Access) -> Self {
-        Self {
-            context,
-            callback,
-            access,
-        }
+    /// A call on `context` from `callback`.
+    pub fn new(context: ContextId, callback: Option<Callback>) -> Self {
+        Self { context, callback }
     }
 }
 
@@ -79,10 +71,15 @@ impl HostCall {
 /// | [`close_stream`](StreamHost::close_stream) | [`Status::Unimplemented`] | none |
 /// | [`callout_status`](StreamHost::callout_status) | [`Status::Unimplemented`] | none |
 /// | [`send_local_response`](StreamHost::send_local_response) | [`Status::Unimplemented`] | none |
+/// | [`property`](StreamHost::property) | [`Status::NotFound`] | none |
+/// | [`set_property`](StreamHost::set_property) | [`Status::NotFound`] | none |
+/// | [`call_foreign_function`](StreamHost::call_foreign_function) | [`Status::NotFound`] | none |
 ///
 /// A guest built with the Rust SDK ends its stream on any status other than
-/// `OK` from these functions, and reads `NOT_FOUND` from a buffer as an empty
-/// answer.
+/// `OK` from most of these functions, and reads `NOT_FOUND` from a buffer or
+/// from a property read as an absent value.
+/// Every default body reports itself through `tracing` at the debug level,
+/// so a method you forgot reaches your log before it reaches a guest.
 pub trait StreamHost: Any + Send {
     // `Any` lets the scope give your own value back without a downcast of
     // your own, and it requires `Self: 'static`, which wasmtime requires of
@@ -95,7 +92,7 @@ pub trait StreamHost: Any + Send {
     /// is paused from it, and the same shape holds for the trailer and
     /// response maps and their callbacks.
     /// The crate does not enforce those rules.
-    /// You can apply them by matching on `call.callback` and `call.access`,
+    /// You can apply them by matching on `call.callback` and `access`,
     /// and you can refuse a write by returning `Err(NotAllowed)` from the
     /// map's write method, which the guest sees as [`Status::BadArgument`].
     /// `call.context` may name a context this stream does not serve, and
@@ -116,8 +113,8 @@ pub trait StreamHost: Any + Send {
     /// }
     ///
     /// impl StreamHost for Request {
-    ///     fn header_map(&mut self, call: HostCall, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
-    ///         match (map, call.callback, call.access) {
+    ///     fn header_map(&mut self, call: HostCall, access: Access, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
+    ///         match (map, call.callback, access) {
     ///             (MapType::HttpRequestHeaders, Some(Callback::RequestHeaders), _)
     ///             | (MapType::HttpRequestHeaders, Some(Callback::Log), Access::Read) => {
     ///                 Ok(&mut self.headers)
@@ -133,8 +130,14 @@ pub trait StreamHost: Any + Send {
     /// The status you return goes to the guest unchanged, except that
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`], because
     /// no map was touched.
-    fn header_map(&mut self, call: HostCall, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
-        let _ = (call, map);
+    fn header_map(
+        &mut self,
+        call: HostCall,
+        access: Access,
+        map: MapType,
+    ) -> Result<&mut dyn HeaderMap, Status> {
+        unserved("header_map");
+        let _ = (call, access, map);
         Err(Status::BadArgument)
     }
 
@@ -150,7 +153,7 @@ pub trait StreamHost: Any + Send {
     /// `GrpcCallMessage` in `proxy_on_grpc_receive`.
     /// `ForeignFunctionArguments` is read in `proxy_on_foreign_function`.
     /// The crate does not enforce those rules, and you can apply them by
-    /// matching on `call.callback` and `call.access`.
+    /// matching on `call.callback` and `access`.
     ///
     /// The crate never asks you for `VmConfiguration` or
     /// `PluginConfiguration`, because it serves both itself from the values
@@ -169,8 +172,14 @@ pub trait StreamHost: Any + Send {
     /// The status you return goes to the guest unchanged, except that
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`], because
     /// no buffer was touched.
-    fn buffer(&mut self, call: HostCall, buffer: BufferType) -> Result<&mut dyn Buffer, Status> {
-        let _ = (call, buffer);
+    fn buffer(
+        &mut self,
+        call: HostCall,
+        access: Access,
+        buffer: BufferType,
+    ) -> Result<&mut dyn Buffer, Status> {
+        unserved("buffer");
+        let _ = (call, access, buffer);
         Err(Status::NotFound)
     }
 
@@ -179,7 +188,6 @@ pub trait StreamHost: Any + Send {
     /// The stream type names which half of the exchange the guest means, and
     /// a guest resumes the half it paused from a callback that returned
     /// [`Action::Pause`](crate::abi::v0_2_1::types::Action::Pause).
-    /// `call.access` is always [`Access::Write`].
     /// The default body reports [`Status::Unimplemented`], which is the
     /// status the ABI names for a stream a host cannot resume.
     ///
@@ -188,6 +196,7 @@ pub trait StreamHost: Any + Send {
     /// The status you return goes to the guest unchanged, except that
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
     fn continue_stream(&mut self, call: HostCall, stream: StreamType) -> Result<(), Status> {
+        unserved("continue_stream");
         let _ = (call, stream);
         Err(Status::Unimplemented)
     }
@@ -195,7 +204,6 @@ pub trait StreamHost: Any + Send {
     /// Closes or resets the stream.
     ///
     /// The stream type names which half of the exchange the guest means.
-    /// `call.access` is always [`Access::Write`].
     /// The default body reports [`Status::Unimplemented`].
     ///
     /// # Errors
@@ -203,6 +211,7 @@ pub trait StreamHost: Any + Send {
     /// The status you return goes to the guest unchanged, except that
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
     fn close_stream(&mut self, call: HostCall, stream: StreamType) -> Result<(), Status> {
+        unserved("close_stream");
         let _ = (call, stream);
         Err(Status::Unimplemented)
     }
@@ -215,7 +224,6 @@ pub trait StreamHost: Any + Send {
     /// One context can have several callouts in flight, and the contract
     /// that delivers a callout and names it here arrives with the callout
     /// functions.
-    /// `call.access` is [`Access::Read`].
     /// The default body reports [`Status::Unimplemented`].
     ///
     /// # Errors
@@ -223,6 +231,7 @@ pub trait StreamHost: Any + Send {
     /// The status you return goes to the guest unchanged, except that
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
     fn callout_status(&mut self, call: HostCall) -> Result<CalloutStatus<'_>, Status> {
+        unserved("callout_status");
         let _ = call;
         Err(Status::Unimplemented)
     }
@@ -232,7 +241,6 @@ pub trait StreamHost: Any + Send {
     /// The ABI allows the call while the response headers have not gone
     /// downstream, and it says nothing about a second call, so you decide
     /// what one means.
-    /// `call.access` is always [`Access::Write`].
     /// The response borrows guest memory, so call
     /// [`LocalResponse::into_owned`] if you send it after the callback
     /// returns.
@@ -247,8 +255,68 @@ pub trait StreamHost: Any + Send {
         call: HostCall,
         response: LocalResponse<'_>,
     ) -> Result<(), Status> {
+        unserved("send_local_response");
         let _ = (call, response);
         Err(Status::Unimplemented)
+    }
+
+    /// The value of a property, or the status to report instead.
+    ///
+    /// The path arrives as the segments the guest serialized, so the path
+    /// `route.name` arrives as two slices.
+    /// The crate answers `plugin_name`, `plugin_root_id`, and
+    /// `plugin_vm_id` itself from the plugin of the root and from the host
+    /// services, so you never see those three.
+    /// The ABI says that properties are particular to a host, so you decide
+    /// which ones you serve.
+    ///
+    /// # Errors
+    ///
+    /// Report [`Status::NotFound`] for a path you do not serve, which the
+    /// default body does, and [`Status::SerializationFailure`] for a value
+    /// you hold and cannot serialize.
+    /// A guest built with the Rust SDK reads `NOT_FOUND` as an absent value
+    /// and stops on anything else.
+    fn property(&mut self, call: HostCall, path: &[&[u8]]) -> Result<Vec<u8>, Status> {
+        unserved("property");
+        let _ = (call, path);
+        Err(Status::NotFound)
+    }
+
+    /// Writes a property.
+    ///
+    /// The crate refuses a write to the three properties it answers itself,
+    /// so you never see those.
+    ///
+    /// # Errors
+    ///
+    /// Report [`Status::NotFound`] for a path you do not serve, which the
+    /// default body does.
+    /// A guest built with the Rust SDK stops on any status but `OK`, so
+    /// serve this if your guests write properties.
+    fn set_property(&mut self, call: HostCall, path: &[&[u8]], value: &[u8]) -> Result<(), Status> {
+        unserved("set_property");
+        let _ = (call, path, value);
+        Err(Status::NotFound)
+    }
+
+    /// Runs a function of yours that the ABI does not name.
+    ///
+    /// The result may be empty, and the guest reads an empty result as a
+    /// present value of no bytes.
+    ///
+    /// # Errors
+    ///
+    /// Report [`Status::NotFound`] for a name you do not serve, which the
+    /// default body does.
+    fn call_foreign_function(
+        &mut self,
+        call: HostCall,
+        request: ForeignCall<'_>,
+    ) -> Result<Vec<u8>, Status> {
+        unserved("call_foreign_function");
+        let _ = (call, request);
+        Err(Status::NotFound)
     }
 }
 
@@ -260,6 +328,8 @@ impl StreamHost for NoStream {}
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::*;
 
     struct Empty;
@@ -270,7 +340,6 @@ mod tests {
         HostCall::new(
             ContextId::try_from(1).unwrap(),
             Some(Callback::RequestHeaders),
-            Access::Read,
         )
     }
 
@@ -282,8 +351,11 @@ mod tests {
 
         // Act
         let results = (
-            empty.header_map(call(), MapType::HttpRequestHeaders).err(),
-            none.header_map(call(), MapType::HttpResponseHeaders).err(),
+            empty
+                .header_map(call(), Access::Read, MapType::HttpRequestHeaders)
+                .err(),
+            none.header_map(call(), Access::Read, MapType::HttpResponseHeaders)
+                .err(),
         );
 
         // Assert
@@ -302,8 +374,11 @@ mod tests {
 
         // Act
         let results = (
-            empty.buffer(call(), BufferType::HttpRequestBody).err(),
-            none.buffer(call(), BufferType::HttpResponseBody).err(),
+            empty
+                .buffer(call(), Access::Read, BufferType::HttpRequestBody)
+                .err(),
+            none.buffer(call(), Access::Read, BufferType::HttpResponseBody)
+                .err(),
         );
 
         // Assert
@@ -321,6 +396,32 @@ mod tests {
                 .send_local_response(call(), LocalResponse::new(200))
                 .err(),
         ]
+    }
+
+    fn not_found_answers(stream: &mut dyn StreamHost) -> [Option<Status>; 3] {
+        [
+            stream.property(call(), &[b"route"]).err(),
+            stream.set_property(call(), &[b"route"], b"main").err(),
+            stream
+                .call_foreign_function(
+                    call(),
+                    ForeignCall::new(Cow::Borrowed(b"echo"), Cow::Borrowed(b"")),
+                )
+                .err(),
+        ]
+    }
+
+    #[test]
+    fn the_three_property_and_foreign_defaults_report_not_found() {
+        // Arrange
+        let mut empty = Empty;
+        let mut none = NoStream;
+
+        // Act
+        let results = [not_found_answers(&mut empty), not_found_answers(&mut none)];
+
+        // Assert
+        assert_eq!(results, [[Some(Status::NotFound); 3]; 2]);
     }
 
     #[test]

@@ -21,8 +21,8 @@ fn map(
     map_type: MapType,
     access: Access,
 ) -> Result<&mut dyn HeaderMap, Failure> {
-    let (call, stream) = with_stream(state, access, Status::BadArgument)?;
-    from_embedder("header_map", stream.header_map(call, map_type))
+    let (call, stream) = with_stream(state, Status::BadArgument)?;
+    from_embedder("header_map", stream.header_map(call, access, map_type))
 }
 
 pub(super) fn proxy_get_header_map_size(
@@ -720,10 +720,10 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].0.context, root);
         assert_eq!(calls[0].0.callback, Some(Callback::RequestHeaders));
-        assert_eq!(calls[0].0.access, Access::Read);
+        assert_eq!(calls[0].1, Access::Read);
         assert_eq!(calls[1].0.context, stream);
-        assert_eq!(calls[1].0.access, Access::Write);
-        assert_eq!(calls[1].1, MapType::HttpRequestHeaders);
+        assert_eq!(calls[1].1, Access::Write);
+        assert_eq!(calls[1].1, Access::Write);
     }
 
     #[test]

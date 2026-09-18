@@ -25,13 +25,14 @@ pub(crate) struct HostState {
 
 impl HostState {
     pub(crate) fn new(services: HostServices) -> Self {
+        let abi = AbiState::new(std::sync::Arc::clone(services.shared()));
         Self {
             services,
             store_limits: StoreLimits::default(),
             memory: None,
             allocator: None,
             poisoned: false,
-            abi: AbiState::new(),
+            abi,
         }
     }
 

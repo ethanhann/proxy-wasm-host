@@ -5,7 +5,6 @@
 
 use wasmtime::AsContextMut;
 
-use crate::abi::v0_2_1::Access;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_stream};
 use crate::abi::v0_2_1::types::Status;
@@ -24,7 +23,7 @@ pub(super) fn proxy_get_status(
     memory.read_u32(code_ptr)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
-    let (call, stream) = with_stream(state, Access::Read, Status::Unimplemented)?;
+    let (call, stream) = with_stream(state, Status::Unimplemented)?;
     let status = from_embedder("callout_status", stream.callout_status(call))?;
     let code = status.code;
     let message = status.message.into_owned();
@@ -38,7 +37,7 @@ pub(super) fn proxy_get_status(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::test_support::{RecordingStream, bare, hosted, outcome, status};
-    use crate::abi::v0_2_1::{Access, Callback, NoStream};
+    use crate::abi::v0_2_1::{Callback, NoStream};
     use crate::runtime::test_support::engine;
     use crate::runtime::{GuestSlice, Instance};
 
@@ -103,7 +102,6 @@ mod tests {
         );
         let stream = RecordingStream::take(instance.state_mut());
         assert_eq!(stream.callout_calls()[0].context, root);
-        assert_eq!(stream.callout_calls()[0].access, Access::Read);
         assert_eq!(
             stream.callout_calls()[0].callback,
             Some(Callback::RequestHeaders)

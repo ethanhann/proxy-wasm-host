@@ -77,8 +77,8 @@ fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<
             Ok(Source::Configuration(plugin.configuration()))
         }
         _ => {
-            let (call, stream) = with_stream(state, Access::Read, Status::NotFound)?;
-            let buffer = from_embedder("buffer", stream.buffer(call, buffer_type))?;
+            let (call, stream) = with_stream(state, Status::NotFound)?;
+            let buffer = from_embedder("buffer", stream.buffer(call, Access::Read, buffer_type))?;
             Ok(Source::Stream(buffer))
         }
     }
@@ -93,8 +93,8 @@ fn write_buffer(
             Err(Status::NotFound.into())
         }
         _ => {
-            let (call, stream) = with_stream(state, Access::Write, Status::NotFound)?;
-            from_embedder("buffer", stream.buffer(call, buffer_type))
+            let (call, stream) = with_stream(state, Status::NotFound)?;
+            from_embedder("buffer", stream.buffer(call, Access::Write, buffer_type))
         }
     }
 }
@@ -380,9 +380,9 @@ mod tests {
         // Assert
         assert_eq!(result, Status::BadArgument);
         let stream = RecordingStream::take(instance.state_mut());
-        let (call, buffer) = stream.buffer_calls()[0];
+        let (call, access, buffer) = stream.buffer_calls()[0];
         assert_eq!(buffer, BufferType::HttpRequestBody);
-        assert_eq!((call.context, call.access), (root, Access::Read));
+        assert_eq!((call.context, access), (root, Access::Read));
     }
 
     #[test]
@@ -601,8 +601,8 @@ mod tests {
         assert_eq!(result, Status::Ok);
         let stream = RecordingStream::take(instance.state_mut());
         assert_eq!(stream.ranges(), vec![(4, 0)]);
-        let (call, _) = stream.buffer_calls()[0];
-        assert_eq!((call.context, call.access), (root, Access::Write));
+        let (call, access, _) = stream.buffer_calls()[0];
+        assert_eq!((call.context, access), (root, Access::Write));
     }
 
     #[test]

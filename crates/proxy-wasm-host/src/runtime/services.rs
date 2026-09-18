@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::abi::v0_2_1::types::LogLevel;
+use crate::abi::v0_2_1::{MemoryServices, SharedServices};
 
 /// Where guest log output goes.
 ///
@@ -66,10 +67,14 @@ impl Clock for SystemClock {
 /// You can change it between calls through
 /// [`crate::runtime::Instance::services_mut`].
 ///
+/// Clone it to build a second instance against the same log sink, clock, and
+/// shared state.
+///
 /// The inputs of one plugin live elsewhere.
 /// The plugin name, the plugin root id, and the plugin configuration reach the
 /// crate through [`Plugin`](crate::abi::v0_2_1::Plugin), because the ABI reads
 /// them for one root context.
+#[derive(Clone)]
 pub struct HostServices {
     log: Arc<dyn LogSink>,
     clock: Arc<dyn Clock>,
@@ -77,6 +82,7 @@ pub struct HostServices {
     log_level: LogLevel,
     vm_id: Vec<u8>,
     vm_configuration: Vec<u8>,
+    shared: Arc<dyn SharedServices>,
 }
 
 impl std::fmt::Debug for HostServices {
@@ -92,8 +98,17 @@ impl std::fmt::Debug for HostServices {
 
 impl HostServices {
     /// Services that log to `log`, read [`SystemClock`], report
-    /// [`LogLevel::Info`], and have no environment, no VM id, and no VM
-    /// configuration.
+    /// [`LogLevel::Info`], hold a [`MemoryServices`], and have no
+    /// environment, no VM id, and no VM configuration.
+    ///
+    /// The store this installs is private to the value you get back, so two
+    /// instances built with two of these share no queue, no key, and no
+    /// metric.
+    /// Clone one value, or pass one store to both through
+    /// [`HostServices::with_shared`], when you want them shared.
+    ///
+    /// The VM id is empty, and the VM id is what separates one plugin's
+    /// shared data and metrics from another's, so set one per plugin.
     pub fn new(log: Arc<dyn LogSink>) -> Self {
         Self {
             log,
@@ -102,6 +117,7 @@ impl HostServices {
             log_level: LogLevel::Info,
             vm_id: Vec::new(),
             vm_configuration: Vec::new(),
+            shared: Arc::new(MemoryServices::new()),
         }
     }
 
@@ -139,7 +155,12 @@ impl HostServices {
     /// Sets the VM id.
     ///
     /// A guest names it when it resolves a shared queue that another VM
-    /// registered.
+    /// registered, and it also separates the shared data and the metrics of
+    /// this plugin from those of every other plugin that holds the same
+    /// store.
+    /// Two plugins you give one VM id share their keys and their metrics.
+    /// An empty VM id, which is the default, puts every plugin of that store
+    /// in one namespace.
     #[must_use]
     pub fn with_vm_id(mut self, vm_id: impl Into<Vec<u8>>) -> Self {
         self.vm_id = vm_id.into();
@@ -156,6 +177,28 @@ impl HostServices {
     pub fn with_vm_configuration(mut self, configuration: impl Into<Vec<u8>>) -> Self {
         self.vm_configuration = configuration.into();
         self
+    }
+
+    /// Replaces the shared data, the shared queues, and the metrics.
+    ///
+    /// Several instances that hold the same value share that state, which is
+    /// what lets one VM resolve a queue another registered.
+    /// The default is an [`Arc`] of [`MemoryServices`], which serves one
+    /// process.
+    #[must_use]
+    pub fn with_shared(mut self, shared: Arc<dyn SharedServices>) -> Self {
+        self.shared = shared;
+        self
+    }
+
+    /// The shared data, the shared queues, and the metrics.
+    ///
+    /// The `Arc` is returned rather than the value behind it, because you
+    /// clone it to build a second instance against the same state.
+    /// The trait is not downcastable, so keep your own `Arc` if you want
+    /// your concrete type back.
+    pub fn shared(&self) -> &Arc<dyn SharedServices> {
+        &self.shared
     }
 
     /// The log sink.
@@ -308,6 +351,59 @@ mod tests {
         // Assert
         assert_eq!(services.vm_configuration(), b"{}");
         assert!(services.vm_id().is_empty());
+    }
+
+    #[test]
+    fn the_shared_services_default_to_the_in_memory_one() {
+        // Arrange
+        let call = crate::abi::v0_2_1::HostCall::new(
+            crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
+            None,
+        );
+
+        // Act
+        let services = services();
+
+        // Assert
+        assert_eq!(
+            services
+                .shared()
+                .set_shared_data(call, b"vm", b"k", b"v", None),
+            Ok(())
+        );
+        assert_eq!(
+            services
+                .shared()
+                .get_shared_data(call, b"vm", b"k")
+                .unwrap()
+                .bytes,
+            b"v"
+        );
+    }
+
+    #[test]
+    fn with_shared_replaces_the_default() {
+        // Arrange
+        let mine: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let call = crate::abi::v0_2_1::HostCall::new(
+            crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
+            None,
+        );
+        mine.set_shared_data(call, b"vm", b"k", b"mine", None)
+            .unwrap();
+
+        // Act
+        let services = services().with_shared(Arc::clone(&mine));
+
+        // Assert
+        assert_eq!(
+            services
+                .shared()
+                .get_shared_data(call, b"vm", b"k")
+                .unwrap()
+                .bytes,
+            b"mine"
+        );
     }
 
     #[test]

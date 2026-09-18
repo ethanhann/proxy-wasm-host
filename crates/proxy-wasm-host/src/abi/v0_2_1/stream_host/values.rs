@@ -2,8 +2,34 @@
 
 use std::borrow::Cow;
 
-/// The headers of a local response, in the order the guest serialized them.
-pub type ResponseHeaders<'a> = Vec<(Cow<'a, [u8]>, Cow<'a, [u8]>)>;
+/// Header or metadata pairs, in the order the guest serialized them.
+pub type HeaderPairs<'a> = Vec<(Cow<'a, [u8]>, Cow<'a, [u8]>)>;
+
+/// A call to a function of the embedder that the ABI does not name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ForeignCall<'a> {
+    /// The name the guest gave.
+    pub name: Cow<'a, [u8]>,
+    /// The argument bytes, which the guest and the embedder agree on.
+    pub arguments: Cow<'a, [u8]>,
+}
+
+impl<'a> ForeignCall<'a> {
+    /// A call to `name` with `arguments`.
+    pub fn new(name: Cow<'a, [u8]>, arguments: Cow<'a, [u8]>) -> Self {
+        Self { name, arguments }
+    }
+
+    /// The same call with no borrow left in it.
+    #[must_use]
+    pub fn into_owned(self) -> ForeignCall<'static> {
+        ForeignCall {
+            name: Cow::Owned(self.name.into_owned()),
+            arguments: Cow::Owned(self.arguments.into_owned()),
+        }
+    }
+}
 
 /// The status of the callout the guest is handling.
 ///
@@ -53,7 +79,7 @@ pub struct LocalResponse<'a> {
     /// The response body, which may be empty.
     pub body: Cow<'a, [u8]>,
     /// The response headers, in the order the guest serialized them.
-    pub headers: ResponseHeaders<'a>,
+    pub headers: HeaderPairs<'a>,
     /// The gRPC status, or `None` when the response carries none.
     ///
     /// The ABI types the field as unsigned, and every SDK sends the all ones
@@ -91,7 +117,7 @@ impl<'a> LocalResponse<'a> {
 
     /// Sets the response headers.
     #[must_use]
-    pub fn with_headers(mut self, headers: ResponseHeaders<'a>) -> Self {
+    pub fn with_headers(mut self, headers: HeaderPairs<'a>) -> Self {
         self.headers = headers;
         self
     }
@@ -207,5 +233,32 @@ mod tests {
         drop(body);
         assert_eq!(owned.body.as_ref(), b"no");
         assert_eq!(owned.headers[0].1.as_ref(), b"v");
+    }
+
+    #[test]
+    fn a_foreign_call_reads_back_its_values() {
+        // Arrange
+        let name = b"compress".to_vec();
+
+        // Act
+        let request = ForeignCall::new(Cow::Borrowed(&name), Cow::Borrowed(b"payload"));
+
+        // Assert
+        assert_eq!(request.name.as_ref(), b"compress");
+        assert_eq!(request.arguments.as_ref(), b"payload");
+    }
+
+    #[test]
+    fn a_foreign_call_outlives_the_borrow_it_was_built_from() {
+        // Arrange
+        let name = b"compress".to_vec();
+        let borrowed = ForeignCall::new(Cow::Borrowed(&name), Cow::Borrowed(b"payload"));
+
+        // Act
+        let owned = borrowed.into_owned();
+
+        // Assert
+        drop(name);
+        assert_eq!(owned.name.as_ref(), b"compress");
     }
 }

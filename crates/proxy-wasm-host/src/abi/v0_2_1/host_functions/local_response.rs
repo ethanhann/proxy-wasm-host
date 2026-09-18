@@ -4,10 +4,10 @@ use std::borrow::Cow;
 
 use wasmtime::AsContextMut;
 
+use crate::abi::v0_2_1::LocalResponse;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_stream};
 use crate::abi::v0_2_1::types::Status;
-use crate::abi::v0_2_1::{Access, LocalResponse};
 use crate::codec::pairs::decode_pairs;
 use crate::runtime::{GuestSlice, HostState, split};
 
@@ -48,7 +48,7 @@ pub(super) fn proxy_send_local_response(
     if let Some(grpc_status) = grpc_status {
         response = response.with_grpc_status(grpc_status);
     }
-    let (call, stream) = with_stream(state, Access::Write, Status::Unimplemented)?;
+    let (call, stream) = with_stream(state, Status::Unimplemented)?;
     from_embedder(
         "send_local_response",
         stream.send_local_response(call, response),
@@ -61,7 +61,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, status, unhosted, write,
     };
-    use crate::abi::v0_2_1::{Access, Callback, NoStream};
+    use crate::abi::v0_2_1::{Callback, NoStream};
     use crate::codec::pairs::encode_pairs;
     use crate::runtime::Instance;
     use crate::runtime::test_support::engine;
@@ -121,7 +121,7 @@ mod tests {
         assert_eq!(response.headers.len(), 1);
         assert_eq!(response.headers[0].0.as_ref(), b"a");
         assert_eq!(response.grpc_status, None);
-        assert_eq!((call.context, call.access), (root, Access::Write));
+        assert_eq!(call.context, root);
         assert_eq!(call.callback, Some(Callback::RequestHeaders));
     }
 

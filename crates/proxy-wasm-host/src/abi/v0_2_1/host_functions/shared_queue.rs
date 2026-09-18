@@ -1,0 +1,469 @@
+//! The four shared queue functions.
+//!
+//! A register and a resolve record the identifier the guest obtained, and an
+//! enqueue or a dequeue of an identifier it never obtained reports
+//! `NOT_FOUND`.
+//! A queue identifier is a small number that another VM can guess, and the
+//! ABI gives the guest no VM id on those two calls, so the crate checks it
+//! here rather than asking every implementation to.
+
+use wasmtime::AsContextMut;
+
+use crate::abi::v0_2_1::QueueId;
+use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_shared};
+use crate::abi::v0_2_1::types::Status;
+use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
+
+pub(super) fn proxy_register_shared_queue(
+    ctx: &mut impl AsContextMut<Data = HostState>,
+    name_data: i32,
+    name_size: i32,
+    return_queue_id: i32,
+) -> Result<(), Failure> {
+    let name = GuestSlice::try_from((name_data, name_size))?;
+    let return_queue_id = GuestPtr::try_from(return_queue_id)?;
+    let (memory, state) = split(ctx)?;
+    memory.read_u32(return_queue_id)?;
+    let name = memory.read(name)?;
+    let (call, shared) = with_shared(state, Status::NotFound)?;
+    let vm_id = state.services().vm_id();
+    let queue = from_embedder(
+        "register_shared_queue",
+        shared.register_shared_queue(call, vm_id, name),
+    )?;
+    state.abi_mut().grant_queue(queue);
+    let (mut memory, _) = split(ctx)?;
+    memory.write_u32(return_queue_id, queue.get())?;
+    Ok(())
+}
+
+pub(super) fn proxy_resolve_shared_queue(
+    ctx: &mut impl AsContextMut<Data = HostState>,
+    vm_id_data: i32,
+    vm_id_size: i32,
+    name_data: i32,
+    name_size: i32,
+    return_queue_id: i32,
+) -> Result<(), Failure> {
+    let vm_id = GuestSlice::try_from((vm_id_data, vm_id_size))?;
+    let name = GuestSlice::try_from((name_data, name_size))?;
+    let return_queue_id = GuestPtr::try_from(return_queue_id)?;
+    let (memory, state) = split(ctx)?;
+    memory.read_u32(return_queue_id)?;
+    let vm_id = memory.read(vm_id)?;
+    let name = memory.read(name)?;
+    let (call, shared) = with_shared(state, Status::NotFound)?;
+    let queue = from_embedder(
+        "resolve_shared_queue",
+        shared.resolve_shared_queue(call, vm_id, name),
+    )?;
+    state.abi_mut().grant_queue(queue);
+    let (mut memory, _) = split(ctx)?;
+    memory.write_u32(return_queue_id, queue.get())?;
+    Ok(())
+}
+
+pub(super) fn proxy_enqueue_shared_queue(
+    ctx: &mut impl AsContextMut<Data = HostState>,
+    queue_id: i32,
+    value_data: i32,
+    value_size: i32,
+) -> Result<(), Failure> {
+    let queue = QueueId::try_from(queue_id).map_err(|_| Status::NotFound)?;
+    let value = GuestSlice::try_from((value_data, value_size))?;
+    let (memory, state) = split(ctx)?;
+    let value = memory.read(value)?;
+    if !state.abi().holds_queue(queue) {
+        return Err(Status::NotFound.into());
+    }
+    let (call, shared) = with_shared(state, Status::NotFound)?;
+    from_embedder(
+        "enqueue_shared_queue",
+        shared.enqueue_shared_queue(call, queue, value),
+    )
+}
+
+pub(super) fn proxy_dequeue_shared_queue(
+    ctx: &mut impl AsContextMut<Data = HostState>,
+    queue_id: i32,
+    return_value_data: i32,
+    return_value_size: i32,
+) -> Result<(), Failure> {
+    let queue = QueueId::try_from(queue_id).map_err(|_| Status::NotFound)?;
+    let data_ptr = GuestPtr::try_from(return_value_data)?;
+    let size_ptr = GuestPtr::try_from(return_value_size)?;
+    let (memory, state) = split(ctx)?;
+    memory.read_u32(data_ptr)?;
+    memory.read_u32(size_ptr)?;
+    if !state.abi().holds_queue(queue) {
+        return Err(Status::NotFound.into());
+    }
+    let (call, shared) = with_shared(state, Status::NotFound)?;
+    let value = from_embedder(
+        "dequeue_shared_queue",
+        shared.dequeue_shared_queue(call, queue),
+    )?;
+    write_return(ctx, &value, data_ptr, size_ptr)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::abi::v0_2_1::test_support::services::{RecordingServices, SharedCall};
+    use crate::abi::v0_2_1::test_support::{
+        VM_ID, bare, outcome, returned, shared_hosted, status, write,
+    };
+    use crate::abi::v0_2_1::{ContextId, HostCall, MemoryServices, SharedServices};
+    use crate::runtime::test_support::engine;
+    use crate::runtime::{GuestPtr, Instance};
+
+    const NAME: i32 = 1024;
+    const VM: i32 = 1100;
+    const VALUE: i32 = 1200;
+    const RETURN_ID: i32 = 2000;
+    const RETURN_DATA: i32 = 2004;
+    const RETURN_SIZE: i32 = 2008;
+    const PAST_END: i32 = 65_534;
+
+    const GUEST: &str = r#"(module
+        (import "env" "proxy_register_shared_queue" (func $register (param i32 i32 i32) (result i32)))
+        (import "env" "proxy_resolve_shared_queue" (func $resolve (param i32 i32 i32 i32 i32) (result i32)))
+        (import "env" "proxy_enqueue_shared_queue" (func $enqueue (param i32 i32 i32) (result i32)))
+        (import "env" "proxy_dequeue_shared_queue" (func $dequeue (param i32 i32 i32) (result i32)))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 4096)
+        (func (export "register") (param i32 i32 i32) (result i32)
+            local.get 0 local.get 1 local.get 2 call $register)
+        (func (export "resolve") (param i32 i32 i32 i32 i32) (result i32)
+            local.get 0 local.get 1 local.get 2 local.get 3 local.get 4 call $resolve)
+        (func (export "enqueue") (param i32 i32 i32) (result i32)
+            local.get 0 local.get 1 local.get 2 call $enqueue)
+        (func (export "dequeue") (param i32 i32 i32) (result i32)
+            local.get 0 local.get 1 local.get 2 call $dequeue))"#;
+
+    fn register(instance: &mut Instance, name: &[u8]) -> Status {
+        let (_, len) = write(instance, NAME, name);
+        status(
+            instance
+                .call::<(i32, i32, i32), i32>("register", (NAME, len, RETURN_ID))
+                .unwrap(),
+        )
+    }
+
+    fn returned_id(instance: &mut Instance) -> u32 {
+        instance
+            .memory()
+            .unwrap()
+            .read_u32(GuestPtr::from_address(2000))
+            .unwrap()
+    }
+
+    fn dequeued(instance: &mut Instance) -> Vec<u8> {
+        returned(instance, 2004, 2008)
+    }
+
+    #[test]
+    fn a_registration_names_this_vm_and_returns_an_identifier() {
+        // Arrange
+        let engine = engine();
+        let recording = Arc::new(RecordingServices::new());
+        let (mut instance, _) = shared_hosted(&engine, GUEST, recording.clone());
+
+        // Act
+        let result = register(&mut instance, b"q");
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(returned_id(&mut instance), 1);
+        assert_eq!(
+            recording.calls()[0].1,
+            SharedCall::Register(VM_ID.to_vec(), b"q".to_vec())
+        );
+    }
+
+    #[test]
+    fn a_registration_grants_the_identifier_to_this_guest() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
+
+        // Act
+        let result = register(&mut instance, b"q");
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        let queue = QueueId::try_from(returned_id(&mut instance)).unwrap();
+        assert!(instance.state().abi().holds_queue(queue));
+    }
+
+    #[test]
+    fn a_queue_this_guest_never_obtained_is_not_found() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let other = HostCall::new(ContextId::try_from(1).unwrap(), None);
+        let theirs = shared
+            .register_shared_queue(other, b"vm-2", b"private")
+            .unwrap();
+        shared
+            .enqueue_shared_queue(other, theirs, b"secret")
+            .unwrap();
+        let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
+
+        // Act
+        let results = [
+            status(
+                instance
+                    .call::<(i32, i32, i32), i32>(
+                        "dequeue",
+                        (theirs.get().cast_signed(), RETURN_DATA, RETURN_SIZE),
+                    )
+                    .unwrap(),
+            ),
+            status(
+                instance
+                    .call::<(i32, i32, i32), i32>("enqueue", (theirs.get().cast_signed(), VALUE, 1))
+                    .unwrap(),
+            ),
+        ];
+
+        // Assert
+        assert_eq!(results, [Status::NotFound; 2]);
+    }
+
+    #[test]
+    fn a_resolve_grants_the_identifier_as_well() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let other = HostCall::new(ContextId::try_from(1).unwrap(), None);
+        let theirs = shared
+            .register_shared_queue(other, VM_ID, b"shared")
+            .unwrap();
+        let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
+        let (_, vm_len) = write(&mut instance, VM, VM_ID);
+        let (_, name_len) = write(&mut instance, NAME, b"shared");
+
+        // Act
+        let result = status(
+            instance
+                .call::<(i32, i32, i32, i32, i32), i32>(
+                    "resolve",
+                    (VM, vm_len, NAME, name_len, RETURN_ID),
+                )
+                .unwrap(),
+        );
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert!(instance.state().abi().holds_queue(theirs));
+    }
+
+    #[test]
+    fn a_resolve_finds_a_queue_of_the_named_vm() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
+        register(&mut instance, b"q");
+        let (_, vm_len) = write(&mut instance, VM, VM_ID);
+        let (_, name_len) = write(&mut instance, NAME, b"q");
+
+        // Act
+        let result = status(
+            instance
+                .call::<(i32, i32, i32, i32, i32), i32>(
+                    "resolve",
+                    (VM, vm_len, NAME, name_len, RETURN_ID),
+                )
+                .unwrap(),
+        );
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(returned_id(&mut instance), 1);
+    }
+
+    #[test]
+    fn a_resolve_of_a_name_no_vm_registered_is_not_found() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
+        let (_, vm_len) = write(&mut instance, VM, VM_ID);
+        let (_, name_len) = write(&mut instance, NAME, b"q");
+
+        // Act
+        let result = status(
+            instance
+                .call::<(i32, i32, i32, i32, i32), i32>(
+                    "resolve",
+                    (VM, vm_len, NAME, name_len, RETURN_ID),
+                )
+                .unwrap(),
+        );
+
+        // Assert
+        assert_eq!(result, Status::NotFound);
+    }
+
+    #[test]
+    fn an_item_goes_in_and_comes_back_out() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
+        register(&mut instance, b"q");
+        let id = returned_id(&mut instance).cast_signed();
+        let (_, len) = write(&mut instance, VALUE, b"item");
+
+        status(
+            instance
+                .call::<(i32, i32, i32), i32>("enqueue", (id, VALUE, len))
+                .unwrap(),
+        );
+
+        // Act
+        let taken = status(
+            instance
+                .call::<(i32, i32, i32), i32>("dequeue", (id, RETURN_DATA, RETURN_SIZE))
+                .unwrap(),
+        );
+
+        // Assert
+        assert_eq!(taken, Status::Ok);
+        assert_eq!(dequeued(&mut instance), b"item");
+    }
+
+    #[test]
+    fn a_dequeue_of_an_empty_queue_is_empty_and_of_an_unknown_one_is_not_found() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
+        register(&mut instance, b"q");
+        let id = returned_id(&mut instance).cast_signed();
+
+        // Act
+        let results = [
+            status(
+                instance
+                    .call::<(i32, i32, i32), i32>("dequeue", (id, RETURN_DATA, RETURN_SIZE))
+                    .unwrap(),
+            ),
+            status(
+                instance
+                    .call::<(i32, i32, i32), i32>("dequeue", (9, RETURN_DATA, RETURN_SIZE))
+                    .unwrap(),
+            ),
+        ];
+
+        // Assert
+        assert_eq!(results, [Status::Empty, Status::NotFound]);
+    }
+
+    #[test]
+    fn a_queue_identifier_of_zero_is_not_found() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
+
+        // Act
+        let result = outcome(proxy_enqueue_shared_queue(
+            instance.store_mut(),
+            0,
+            VALUE,
+            1,
+        ));
+
+        // Assert
+        assert_eq!(result, Status::NotFound);
+    }
+
+    #[test]
+    fn a_body_with_no_effective_context_is_not_found() {
+        // Arrange
+        let engine = engine();
+        let mut instance = bare(&engine, GUEST);
+
+        // Act
+        let result = outcome(proxy_register_shared_queue(
+            instance.store_mut(),
+            NAME,
+            1,
+            RETURN_ID,
+        ));
+
+        // Assert
+        assert_eq!(result, Status::NotFound);
+    }
+
+    #[test]
+    fn every_pointer_is_checked_before_the_services_are_asked() {
+        // Arrange
+        let engine = engine();
+        let recording = Arc::new(RecordingServices::new());
+        let (mut instance, _) = shared_hosted(&engine, GUEST, recording.clone());
+
+        // Act
+        let results = [
+            outcome(proxy_register_shared_queue(
+                instance.store_mut(),
+                PAST_END,
+                4,
+                RETURN_ID,
+            )),
+            outcome(proxy_register_shared_queue(
+                instance.store_mut(),
+                NAME,
+                1,
+                PAST_END,
+            )),
+            outcome(proxy_resolve_shared_queue(
+                instance.store_mut(),
+                PAST_END,
+                4,
+                NAME,
+                1,
+                RETURN_ID,
+            )),
+            outcome(proxy_enqueue_shared_queue(
+                instance.store_mut(),
+                1,
+                PAST_END,
+                4,
+            )),
+            outcome(proxy_dequeue_shared_queue(
+                instance.store_mut(),
+                1,
+                PAST_END,
+                RETURN_SIZE,
+            )),
+        ];
+
+        // Assert
+        assert_eq!(results, [Status::InvalidMemoryAccess; 5]);
+        assert!(recording.calls().is_empty());
+    }
+
+    #[test]
+    fn a_body_under_a_refused_root_is_not_found() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let (mut instance, root) = shared_hosted(&engine, GUEST, shared);
+        instance.state_mut().abi_mut().contexts_mut().reject(root);
+
+        // Act
+        let result = register(&mut instance, b"q");
+
+        // Assert
+        assert_eq!(result, Status::NotFound);
+    }
+}

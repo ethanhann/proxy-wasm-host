@@ -429,7 +429,12 @@ mod tests {
     struct Panicking;
 
     impl StreamHost for Panicking {
-        fn header_map(&mut self, _: HostCall, _: MapType) -> Result<&mut dyn HeaderMap, Status> {
+        fn header_map(
+            &mut self,
+            _: HostCall,
+            _: Access,
+            _: MapType,
+        ) -> Result<&mut dyn HeaderMap, Status> {
             panic!("the stream host failed")
         }
     }
@@ -853,7 +858,6 @@ mod tests {
         let call = scope.stream_mut().calls()[0].0;
         assert_eq!(call.context, stream);
         assert_eq!(call.callback, Some(Callback::RequestHeaders));
-        assert_eq!(call.access, Access::Write);
         assert_eq!(scope.guest().effective_context(), Some(stream));
     }
 

@@ -5,7 +5,8 @@ use wasmtime::{Caller, Linker};
 
 use crate::Error;
 use crate::abi::v0_2_1::host_functions::{
-    buffer, callout, clock, complete, context, header_map, local_response, log, stream, stub, timer,
+    buffer, callout, clock, complete, context, foreign, header_map, local_response, log, metric,
+    property, shared_data, shared_queue, stream, stub, timer,
 };
 use crate::runtime::HostState;
 
@@ -16,6 +17,8 @@ pub(crate) struct HostFunction {
     pub(crate) name: &'static str,
     pub(crate) params: &'static [WasmType],
     pub(crate) results: &'static [WasmType],
+    /// Whether the row answers `UNIMPLEMENTED` rather than running a body.
+    pub(crate) stub: bool,
 }
 
 /// A wasm value type a host function parameter can have.
@@ -74,6 +77,16 @@ macro_rules! host_function {
 /// The brackets let `host_function!` receive the implementation as one token
 /// tree, and its `[stub]` rule must stay before its path rule, because
 /// `stub` is also a valid path.
+#[cfg(test)]
+macro_rules! is_stub {
+    ([stub]) => {
+        true
+    };
+    ([$body:path]) => {
+        false
+    };
+}
+
 macro_rules! host_functions {
     ( $( $name:ident ( $( $param:ident : $ty:ident ),* ) = $imp:tt ; )* ) => {
         /// Every host function, in the order of the ABI document.
@@ -84,6 +97,7 @@ macro_rules! host_functions {
                     name: stringify!($name),
                     params: &[ $( WasmType::$ty ),* ],
                     results: &[WasmType::I32],
+                    stub: is_stub!($imp),
                 },
             )*
         ];
@@ -123,19 +137,19 @@ host_functions! {
     proxy_grpc_send(stream_id: I32, message_data: I32, message_size: I32, end_stream: I32) = [stub];
     proxy_grpc_cancel(call_or_stream_id: I32) = [stub];
     proxy_grpc_close(call_or_stream_id: I32) = [stub];
-    proxy_set_shared_data(key_data: I32, key_size: I32, value_data: I32, value_size: I32, cas: I32) = [stub];
-    proxy_get_shared_data(key_data: I32, key_size: I32, return_value_data: I32, return_value_size: I32, return_cas: I32) = [stub];
-    proxy_register_shared_queue(name_data: I32, name_size: I32, return_queue_id: I32) = [stub];
-    proxy_resolve_shared_queue(vm_id_data: I32, vm_id_size: I32, name_data: I32, name_size: I32, return_queue_id: I32) = [stub];
-    proxy_enqueue_shared_queue(queue_id: I32, value_data: I32, value_size: I32) = [stub];
-    proxy_dequeue_shared_queue(queue_id: I32, return_value_data: I32, return_value_size: I32) = [stub];
-    proxy_define_metric(metric_type: I32, name_data: I32, name_size: I32, return_metric_id: I32) = [stub];
-    proxy_record_metric(metric_id: I32, value: I64) = [stub];
-    proxy_increment_metric(metric_id: I32, delta: I64) = [stub];
-    proxy_get_metric(metric_id: I32, return_value: I32) = [stub];
-    proxy_get_property(path_data: I32, path_size: I32, return_value_data: I32, return_value_size: I32) = [stub];
-    proxy_set_property(path_data: I32, path_size: I32, value_data: I32, value_size: I32) = [stub];
-    proxy_call_foreign_function(name_data: I32, name_size: I32, arguments_data: I32, arguments_size: I32, return_results_data: I32, return_results_size: I32) = [stub];
+    proxy_set_shared_data(key_data: I32, key_size: I32, value_data: I32, value_size: I32, cas: I32) = [shared_data::proxy_set_shared_data];
+    proxy_get_shared_data(key_data: I32, key_size: I32, return_value_data: I32, return_value_size: I32, return_cas: I32) = [shared_data::proxy_get_shared_data];
+    proxy_register_shared_queue(name_data: I32, name_size: I32, return_queue_id: I32) = [shared_queue::proxy_register_shared_queue];
+    proxy_resolve_shared_queue(vm_id_data: I32, vm_id_size: I32, name_data: I32, name_size: I32, return_queue_id: I32) = [shared_queue::proxy_resolve_shared_queue];
+    proxy_enqueue_shared_queue(queue_id: I32, value_data: I32, value_size: I32) = [shared_queue::proxy_enqueue_shared_queue];
+    proxy_dequeue_shared_queue(queue_id: I32, return_value_data: I32, return_value_size: I32) = [shared_queue::proxy_dequeue_shared_queue];
+    proxy_define_metric(metric_type: I32, name_data: I32, name_size: I32, return_metric_id: I32) = [metric::proxy_define_metric];
+    proxy_record_metric(metric_id: I32, value: I64) = [metric::proxy_record_metric];
+    proxy_increment_metric(metric_id: I32, delta: I64) = [metric::proxy_increment_metric];
+    proxy_get_metric(metric_id: I32, return_value: I32) = [metric::proxy_get_metric];
+    proxy_get_property(path_data: I32, path_size: I32, return_value_data: I32, return_value_size: I32) = [property::proxy_get_property];
+    proxy_set_property(path_data: I32, path_size: I32, value_data: I32, value_size: I32) = [property::proxy_set_property];
+    proxy_call_foreign_function(name_data: I32, name_size: I32, arguments_data: I32, arguments_size: I32, return_results_data: I32, return_results_size: I32) = [foreign::proxy_call_foreign_function];
 }
 
 #[cfg(test)]
@@ -198,6 +212,32 @@ mod tests {
     }
 
     #[test]
+    fn the_rows_with_no_body_are_the_six_callout_functions() {
+        // Arrange
+        let table = HOST_FUNCTIONS;
+
+        // Act
+        let stubs: Vec<&str> = table
+            .iter()
+            .filter(|function| function.stub)
+            .map(|function| function.name)
+            .collect();
+
+        // Assert
+        assert_eq!(
+            stubs,
+            vec![
+                "proxy_http_call",
+                "proxy_grpc_call",
+                "proxy_grpc_stream",
+                "proxy_grpc_send",
+                "proxy_grpc_cancel",
+                "proxy_grpc_close",
+            ]
+        );
+    }
+
+    #[test]
     fn a_guest_that_imports_every_function_instantiates() {
         // Arrange
         let engine = engine();
@@ -215,10 +255,10 @@ mod tests {
         // Arrange
         let engine = engine();
         let wat = r#"(module
-            (import "env" "proxy_get_metric" (func $f (param i32 i32) (result i32)))
+            (import "env" "proxy_grpc_cancel" (func $f (param i32) (result i32)))
             (memory (export "memory") 1)
             (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
-            (func (export "call") (result i32) i32.const 0 i32.const 16 call $f))"#;
+            (func (export "call") (result i32) i32.const 1 call $f))"#;
         let mut instance = instance(&engine, wat).unwrap();
 
         // Act

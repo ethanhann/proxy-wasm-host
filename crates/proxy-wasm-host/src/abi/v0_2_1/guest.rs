@@ -1,9 +1,9 @@
 //! A running guest bound to ABI v0.2.1.
 
+mod callbacks;
+
 use std::fmt;
 use std::time::Duration;
-
-use wasmtime::TypedFunc;
 
 use crate::Error;
 use crate::abi::AbiVersion;
@@ -11,6 +11,7 @@ use crate::abi::v0_2_1::{
     CallScope, Callback, ContextId, ContextState, ContextType, NoStream, Plugin, StreamHost,
 };
 use crate::runtime::{Engine, HostServices, Instance, Limits, Module};
+use callbacks::Callbacks;
 
 /// A running guest and the ABI conversation with it.
 ///
@@ -29,7 +30,7 @@ use crate::runtime::{Engine, HostServices, Instance, Limits, Module};
 ///
 /// ```
 /// use proxy_wasm_host::abi::v0_2_1::types::{Action, MapType, Status};
-/// use proxy_wasm_host::abi::v0_2_1::{Guest, HostCall, Plugin, StreamHost};
+/// use proxy_wasm_host::abi::v0_2_1::{Access, Guest, HostCall, Plugin, StreamHost};
 /// use proxy_wasm_host::runtime::{Engine, HostServices, Limits, LogSink, Module};
 /// use proxy_wasm_host::{HeaderMap, VecHeaderMap};
 ///
@@ -44,7 +45,7 @@ use crate::runtime::{Engine, HostServices, Instance, Limits, Module};
 ///     headers: VecHeaderMap,
 /// }
 /// impl StreamHost for Request {
-///     fn header_map(&mut self, _: HostCall, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
+///     fn header_map(&mut self, _: HostCall, _: Access, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
 ///         match map {
 ///             MapType::HttpRequestHeaders => Ok(&mut self.headers),
 ///             _ => Err(Status::NotFound),
@@ -97,43 +98,6 @@ impl fmt::Debug for Guest {
             .field("effective_context", &self.effective_context())
             .field("poisoned", &self.instance.is_poisoned())
             .finish_non_exhaustive()
-    }
-}
-
-/// The seven callbacks, resolved once at construction.
-pub(crate) struct Callbacks {
-    pub(crate) context_create: Option<TypedFunc<(i32, i32), ()>>,
-    pub(crate) vm_start: Option<TypedFunc<(i32, i32), i32>>,
-    pub(crate) configure: Option<TypedFunc<(i32, i32), i32>>,
-    pub(crate) request_headers: Option<TypedFunc<(i32, i32, i32), i32>>,
-    pub(crate) done: Option<TypedFunc<i32, i32>>,
-    pub(crate) log: Option<TypedFunc<i32, ()>>,
-    pub(crate) delete: Option<TypedFunc<i32, ()>>,
-}
-
-impl Callbacks {
-    fn resolve(instance: &mut Instance) -> Result<Self, Error> {
-        Ok(Self {
-            context_create: instance.typed_func(Callback::ContextCreate.export_name())?,
-            vm_start: instance.typed_func(Callback::VmStart.export_name())?,
-            configure: instance.typed_func(Callback::Configure.export_name())?,
-            request_headers: instance.typed_func(Callback::RequestHeaders.export_name())?,
-            done: instance.typed_func(Callback::Done.export_name())?,
-            log: instance.typed_func(Callback::Log.export_name())?,
-            delete: instance.typed_func(Callback::Delete.export_name())?,
-        })
-    }
-
-    fn exports(&self, callback: Callback) -> bool {
-        match callback {
-            Callback::ContextCreate => self.context_create.is_some(),
-            Callback::VmStart => self.vm_start.is_some(),
-            Callback::Configure => self.configure.is_some(),
-            Callback::RequestHeaders => self.request_headers.is_some(),
-            Callback::Done => self.done.is_some(),
-            Callback::Log => self.log.is_some(),
-            Callback::Delete => self.delete.is_some(),
-        }
     }
 }
 
@@ -265,6 +229,12 @@ impl Guest {
     }
 
     /// A scope with no stream, for the callbacks of a root context.
+    ///
+    /// [`NoStream`] serves nothing, so a root context that reads a property
+    /// or calls a foreign function reports the unavailable status of that
+    /// family to the guest.
+    /// If your root does either, enter the scope with a value of your own
+    /// through [`Guest::enter`] instead of this shortcut.
     pub fn enter_root(&mut self) -> CallScope<'_, NoStream> {
         self.enter(NoStream)
     }

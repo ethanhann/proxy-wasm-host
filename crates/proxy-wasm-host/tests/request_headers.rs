@@ -1,4 +1,9 @@
 //! The request header lifecycle against the two committed guests.
+//!
+//! The helpers below are test code, and the allowance clippy makes for a test
+//! does not reach a function of an integration test that carries no test
+//! attribute.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::borrow::Cow;
 use std::ops::ControlFlow;
@@ -6,7 +11,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use proxy_wasm_host::abi::AbiVersion;
 use proxy_wasm_host::abi::v0_2_1::types::{Action, LogLevel, MapType, Status};
-use proxy_wasm_host::abi::v0_2_1::{ContextId, Guest, HostCall, Plugin, StreamHost};
+use proxy_wasm_host::abi::v0_2_1::{Access, ContextId, Guest, HostCall, Plugin, StreamHost};
 use proxy_wasm_host::codec::pairs::PairVisitor;
 use proxy_wasm_host::runtime::{Engine, HostServices, Limits, LogSink, Module};
 use proxy_wasm_host::{Error, HeaderMap, NotAllowed, VecHeaderMap};
@@ -33,7 +38,12 @@ struct Request {
 }
 
 impl StreamHost for Request {
-    fn header_map(&mut self, _: HostCall, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
+    fn header_map(
+        &mut self,
+        _: HostCall,
+        _: Access,
+        map: MapType,
+    ) -> Result<&mut dyn HeaderMap, Status> {
         match map {
             MapType::HttpRequestHeaders => Ok(&mut self.headers),
             _ => Err(Status::NotFound),
@@ -78,7 +88,12 @@ struct SealedRequest {
 }
 
 impl StreamHost for SealedRequest {
-    fn header_map(&mut self, _: HostCall, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
+    fn header_map(
+        &mut self,
+        _: HostCall,
+        _: Access,
+        map: MapType,
+    ) -> Result<&mut dyn HeaderMap, Status> {
         match map {
             MapType::HttpRequestHeaders => Ok(&mut self.headers),
             _ => Err(Status::NotFound),

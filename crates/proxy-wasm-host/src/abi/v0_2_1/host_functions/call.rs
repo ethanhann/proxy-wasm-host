@@ -1,14 +1,16 @@
 //! The steps every host function that reaches the embedder shares.
 //!
 //! A host function resolves the effective context, refuses one whose root the
-//! guest rejected, and reaches the stream host the scope installed.
+//! guest rejected, and reaches the stream host the scope installed or the
+//! shared services the embedder supplied.
 //! When any of those three fails, the guest receives the status its own ABI
 //! section lists for a resource that is not available, which the caller
 //! passes as `absent`.
 
+use crate::abi::v0_2_1::SharedServices;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::Status;
-use crate::abi::v0_2_1::{Access, ContextId, HostCall, StreamHost};
+use crate::abi::v0_2_1::{ContextId, HostCall, StreamHost};
 use crate::runtime::HostState;
 
 /// The effective context, refused when the guest rejected its root or the
@@ -24,13 +26,22 @@ pub(super) fn context(state: &HostState, absent: Status) -> Result<ContextId, Fa
 /// The call to report and the stream host to ask.
 pub(super) fn with_stream(
     state: &mut HostState,
-    access: Access,
     absent: Status,
 ) -> Result<(HostCall, &mut dyn StreamHost), Failure> {
     let context = context(state, absent)?;
-    let call = HostCall::new(context, state.abi().current_callback(), access);
+    let call = HostCall::new(context, state.abi().current_callback());
     let stream = state.abi_mut().stream_host().ok_or(absent)?;
     Ok((call, stream))
+}
+
+/// The call to report and the shared services to ask.
+pub(super) fn with_shared(
+    state: &HostState,
+    absent: Status,
+) -> Result<(HostCall, &dyn SharedServices), Failure> {
+    let context = context(state, absent)?;
+    let call = HostCall::new(context, state.abi().current_callback());
+    Ok((call, state.abi().shared().as_ref()))
 }
 
 /// The embedder's answer, with a success for a resource it never touched
@@ -42,7 +53,7 @@ pub(super) fn from_embedder<T>(
     match result {
         Ok(value) => Ok(value),
         Err(Status::Ok) => {
-            tracing::warn!(method, "the stream host refused with Status::Ok");
+            tracing::warn!(method, "the embedder refused with Status::Ok");
             Err(Status::InternalFailure.into())
         }
         Err(status) => Err(Failure::Status(status)),
@@ -122,13 +133,12 @@ mod tests {
         let (mut instance, root) = hosted(&engine, MINIMAL_GUEST, RecordingStream::new());
 
         // Act
-        let found = with_stream(instance.state_mut(), Access::Write, Status::NotFound);
+        let found = with_stream(instance.state_mut(), Status::NotFound);
 
         // Assert
         let (call, _) = found.expect("a stream host is installed");
         assert_eq!(call.context, root);
         assert_eq!(call.callback, Some(Callback::RequestHeaders));
-        assert_eq!(call.access, Access::Write);
     }
 
     #[test]
@@ -138,7 +148,7 @@ mod tests {
         let (mut instance, _) = unhosted(&engine, MINIMAL_GUEST);
 
         // Act
-        let found = with_stream(instance.state_mut(), Access::Read, Status::Unimplemented);
+        let found = with_stream(instance.state_mut(), Status::Unimplemented);
 
         // Assert
         assert!(matches!(
@@ -166,5 +176,36 @@ mod tests {
             Err(Failure::Status(Status::InternalFailure))
         ));
         assert!(matches!(results[2], Err(Failure::Status(Status::NotFound))));
+    }
+
+    #[test]
+    fn with_shared_reports_the_call_the_embedder_sees() {
+        // Arrange
+        let engine = engine();
+        let (instance, root) = unhosted(&engine, MINIMAL_GUEST);
+
+        // Act
+        let found = with_shared(instance.state(), Status::NotFound);
+
+        // Assert
+        let (call, _) = found.expect("the services are always installed");
+        assert_eq!(call.context, root);
+        assert_eq!(call.callback, Some(Callback::RequestHeaders));
+    }
+
+    #[test]
+    fn with_shared_reports_the_status_the_caller_gave_with_no_context() {
+        // Arrange
+        let engine = engine();
+        let instance = bare(&engine, MINIMAL_GUEST);
+
+        // Act
+        let found = with_shared(instance.state(), Status::NotFound);
+
+        // Assert
+        assert!(matches!(
+            found.err(),
+            Some(Failure::Status(Status::NotFound))
+        ));
     }
 }

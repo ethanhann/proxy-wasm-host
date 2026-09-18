@@ -15,17 +15,23 @@ mod context;
 mod guest;
 pub(crate) mod host_functions;
 mod plugin;
+mod shared_services;
 mod state;
 mod stream_host;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub(crate) mod unserved;
 
 pub use call_scope::CallScope;
 pub use callback::Callback;
 pub use context::{ContextId, ContextProblem, ContextState, ContextType, InvalidContextId};
 pub use guest::Guest;
 pub use plugin::Plugin;
-pub use stream_host::values::{CalloutStatus, LocalResponse, ResponseHeaders};
+pub use shared_services::{
+    InvalidMetricId, InvalidQueueId, MemoryLimits, MemoryServices, MetricId, QueueId,
+    SharedServices, SharedValue,
+};
+pub use stream_host::values::{CalloutStatus, ForeignCall, HeaderPairs, LocalResponse};
 pub use stream_host::{Access, HostCall, NoStream, StreamHost};
 
 pub(crate) use context::table::ContextTable;

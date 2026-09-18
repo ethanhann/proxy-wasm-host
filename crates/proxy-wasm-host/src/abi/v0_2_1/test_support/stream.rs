@@ -1,15 +1,22 @@
 //! The stream host double that the ABI layer's tests share.
 
+mod host;
+
 use std::any::Any;
-use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::doubles::{Ranges, ReadOnlyBuffer, ReadOnlyMap, RecordingBuffer, owned};
 use crate::Buffer;
 use crate::abi::v0_2_1::types::{BufferType, MapType, Status, StreamType};
-use crate::abi::v0_2_1::{CalloutStatus, HostCall, LocalResponse, StreamHost};
+use crate::abi::v0_2_1::{Access, ForeignCall, HostCall, LocalResponse};
 use crate::header_map::HeaderMap;
 use crate::runtime::HostState;
+
+/// The segments of one property path.
+pub(crate) type Path = Vec<Vec<u8>>;
+
+/// One write a body made to a property.
+pub(crate) type PropertyWrite = (HostCall, Path, Vec<u8>);
 
 /// A stream operation the guest asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,16 +29,21 @@ pub(crate) enum Operation {
 pub(crate) struct RecordingStream {
     maps: HashMap<MapType, Box<dyn HeaderMap + Send>>,
     map_refusals: HashMap<MapType, Status>,
-    calls: Vec<(HostCall, MapType)>,
+    calls: Vec<(HostCall, Access, MapType)>,
     buffers: HashMap<BufferType, Box<dyn Buffer + Send>>,
     buffer_refusals: HashMap<BufferType, Status>,
-    buffer_calls: Vec<(HostCall, BufferType)>,
+    buffer_calls: Vec<(HostCall, Access, BufferType)>,
     operations: Vec<(HostCall, Operation)>,
     operation_refusal: Option<Status>,
     callout: Option<(u32, Vec<u8>)>,
     callout_calls: Vec<HostCall>,
     local_response: Option<(HostCall, LocalResponse<'static>)>,
     ranges: Ranges,
+    properties: HashMap<Path, Vec<u8>>,
+    property_reads: Vec<(HostCall, Path)>,
+    property_writes: Vec<PropertyWrite>,
+    foreign: HashMap<Vec<u8>, Vec<u8>>,
+    foreign_calls: Vec<(HostCall, ForeignCall<'static>)>,
     refuse_with_ok: bool,
 }
 
@@ -51,6 +63,11 @@ impl RecordingStream {
             callout_calls: Vec::new(),
             local_response: None,
             ranges: Ranges::default(),
+            properties: HashMap::new(),
+            property_reads: Vec::new(),
+            property_writes: Vec::new(),
+            foreign: HashMap::new(),
+            foreign_calls: Vec::new(),
             refuse_with_ok: false,
         };
         stream.with_map(MapType::HttpRequestHeaders, &[])
@@ -96,6 +113,29 @@ impl RecordingStream {
     pub(crate) fn refusing_operation(mut self, status: Status) -> Self {
         self.operation_refusal = Some(status);
         self
+    }
+
+    pub(crate) fn with_property(mut self, path: &[&[u8]], value: &[u8]) -> Self {
+        let owned = path.iter().map(|part| part.to_vec()).collect();
+        self.properties.insert(owned, value.to_vec());
+        self
+    }
+
+    pub(crate) fn with_foreign_function(mut self, name: &[u8], result: &[u8]) -> Self {
+        self.foreign.insert(name.to_vec(), result.to_vec());
+        self
+    }
+
+    pub(crate) fn property_reads(&self) -> &[(HostCall, Path)] {
+        &self.property_reads
+    }
+
+    pub(crate) fn property_writes(&self) -> &[PropertyWrite] {
+        &self.property_writes
+    }
+
+    pub(crate) fn foreign_calls(&self) -> &[(HostCall, ForeignCall<'static>)] {
+        &self.foreign_calls
     }
 
     pub(crate) fn with_callout_status(mut self, code: u32, message: &[u8]) -> Self {
@@ -158,11 +198,11 @@ impl RecordingStream {
             .bytes(buffer)
     }
 
-    pub(crate) fn calls(&self) -> &[(HostCall, MapType)] {
+    pub(crate) fn calls(&self) -> &[(HostCall, Access, MapType)] {
         &self.calls
     }
 
-    pub(crate) fn buffer_calls(&self) -> &[(HostCall, BufferType)] {
+    pub(crate) fn buffer_calls(&self) -> &[(HostCall, Access, BufferType)] {
         &self.buffer_calls
     }
 
@@ -199,66 +239,5 @@ impl RecordingStream {
             Some(status) => Err(status),
             None => Ok(()),
         }
-    }
-}
-
-impl StreamHost for RecordingStream {
-    fn header_map(&mut self, call: HostCall, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
-        self.calls.push((call, map));
-        if self.refuse_with_ok {
-            return Err(Status::Ok);
-        }
-        if let Some(status) = self.map_refusals.get(&map) {
-            return Err(*status);
-        }
-        self.maps
-            .get_mut(&map)
-            .map(|map| map.as_mut() as &mut dyn HeaderMap)
-            .ok_or(Status::BadArgument)
-    }
-
-    fn buffer(&mut self, call: HostCall, buffer: BufferType) -> Result<&mut dyn Buffer, Status> {
-        self.buffer_calls.push((call, buffer));
-        if self.refuse_with_ok {
-            return Err(Status::Ok);
-        }
-        if let Some(status) = self.buffer_refusals.get(&buffer) {
-            return Err(*status);
-        }
-        self.buffers
-            .get_mut(&buffer)
-            .map(|buffer| buffer.as_mut() as &mut dyn Buffer)
-            .ok_or(Status::NotFound)
-    }
-
-    fn continue_stream(&mut self, call: HostCall, stream: StreamType) -> Result<(), Status> {
-        self.operations.push((call, Operation::Continue(stream)));
-        self.operation_answer()
-    }
-
-    fn close_stream(&mut self, call: HostCall, stream: StreamType) -> Result<(), Status> {
-        self.operations.push((call, Operation::Close(stream)));
-        self.operation_answer()
-    }
-
-    fn callout_status(&mut self, call: HostCall) -> Result<CalloutStatus<'_>, Status> {
-        self.callout_calls.push(call);
-        if self.refuse_with_ok {
-            return Err(Status::Ok);
-        }
-        let (code, message) = self.callout.as_ref().ok_or(Status::Unimplemented)?;
-        Ok(CalloutStatus::new(*code, Cow::Borrowed(message)))
-    }
-
-    fn send_local_response(
-        &mut self,
-        call: HostCall,
-        response: LocalResponse<'_>,
-    ) -> Result<(), Status> {
-        self.local_response = Some((call, response.into_owned()));
-        if self.refuse_with_ok {
-            return Err(Status::Ok);
-        }
-        Ok(())
     }
 }

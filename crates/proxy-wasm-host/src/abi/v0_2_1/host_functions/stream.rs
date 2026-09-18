@@ -2,7 +2,6 @@
 
 use wasmtime::AsContextMut;
 
-use crate::abi::v0_2_1::Access;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_stream};
 use crate::abi::v0_2_1::types::{Status, StreamType};
@@ -15,7 +14,7 @@ pub(super) fn proxy_continue_stream(
     let stream_type = StreamType::try_from(stream_type)?;
     let mut ctx = ctx.as_context_mut();
     let state = ctx.data_mut();
-    let (call, stream) = with_stream(state, Access::Write, Status::Unimplemented)?;
+    let (call, stream) = with_stream(state, Status::Unimplemented)?;
     from_embedder("continue_stream", stream.continue_stream(call, stream_type))
 }
 
@@ -26,7 +25,7 @@ pub(super) fn proxy_close_stream(
     let stream_type = StreamType::try_from(stream_type)?;
     let mut ctx = ctx.as_context_mut();
     let state = ctx.data_mut();
-    let (call, stream) = with_stream(state, Access::Write, Status::Unimplemented)?;
+    let (call, stream) = with_stream(state, Status::Unimplemented)?;
     from_embedder("close_stream", stream.close_stream(call, stream_type))
 }
 
@@ -37,7 +36,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, status, unhosted,
     };
-    use crate::abi::v0_2_1::{Access, Callback, NoStream};
+    use crate::abi::v0_2_1::{Callback, NoStream};
     use crate::runtime::Instance;
     use crate::runtime::test_support::engine;
 
@@ -79,7 +78,6 @@ mod tests {
             .collect();
         assert_eq!(seen, expected);
         assert_eq!(stream.operations()[0].0.context, root);
-        assert_eq!(stream.operations()[0].0.access, Access::Write);
         assert_eq!(
             stream.operations()[0].0.callback,
             Some(Callback::RequestHeaders)
