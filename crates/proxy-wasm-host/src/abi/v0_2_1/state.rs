@@ -4,7 +4,9 @@ use std::any::Any;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::abi::v0_2_1::{Callback, ContextTable, MetricId, QueueId, SharedServices, StreamState};
+use crate::abi::v0_2_1::{
+    Callback, ContextTable, MetricId, QueueId, SharedServices, StreamState, VmServices,
+};
 use crate::runtime::HostState;
 
 /// Reaches the ABI state the store data holds.
@@ -35,6 +37,7 @@ impl AbiAccess for HostState {
 /// The runtime holds one of these in its store data and never reads inside
 /// it, so the ABI layer adds state without a change under `runtime/`.
 pub(crate) struct AbiState {
+    services: VmServices,
     stream_state: Option<Box<dyn StreamState>>,
     contexts: ContextTable,
     current_callback: Option<Callback>,
@@ -44,8 +47,9 @@ pub(crate) struct AbiState {
 }
 
 impl AbiState {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(services: VmServices) -> Self {
         Self {
+            services,
             stream_state: None,
             contexts: ContextTable::new(),
             current_callback: None,
@@ -73,6 +77,14 @@ impl AbiState {
         self.queues.clear();
         self.metrics.clear();
         self.granted_against = Some(Arc::clone(shared));
+    }
+
+    pub(crate) fn services(&self) -> &VmServices {
+        &self.services
+    }
+
+    pub(crate) fn services_mut(&mut self) -> &mut VmServices {
+        &mut self.services
     }
 
     /// Records that this guest obtained a queue identifier.
@@ -150,7 +162,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::RecordingStream;
 
     fn state() -> AbiState {
-        AbiState::new()
+        AbiState::new(crate::runtime::test_support::services())
     }
 
     #[test]
@@ -202,8 +214,8 @@ mod tests {
     #[test]
     fn a_grant_of_one_state_is_not_a_grant_of_another() {
         // Arrange
-        let mut mine = AbiState::new();
-        let theirs = AbiState::new();
+        let mut mine = AbiState::new(crate::runtime::test_support::services());
+        let theirs = AbiState::new(crate::runtime::test_support::services());
         let queue = QueueId::try_from(1u32).unwrap();
 
         // Act
@@ -218,7 +230,7 @@ mod tests {
     fn the_trait_reaches_the_state_the_abi_root_built() {
         // Arrange
         let services = crate::runtime::test_support::services();
-        let state = HostState::new(services, crate::abi::state());
+        let state = HostState::new(crate::abi::state(services));
 
         // Act
         let found = state.abi().current_callback();
@@ -231,7 +243,7 @@ mod tests {
     fn a_write_through_the_trait_is_read_back_through_it() {
         // Arrange
         let services = crate::runtime::test_support::services();
-        let mut state = HostState::new(services, crate::abi::state());
+        let mut state = HostState::new(crate::abi::state(services));
 
         // Act
         state
@@ -249,8 +261,7 @@ mod tests {
     #[should_panic(expected = "the ABI layer fills the slot")]
     fn a_slot_of_another_type_is_reported_as_an_unreachable_state() {
         // Arrange
-        let services = crate::runtime::test_support::services();
-        let state = HostState::new(services, Box::new(0_u8));
+        let state = HostState::new(Box::new(0_u8));
 
         // Act
         let _ = state.abi();

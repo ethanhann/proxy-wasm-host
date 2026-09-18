@@ -28,7 +28,7 @@ pub(super) fn proxy_register_shared_queue(
     memory.read_u32(return_queue_id)?;
     let name = memory.read(name)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
-    let vm_id = state.services().vm_id();
+    let vm_id = state.abi().services().vm_id();
     let queue = from_embedder(
         "register_shared_queue",
         shared.register_shared_queue(call, vm_id, name),
@@ -209,7 +209,7 @@ mod tests {
         // Arrange
         let engine = engine();
         let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
-        let other = Invocation::new(ContextId::try_from(1).unwrap(), None);
+        let other = Invocation::new(ContextId::try_from(1).unwrap());
         let theirs = shared
             .register_shared_queue(other, b"vm-2", b"private")
             .unwrap();
@@ -244,7 +244,7 @@ mod tests {
         // Arrange
         let engine = engine();
         let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
-        let other = Invocation::new(ContextId::try_from(1).unwrap(), None);
+        let other = Invocation::new(ContextId::try_from(1).unwrap());
         let theirs = shared
             .register_shared_queue(other, VM_ID, b"shared")
             .unwrap();
@@ -508,7 +508,7 @@ mod tests {
         let engine = engine();
         let first: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let second: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
-        let other = Invocation::new(ContextId::try_from(1).unwrap(), None);
+        let other = Invocation::new(ContextId::try_from(1).unwrap());
         let theirs = second
             .register_shared_queue(other, b"other-vm", b"private")
             .unwrap();
@@ -523,8 +523,13 @@ mod tests {
             theirs.get(),
             "both stores start their counter at one"
         );
-        let replacement = instance.services().clone().with_shared(second);
-        *instance.services_mut() = replacement;
+        let replacement = instance
+            .state()
+            .abi()
+            .services()
+            .clone()
+            .with_shared(second);
+        *instance.state_mut().abi_mut().services_mut() = replacement;
 
         // Act
         let found = status(

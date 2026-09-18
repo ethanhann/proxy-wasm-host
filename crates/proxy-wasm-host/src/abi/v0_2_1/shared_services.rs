@@ -41,7 +41,7 @@ impl SharedValue {
 /// behind a lock, and a method may run while another thread holds the same
 /// value.
 /// You supply one through
-/// [`VmServices::with_shared`](crate::runtime::VmServices::with_shared),
+/// [`VmServices::with_shared`](crate::abi::v0_2_1::VmServices::with_shared),
 /// which defaults to [`InMemoryStore`].
 ///
 /// The shared data, the queues, and the metrics are separated by the VM id
@@ -51,7 +51,7 @@ impl SharedValue {
 /// same control the ABI gives you for a queue.
 /// A VM id you leave empty puts every plugin of that process in one
 /// namespace, so set one per plugin through
-/// [`VmServices::with_vm_id`](crate::runtime::VmServices::with_vm_id).
+/// [`VmServices::with_vm_id`](crate::abi::v0_2_1::VmServices::with_vm_id).
 ///
 /// The crate refuses a queue or a metric identifier that the guest did not
 /// obtain through a register, a resolve, or a define in this instance, so an

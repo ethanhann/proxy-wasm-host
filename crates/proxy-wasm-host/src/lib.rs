@@ -12,6 +12,21 @@
 //! and gives host functions safe access to guest memory.
 //! [`abi::v0_2_1::Guest`] binds an instance to the ABI and drives its
 //! callbacks.
+//!
+//! # The surface
+//!
+//! What no ABI version owns is named here, at the crate root.
+//! You build and configure with [`Engine`], [`EngineConfig`], [`Module`], and
+//! [`Limits`].
+//! You lend your own storage through [`Buffer`], [`HeaderMap`], and
+//! [`VecHeaderMap`], and you refuse a write with [`NotAllowed`].
+//! You read a failure through [`Error`], [`Limit`], and [`MemoryError`], and
+//! you ask which ABI a guest speaks with [`AbiVersion`].
+//!
+//! Everything an ABI version defines is named on that version's module, so a
+//! later version can define its own without a rename here.
+//! For v0.2.1 that is [`abi::v0_2_1`], which groups its own surface the same
+//! way.
 
 pub mod abi;
 pub mod buffer;
@@ -20,9 +35,11 @@ pub mod error;
 pub mod header_map;
 pub mod runtime;
 
+pub use abi::AbiVersion;
 pub use buffer::Buffer;
 pub use error::{Error, Limit, MemoryError};
 pub use header_map::{HeaderMap, VecHeaderMap};
+pub use runtime::{Engine, EngineConfig, Limits, Module};
 
 /// The embedder refused a write to a header map or a buffer.
 ///

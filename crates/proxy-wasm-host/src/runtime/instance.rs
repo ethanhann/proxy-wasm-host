@@ -4,8 +4,9 @@ use wasmtime::{Store, StoreLimitsBuilder, TypedFunc, WasmParams, WasmResults};
 
 use crate::Error;
 use crate::runtime::guest_call::{Budget, call_on};
+#[cfg(test)]
 use crate::runtime::memory::{GuestMemory, GuestPtr, GuestSlice, split};
-use crate::runtime::{Engine, HostState, Limits, Module, VmServices, alloc};
+use crate::runtime::{Engine, HostState, Limits, Module};
 
 const MEMORY_EXPORT: &str = "memory";
 
@@ -16,7 +17,7 @@ const MEMORY_EXPORT: &str = "memory";
 /// Every later call then returns [`Error::Poisoned`], and you create a new
 /// instance from the same module to recover.
 /// Dropping the instance releases the guest memory.
-pub struct Instance {
+pub(crate) struct Instance {
     store: Store<HostState>,
     inner: wasmtime::Instance,
     module: Module,
@@ -39,10 +40,10 @@ impl Instance {
     /// without it, [`Error::Instantiate`] when an import is missing,
     /// [`Error::MissingMemory`] and [`Error::MissingAllocator`] for the two
     /// required exports, and the mapped error when a start function fails.
-    pub fn new(
+    pub(crate) fn new(
         engine: &Engine,
         module: &Module,
-        services: VmServices,
+        abi: Box<dyn std::any::Any + Send>,
         limits: &Limits,
     ) -> Result<Self, Error> {
         if limits.fuel().is_some() && !engine.fuel_enabled() {
@@ -51,10 +52,7 @@ impl Instance {
             });
         }
         let budget = Budget::new(limits, engine);
-        let mut store = Store::new(
-            engine.wasmtime(),
-            HostState::new(services, crate::abi::state()),
-        );
+        let mut store = Store::new(engine.wasmtime(), HostState::new(abi));
         budget.refill(&mut store)?;
         let mut builder = StoreLimitsBuilder::new();
         if let Some(bytes) = limits.memory_bytes() {
@@ -103,18 +101,8 @@ impl Instance {
         Ok(())
     }
 
-    /// The services the guest uses.
-    pub fn services(&self) -> &VmServices {
-        self.store.data().services()
-    }
-
-    /// The services the guest uses, for changes between calls.
-    pub fn services_mut(&mut self) -> &mut VmServices {
-        self.store.data_mut().services_mut()
-    }
-
     /// Whether an earlier failure unwound a guest call.
-    pub fn is_poisoned(&self) -> bool {
+    pub(crate) fn is_poisoned(&self) -> bool {
         self.store.data().is_poisoned()
     }
 
@@ -132,7 +120,7 @@ impl Instance {
     }
 
     /// Whether the module exports `name`.
-    pub fn has_export(&self, name: &str) -> bool {
+    pub(crate) fn has_export(&self, name: &str) -> bool {
         self.module.has_export(name)
     }
 
@@ -151,43 +139,10 @@ impl Instance {
     /// Returns [`Error::Poisoned`] after an earlier failure, and
     /// [`Error::MissingMemory`] when the cached memory handle is absent, which
     /// cannot happen after a successful construction.
-    pub fn memory(&mut self) -> Result<GuestMemory<'_>, Error> {
+    #[cfg(test)]
+    pub(crate) fn memory(&mut self) -> Result<GuestMemory<'_>, Error> {
         self.ensure_live()?;
         split(&mut self.store).map(|(memory, _)| memory)
-    }
-
-    /// Asks the guest allocator for `size` bytes.
-    ///
-    /// This refills the CPU and fuel budget before it runs, as a callback
-    /// does, so bytes handed to a guest between callbacks are not charged to
-    /// the budget of the next one.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Poisoned`] after an earlier failure,
-    /// [`Error::ValueTooLarge`] for a size above `i32::MAX`,
-    /// [`Error::AllocationFailed`] for a null result, and the mapped error
-    /// when the allocator fails, which poisons the instance.
-    pub fn allocate(&mut self, size: u32) -> Result<GuestPtr, Error> {
-        self.ensure_live()?;
-        self.budget.refill(&mut self.store)?;
-        alloc::allocate(&mut self.store, size)
-    }
-
-    /// Allocates room for `bytes` in the guest and copies them there.
-    ///
-    /// This refills the CPU and fuel budget before it runs, for the reason
-    /// given on [`Instance::allocate`].
-    ///
-    /// # Errors
-    ///
-    /// Returns the errors of [`Instance::allocate`], and a
-    /// [`crate::MemoryError`] when the allocator returned an address outside
-    /// memory.
-    pub fn write_to_guest(&mut self, bytes: &[u8]) -> Result<GuestSlice, Error> {
-        self.ensure_live()?;
-        self.budget.refill(&mut self.store)?;
-        alloc::write_to_guest(&mut self.store, bytes)
     }
 
     /// Calls the exported function `name` with `params`.
@@ -198,7 +153,7 @@ impl Instance {
     /// [`Error::MissingExport`] when there is no such export,
     /// [`Error::ExportTypeMismatch`] when it is not a function of that type,
     /// and the mapped error when the call fails, which poisons the instance.
-    pub fn call<P: WasmParams, R: WasmResults>(
+    pub(crate) fn call<P: WasmParams, R: WasmResults>(
         &mut self,
         name: &str,
         params: P,
@@ -282,22 +237,6 @@ mod tests {
                 (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))
             (local.get $i)))"#;
 
-    /// A guest whose allocator costs as much as its loop, so a test can tell
-    /// a refilled budget from a spent one on the allocator path.
-    const COSTLY_ALLOCATOR: &str = r#"(module
-        (memory (export "memory") 1)
-        (func $spend (result i32)
-            (local $i i32)
-            (loop $l
-                (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))
-            (local.get $i))
-        (func (export "proxy_on_memory_allocate") (param i32) (result i32)
-            call $spend
-            drop
-            i32.const 1024)
-        (func (export "burn") (result i32) call $spend))"#;
-
     /// The fuel one call of `burn` costs on this engine.
     ///
     /// The cost is measured rather than recorded, so a change to the loop or
@@ -306,7 +245,8 @@ mod tests {
     fn burn_cost(engine: &Engine, wat: &str) -> u64 {
         let module = Module::new(engine, &wat_bytes(wat)).unwrap();
         let limits = Limits::new().with_fuel(u64::from(u32::MAX));
-        let mut instance = Instance::new(engine, &module, services(), &limits).unwrap();
+        let mut instance =
+            Instance::new(engine, &module, crate::abi::state(services()), &limits).unwrap();
         let before = instance.store_mut().get_fuel().unwrap();
         instance.call::<(), i32>("burn", ()).unwrap();
         before - instance.store_mut().get_fuel().unwrap()
@@ -363,21 +303,6 @@ mod tests {
 
         // Assert
         assert_eq!(instance.memory().unwrap().size(), 65_536);
-        assert!(!instance.is_poisoned());
-    }
-
-    #[test]
-    fn services_are_reachable_and_replaceable_between_calls() {
-        // Arrange
-        let engine = engine();
-        let mut instance = instance(&engine, MINIMAL_GUEST).unwrap();
-        let variables = vec![(b"K".to_vec(), b"v".to_vec())];
-
-        // Act
-        *instance.services_mut() = services().with_environment(variables.clone());
-
-        // Assert
-        assert_eq!(instance.services().environment(), variables.as_slice());
         assert!(!instance.is_poisoned());
     }
 
@@ -581,7 +506,8 @@ mod tests {
         let engine = ticking_engine();
         let module = Module::new(&engine, &wat_bytes(TICKING)).unwrap();
         let limits = Limits::new().with_cpu_time(Duration::from_millis(10));
-        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
+        let mut instance =
+            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
 
         // Act
         let result = instance.call::<(), i32>("burn", ());
@@ -605,7 +531,8 @@ mod tests {
         let engine = engine();
         let module = Module::new(&engine, &wat_bytes(MINIMAL_GUEST)).unwrap();
         let limits = Limits::new().with_cpu_time(Duration::from_millis(10));
-        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
+        let mut instance =
+            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
         for _ in 0..5 {
             engine.increment_epoch();
         }
@@ -629,7 +556,8 @@ mod tests {
         for _ in 0..100 {
             engine.increment_epoch();
         }
-        let mut fresh = Instance::new(&engine, &module, services(), &limits).unwrap();
+        let mut fresh =
+            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
 
         // Act
         let result = fresh.call::<(i32,), i32>("proxy_on_memory_allocate", (1,));
@@ -644,7 +572,8 @@ mod tests {
         let engine = metered_engine();
         let module = Module::new(&engine, &wat_bytes(BOUNDED)).unwrap();
         let limits = Limits::new().with_fuel(burn_cost(&engine, BOUNDED) / 4);
-        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
+        let mut instance =
+            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
 
         // Act
         let result = instance.call::<(), i32>("burn", ());
@@ -662,7 +591,8 @@ mod tests {
         let engine = metered_engine();
         let module = Module::new(&engine, &wat_bytes(BOUNDED)).unwrap();
         let limits = Limits::new().with_fuel(one_call_of(&engine, BOUNDED));
-        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
+        let mut instance =
+            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
         instance.call::<(), i32>("burn", ()).unwrap();
 
         // Act
@@ -683,7 +613,7 @@ mod tests {
         let limits = Limits::new().with_fuel(1);
 
         // Act
-        let result = Instance::new(&engine, &module, services(), &limits);
+        let result = Instance::new(&engine, &module, crate::abi::state(services()), &limits);
 
         // Assert
         assert!(matches!(result, Err(Error::Config { .. })));
@@ -722,50 +652,13 @@ mod tests {
             (func (export "grow") (result i32) (memory.grow (i32.const 1))))"#;
         let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
         let limits = Limits::new().with_memory_bytes(65_536);
-        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
+        let mut instance =
+            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
 
         // Act
         let grown = instance.call::<(), i32>("grow", ());
 
         // Assert
         assert!(matches!(grown, Ok(-1)));
-    }
-
-    #[test]
-    fn an_allocation_after_a_call_that_spent_the_fuel_gets_a_fresh_budget() {
-        // Arrange
-        let engine = metered_engine();
-        let module = Module::new(&engine, &wat_bytes(COSTLY_ALLOCATOR)).unwrap();
-        let limits = Limits::new().with_fuel(one_call_of(&engine, COSTLY_ALLOCATOR));
-        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
-        instance.call::<(), i32>("burn", ()).unwrap();
-
-        // Act
-        let allocated = instance.allocate(16);
-
-        // Assert
-        assert!(
-            allocated.is_ok(),
-            "the allocator path refills, so the fuel the call spent does not starve it"
-        );
-    }
-
-    #[test]
-    fn a_write_after_a_call_that_spent_the_fuel_gets_a_fresh_budget() {
-        // Arrange
-        let engine = metered_engine();
-        let module = Module::new(&engine, &wat_bytes(COSTLY_ALLOCATOR)).unwrap();
-        let limits = Limits::new().with_fuel(one_call_of(&engine, COSTLY_ALLOCATOR));
-        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
-        instance.call::<(), i32>("burn", ()).unwrap();
-
-        // Act
-        let written = instance.write_to_guest(b"bytes for the guest");
-
-        // Assert
-        assert!(
-            written.is_ok(),
-            "the write path refills, so the fuel the call spent does not starve it"
-        );
     }
 }

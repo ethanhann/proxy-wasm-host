@@ -87,9 +87,9 @@ fn served(buffer_type: BufferType) -> Served<Configuration> {
 
 fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<'_>, Failure> {
     match served(buffer_type) {
-        Served::Crate(Configuration::Vm) => {
-            Ok(Source::Configuration(state.services().vm_configuration()))
-        }
+        Served::Crate(Configuration::Vm) => Ok(Source::Configuration(
+            state.abi().services().vm_configuration(),
+        )),
         Served::Crate(Configuration::Plugin) => {
             let root = context(state, Status::NotFound)?;
             let plugin = state
@@ -194,12 +194,13 @@ pub(super) fn proxy_get_buffer_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::v0_2_1::VmServices;
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, status, unhosted, write,
     };
     use crate::abi::v0_2_1::{Access, PluginConfig};
     use crate::runtime::test_support::{RecordingSink, engine, wat_bytes};
-    use crate::runtime::{GuestSlice, Instance, Limits, Module, VmServices};
+    use crate::runtime::{GuestSlice, Instance, Limits, Module};
 
     const BODY: i32 = BufferType::HttpRequestBody as i32;
     const VM: i32 = BufferType::VmConfiguration as i32;
@@ -305,7 +306,13 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_configuration(vm.to_vec());
-        let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
+        let mut instance = Instance::new(
+            &engine,
+            &module,
+            crate::abi::state(services),
+            &Limits::default(),
+        )
+        .unwrap();
         let state = instance.state_mut();
         let root = state.abi_mut().contexts_mut().create(None).unwrap();
         state.abi_mut().contexts_mut().set_plugin(
@@ -430,7 +437,13 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_configuration(b"vm bytes".to_vec());
-        let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
+        let mut instance = Instance::new(
+            &engine,
+            &module,
+            crate::abi::state(services),
+            &Limits::default(),
+        )
+        .unwrap();
 
         // Act
         let result = get(&mut instance, VM, 0, -1);
@@ -604,7 +617,10 @@ mod tests {
 
         // Assert
         assert_eq!(result, Status::NotFound);
-        assert_eq!(instance.state().services().vm_configuration(), b"vm bytes");
+        assert_eq!(
+            instance.state().abi().services().vm_configuration(),
+            b"vm bytes"
+        );
     }
 
     #[test]

@@ -13,8 +13,17 @@ use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::SharedServices;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::Status;
-use crate::abi::v0_2_1::{ContextId, Invocation, StreamState};
+use crate::abi::v0_2_1::{Callback, ContextId, Invocation, StreamState};
 use crate::runtime::HostState;
+
+/// The call an embedder is told about, from a context and whatever callback
+/// is running.
+pub(super) fn invocation(context: ContextId, callback: Option<Callback>) -> Invocation {
+    match callback {
+        Some(callback) => Invocation::new(context).with_callback(callback),
+        None => Invocation::new(context),
+    }
+}
 
 /// The effective context, refused when the guest rejected its root or the
 /// whole instance.
@@ -32,7 +41,7 @@ pub(super) fn with_stream(
     absent: Status,
 ) -> Result<(Invocation, &mut dyn StreamState), Failure> {
     let context = context(state, absent)?;
-    let call = Invocation::new(context, state.abi().current_callback());
+    let call = invocation(context, state.abi().current_callback());
     let stream = state.abi_mut().stream_state().ok_or(absent)?;
     Ok((call, stream))
 }
@@ -43,7 +52,7 @@ pub(super) fn with_stream(
 /// identifier means one thing inside one store and something else inside
 /// another.
 pub(super) fn settle(state: &mut HostState) {
-    let shared = std::sync::Arc::clone(state.services().shared());
+    let shared = std::sync::Arc::clone(state.abi().services().shared());
     state.abi_mut().settle_grants(&shared);
 }
 
@@ -55,10 +64,10 @@ pub(super) fn with_shared(
     state: &mut HostState,
     absent: Status,
 ) -> Result<(Invocation, Arc<dyn SharedServices>), Failure> {
-    let shared = Arc::clone(state.services().shared());
+    let shared = Arc::clone(state.abi().services().shared());
     state.abi_mut().settle_grants(&shared);
     let context = context(state, absent)?;
-    let call = Invocation::new(context, state.abi().current_callback());
+    let call = invocation(context, state.abi().current_callback());
     Ok((call, shared))
 }
 

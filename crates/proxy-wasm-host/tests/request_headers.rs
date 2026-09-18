@@ -9,14 +9,14 @@ use std::borrow::Cow;
 use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use proxy_wasm_host::abi::AbiVersion;
 use proxy_wasm_host::abi::v0_2_1::types::{Action, LogLevel, MapType, Status};
 use proxy_wasm_host::abi::v0_2_1::{
-    Access, ContextId, Guest, Invocation, PluginConfig, StreamState,
+    Access, ContextId, Guest, Invocation, LogSink, PluginConfig, StreamState, VmServices,
 };
 use proxy_wasm_host::codec::pairs::PairVisitor;
-use proxy_wasm_host::runtime::{Engine, Limits, LogSink, Module, VmServices};
-use proxy_wasm_host::{Error, HeaderMap, NotAllowed, VecHeaderMap};
+use proxy_wasm_host::{
+    AbiVersion, Engine, Error, HeaderMap, Limits, Module, NotAllowed, VecHeaderMap,
+};
 
 const RUST_SDK: &[u8] = include_bytes!("fixtures/add-request-header.wasm");
 const TINYGO: &[u8] = include_bytes!("fixtures/add-request-header-tinygo.wasm");
@@ -241,7 +241,7 @@ fn the_rust_sdk_guest_finalizes_its_stream_context() {
         lifecycle.guest.context_state(lifecycle.stream.unwrap()),
         None
     );
-    assert!(!lifecycle.guest.instance().is_poisoned());
+    assert!(!lifecycle.guest.is_poisoned());
 }
 
 #[test]
@@ -288,7 +288,7 @@ fn a_refused_write_ends_the_stream_of_the_rust_sdk_guest() {
 
     // Assert
     assert!(matches!(action, Err(Error::Trap { .. })));
-    assert!(lifecycle.guest.instance().is_poisoned());
+    assert!(lifecycle.guest.is_poisoned());
     assert_eq!(
         request.headers.0.pairs(),
         vec![(b"seed".to_vec(), b"1".to_vec())]

@@ -63,9 +63,9 @@ impl Clock for SystemClock {
 /// The services are the log sink and the clock.
 /// The inputs are the environment variables, the VM id, the VM configuration,
 /// and the log level the guest can ask for.
-/// Build one per instance and pass it to [`crate::runtime::Instance::new`].
+/// Build one per instance and pass it to [`Guest::new`](crate::abi::v0_2_1::Guest::new).
 /// You can change it between calls through
-/// [`crate::runtime::Instance::services_mut`].
+/// [`Guest::services_mut`](crate::abi::v0_2_1::Guest::services_mut).
 ///
 /// Clone it to build a second instance against the same log sink, clock, and
 /// shared state.
@@ -182,7 +182,7 @@ impl VmServices {
     /// Replaces the shared data, the shared queues, and the metrics.
     ///
     /// An instance reads this value, so replacing it between calls through
-    /// [`crate::runtime::Instance::services_mut`] changes the store the guest
+    /// [`Guest::services_mut`](crate::abi::v0_2_1::Guest::services_mut) changes the store the guest
     /// reaches.
     /// The queue and metric identifiers the guest obtained belong to the
     /// store that issued them, so the crate drops them when the store
@@ -365,7 +365,6 @@ mod tests {
         // Arrange
         let call = crate::abi::v0_2_1::Invocation::new(
             crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
-            None,
         );
 
         // Act
@@ -394,7 +393,6 @@ mod tests {
         let mine: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let call = crate::abi::v0_2_1::Invocation::new(
             crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
-            None,
         );
         mine.set_shared_data(call, b"vm", b"k", b"mine", None)
             .unwrap();

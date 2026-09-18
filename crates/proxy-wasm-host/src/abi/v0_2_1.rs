@@ -15,6 +15,7 @@ mod context;
 mod guest;
 pub(crate) mod host_functions;
 mod plugin_config;
+mod services;
 mod shared_services;
 mod state;
 mod stream_state;
@@ -28,6 +29,7 @@ pub use callback::Callback;
 pub use context::{ContextId, ContextProblem, ContextState, ContextType, InvalidContextId};
 pub use guest::Guest;
 pub use plugin_config::PluginConfig;
+pub use services::{Clock, LogSink, SystemClock, VmServices};
 pub use shared_services::{
     InMemoryStore, InMemoryStoreLimits, InvalidMetricId, InvalidQueueId, MetricId, QueueId,
     SharedServices, SharedValue,

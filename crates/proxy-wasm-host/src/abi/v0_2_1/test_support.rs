@@ -6,12 +6,17 @@ pub(crate) mod stream;
 
 pub(crate) use stream::RecordingStream;
 
+use std::sync::{Arc, Mutex, PoisonError};
+
 use crate::abi::v0_2_1::AbiAccess;
+use crate::abi::v0_2_1::LogSink;
+use crate::abi::v0_2_1::VmServices;
 use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::types::LogLevel;
 use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{Callback, ContextId};
-use crate::runtime::test_support::{RecordingSink, instance, wat_bytes};
-use crate::runtime::{Engine, GuestPtr, GuestSlice, Instance, Limits, Module, VmServices};
+use crate::runtime::test_support::{instance, wat_bytes};
+use crate::runtime::{Engine, GuestPtr, GuestSlice, Instance, Limits, Module};
 
 /// The status an `i32` from a host function wrapper stands for.
 pub(crate) fn status(value: i32) -> Status {
@@ -71,7 +76,13 @@ pub(crate) fn shared_hosted(
     let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
         .with_vm_id(VM_ID.to_vec())
         .with_shared(shared);
-    let mut instance = Instance::new(engine, &module, services, &Limits::default()).unwrap();
+    let mut instance = Instance::new(
+        engine,
+        &module,
+        crate::abi::state(services),
+        &Limits::default(),
+    )
+    .unwrap();
     let state = instance.state_mut();
     let root = state.abi_mut().contexts_mut().create(None).unwrap();
     state.abi_mut().contexts_mut().set_effective(root);
@@ -83,10 +94,8 @@ pub(crate) fn shared_hosted(
 
 /// A call from the request header callback on context one.
 pub(crate) fn call() -> crate::abi::v0_2_1::Invocation {
-    crate::abi::v0_2_1::Invocation::new(
-        ContextId::try_from(1).unwrap(),
-        Some(Callback::RequestHeaders),
-    )
+    crate::abi::v0_2_1::Invocation::new(ContextId::try_from(1).unwrap())
+        .with_callback(Callback::RequestHeaders)
 }
 
 /// The bytes a host function returned through the two pointers at `data` and
@@ -167,4 +176,34 @@ mod tests {
             assert!(wat.contains(function.name), "{} is missing", function.name);
         }
     }
+}
+
+/// A log sink that records every message.
+#[derive(Default)]
+pub(crate) struct RecordingSink {
+    entries: Mutex<Vec<(LogLevel, Vec<u8>)>>,
+}
+
+impl RecordingSink {
+    /// Every message logged so far, in order.
+    pub(crate) fn entries(&self) -> Vec<(LogLevel, Vec<u8>)> {
+        self.entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl LogSink for RecordingSink {
+    fn log(&self, level: LogLevel, message: &[u8]) {
+        self.entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((level, message.to_vec()));
+    }
+}
+
+/// Services with a fresh recording sink.
+pub(crate) fn services() -> VmServices {
+    VmServices::new(Arc::new(RecordingSink::default()))
 }

@@ -15,6 +15,7 @@ use std::fmt::Display;
 use wasmtime::{Caller, Linker};
 
 use crate::Error;
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::types::{LogLevel, WasiClockId, WasiErrno, WasiFdId};
 use crate::runtime::HostState;
 use crate::runtime::{GuestMemory, GuestPtr, GuestSlice, split};
@@ -142,7 +143,7 @@ fn fd_write_impl(
         message.pop();
     }
     if count > 0 {
-        state.services().log().log(level, &message);
+        state.abi().services().log().log(level, &message);
     }
     let written = u32::try_from(total).unwrap_or(u32::MAX);
     memory.write_u32(written_ptr, written).map_err(fault)
@@ -156,8 +157,8 @@ fn clock_time_get_impl(caller: &mut Caller<'_, HostState>, id: i32, time: i32) -
     let id = WasiClockId::try_from(id).map_err(|_| WasiErrno::Notsup)?;
     let (mut memory, state) = split(caller).map_err(fault)?;
     let nanos = match id {
-        WasiClockId::Realtime => state.services().clock().realtime_nanos(),
-        WasiClockId::Monotonic => state.services().clock().monotonic_nanos(),
+        WasiClockId::Realtime => state.abi().services().clock().realtime_nanos(),
+        WasiClockId::Monotonic => state.abi().services().clock().monotonic_nanos(),
     };
     memory.write_u64(pointer(time)?, nanos).map_err(fault)
 }
@@ -179,7 +180,7 @@ fn random_get_impl(caller: &mut Caller<'_, HostState>, buf: i32, len: i32) -> Wa
 /// The `KEY=VALUE\0` block of every variable, in order.
 fn environment_block(state: &HostState) -> Vec<u8> {
     let mut block = Vec::new();
-    for (key, value) in state.services().environment() {
+    for (key, value) in state.abi().services().environment() {
         block.extend_from_slice(key);
         block.push(b'=');
         block.extend_from_slice(value);
@@ -198,7 +199,7 @@ fn environ_sizes_get_impl(
     size_ptr: i32,
 ) -> WasiResult {
     let (mut memory, state) = split(caller).map_err(fault)?;
-    let count = u32::try_from(state.services().environment().len()).map_err(fault)?;
+    let count = u32::try_from(state.abi().services().environment().len()).map_err(fault)?;
     let size = u32::try_from(environment_block(state).len()).map_err(fault)?;
     memory
         .write_u32(pointer(count_ptr)?, count)
@@ -216,7 +217,7 @@ fn environ_get_impl(caller: &mut Caller<'_, HostState>, array: i32, buffer: i32)
     let block = environment_block(state);
     let mut pointers = Vec::new();
     let mut offset = buffer_start.address();
-    for (key, value) in state.services().environment() {
+    for (key, value) in state.abi().services().environment() {
         pointers.extend_from_slice(&offset.to_le_bytes());
         let entry_len = u32::try_from(key.len() + value.len() + 2).map_err(fault)?;
         offset = offset.checked_add(entry_len).ok_or(WasiErrno::Fault)?;
@@ -254,10 +255,11 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::abi::v0_2_1::{Clock, VmServices};
     use crate::runtime::test_support::{
         RecordingSink, engine, instance, instance_with_sink, wat_bytes,
     };
-    use crate::runtime::{Clock, Instance, Limits, Module, VmServices};
+    use crate::runtime::{Instance, Limits, Module};
 
     const HEADER: &str = r#"
         (memory (export "memory") 1)
@@ -411,7 +413,13 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(&wat)).unwrap();
         let services =
             VmServices::new(Arc::new(RecordingSink::default())).with_clock(Arc::new(FixedClock));
-        let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
+        let mut instance = Instance::new(
+            &engine,
+            &module,
+            crate::abi::state(services),
+            &Limits::default(),
+        )
+        .unwrap();
 
         // Act
         let results = [
@@ -490,7 +498,13 @@ mod tests {
         ];
         let services =
             VmServices::new(Arc::new(RecordingSink::default())).with_environment(variables);
-        let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
+        let mut instance = Instance::new(
+            &engine,
+            &module,
+            crate::abi::state(services),
+            &Limits::default(),
+        )
+        .unwrap();
         assert!(std::env::var_os("PATH").is_some(), "the process has a PATH");
 
         // Act
@@ -587,7 +601,7 @@ mod tests {
         let services = crate::runtime::test_support::services();
         let mut store = wasmtime::Store::new(
             engine.wasmtime(),
-            HostState::new(services, crate::abi::state()),
+            HostState::new(crate::abi::state(services)),
         );
 
         // Act

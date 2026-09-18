@@ -2,21 +2,25 @@
 
 mod callbacks;
 
+mod exports;
+mod recovery;
+
 use std::fmt;
 use std::time::Duration;
 
 use crate::Error;
 use crate::abi::AbiVersion;
 use crate::abi::v0_2_1::AbiAccess;
+use crate::abi::v0_2_1::VmServices;
 use crate::abi::v0_2_1::{
     CallScope, Callback, ContextId, ContextState, ContextType, NoStream, PluginConfig, StreamState,
 };
-use crate::runtime::{Engine, Instance, Limits, Module, VmServices};
+use crate::runtime::{Engine, Instance, Limits, Module};
 use callbacks::Callbacks;
 
 /// A running guest and the ABI conversation with it.
 ///
-/// `Guest` wraps an [`Instance`], checks the module's ABI version before it
+/// `Guest` wraps an instance, checks the module's ABI version before it
 /// is instantiated, resolves the callbacks once, and owns the context table.
 /// You drive the guest through a [`CallScope`].
 ///
@@ -32,8 +36,8 @@ use callbacks::Callbacks;
 /// ```
 /// use proxy_wasm_host::abi::v0_2_1::types::{Action, MapType, Status};
 /// use proxy_wasm_host::abi::v0_2_1::{Access, Guest, Invocation, PluginConfig, StreamState};
-/// use proxy_wasm_host::runtime::{Engine, VmServices, Limits, LogSink, Module};
-/// use proxy_wasm_host::{HeaderMap, VecHeaderMap};
+/// use proxy_wasm_host::abi::v0_2_1::{LogSink, VmServices};
+/// use proxy_wasm_host::{Engine, HeaderMap, Limits, Module, VecHeaderMap};
 ///
 /// struct Stderr;
 /// impl LogSink for Stderr {
@@ -87,6 +91,9 @@ use callbacks::Callbacks;
 /// # }
 /// ```
 pub struct Guest {
+    /// The stream state a scope left behind, which no host function can
+    /// reach, because it lives here rather than in the store.
+    detached: Option<Box<dyn StreamState>>,
     instance: Instance,
     abi: AbiVersion,
     callbacks: Callbacks,
@@ -110,7 +117,7 @@ impl Guest {
     ///
     /// Returns [`Error::UnsupportedAbi`] before any instantiation when the
     /// module exports no accepted `proxy_abi_version_*` marker, any error
-    /// [`Instance::new`] returns, and [`Error::ExportTypeMismatch`] when a
+    /// the instance returns, and [`Error::ExportTypeMismatch`] when a
     /// callback is exported with another type than the ABI gives it.
     pub fn new(
         engine: &Engine,
@@ -119,9 +126,10 @@ impl Guest {
         limits: &Limits,
     ) -> Result<Self, Error> {
         let abi = module.abi()?;
-        let mut instance = Instance::new(engine, module, services, limits)?;
+        let mut instance = Instance::new(engine, module, crate::abi::state(services), limits)?;
         let callbacks = Callbacks::resolve(&mut instance)?;
         Ok(Self {
+            detached: None,
             instance,
             abi,
             callbacks,
@@ -133,19 +141,44 @@ impl Guest {
         self.abi
     }
 
-    /// The instance this guest runs in.
-    pub fn instance(&self) -> &Instance {
+    pub(crate) fn instance(&self) -> &Instance {
         &self.instance
     }
 
-    /// The instance, for a raw call to an export.
-    ///
-    /// Calling a `proxy_on_*` export through this handle bypasses the
-    /// context table, so the guest's view of the contexts and this guest's
-    /// view no longer agree.
-    /// Use it for exports the ABI does not name.
-    pub fn instance_mut(&mut self) -> &mut Instance {
+    pub(crate) fn instance_mut(&mut self) -> &mut Instance {
         &mut self.instance
+    }
+
+    /// Runs a group of callbacks and gives the stream state back.
+    ///
+    /// The body may return early through the question mark operator, and the
+    /// value still comes back, which [`Guest::enter`] does not promise.
+    ///
+    /// A body written as `guest.with(request, |scope| { ... })` may use the
+    /// question mark operator on any callback, and the tuple it returns
+    /// carries both the body's answer and the request.
+    pub fn with<H: StreamState, R>(
+        &mut self,
+        stream: H,
+        body: impl FnOnce(&mut CallScope<'_, H>) -> R,
+    ) -> (R, H) {
+        let mut scope = self.enter(stream);
+        let answer = body(&mut scope);
+        (answer, scope.finish())
+    }
+
+    /// The services this guest runs against.
+    pub fn services(&self) -> &VmServices {
+        self.instance.state().abi().services()
+    }
+
+    /// The services, for a change between calls.
+    ///
+    /// Replacing the shared services drops the queue and metric identifiers
+    /// the guest obtained, because an identifier belongs to the store that
+    /// issued it.
+    pub fn services_mut(&mut self) -> &mut VmServices {
+        self.instance.state_mut().abi_mut().services_mut()
     }
 
     /// Whether the guest exports `callback`.

@@ -1,5 +1,6 @@
 //! The per stream state an embedder lends to a guest.
 
+pub(crate) mod invocation;
 pub(crate) mod values;
 
 use std::any::Any;
@@ -7,44 +8,9 @@ use std::any::Any;
 use crate::Buffer;
 use crate::abi::v0_2_1::types::{BufferType, MapType, Status, StreamType};
 use crate::abi::v0_2_1::unserved::unserved;
-use crate::abi::v0_2_1::{Callback, ContextId};
 use crate::header_map::HeaderMap;
+pub use invocation::{Access, Invocation, NoStream};
 use values::{CalloutStatus, ForeignCall, LocalResponse};
-
-/// Whether a host function reads or writes the value it asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Access {
-    /// The guest reads.
-    Read,
-    /// The guest writes.
-    Write,
-}
-
-/// What the guest is doing when it calls a host function.
-///
-/// The ABI allows each map and each buffer only in named callbacks, and only
-/// the crate knows which callback is running.
-/// A [`StreamState`] method receives this so that you can apply those rules.
-/// The two methods that name a resource the guest can read or write receive
-/// an [`Access`] beside it.
-/// Build one with [`Invocation::new`] when you test your own stream state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct Invocation {
-    /// The effective context, which the guest may have changed with
-    /// `proxy_set_effective_context`.
-    pub context: ContextId,
-    /// The callback that is running, or `None` when the guest called from
-    /// its start sequence or from a raw call.
-    pub callback: Option<Callback>,
-}
-
-impl Invocation {
-    /// A call on `context` from `callback`.
-    pub fn new(context: ContextId, callback: Option<Callback>) -> Self {
-        Self { context, callback }
-    }
-}
 
 /// The state of one stream, lent to a guest for a group of callbacks.
 ///
@@ -81,6 +47,15 @@ impl Invocation {
 /// Every default body reports itself through `tracing` at the warn level,
 /// so a method you forgot reaches your log before it reaches a guest.
 pub trait StreamState: Any + Send {
+    /// Whether this value serves no resource at all.
+    ///
+    /// The crate skips keeping such a value when a scope drops, because
+    /// nothing can be read back from it.
+    #[doc(hidden)]
+    fn serves_nothing(&self) -> bool {
+        false
+    }
+
     // `Any` lets the scope give your own value back without a downcast of
     // your own, and it requires `Self: 'static`, which wasmtime requires of
     // store data.
@@ -325,27 +300,19 @@ pub trait StreamState: Any + Send {
     }
 }
 
-/// A stream state that serves nothing, for the callbacks of a root context.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct NoStream;
-
-impl StreamState for NoStream {}
-
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
 
     use super::*;
+    use crate::abi::v0_2_1::{Callback, ContextId};
 
     struct Empty;
 
     impl StreamState for Empty {}
 
     fn call() -> Invocation {
-        Invocation::new(
-            ContextId::try_from(1).unwrap(),
-            Some(Callback::RequestHeaders),
-        )
+        Invocation::new(ContextId::try_from(1).unwrap()).with_callback(Callback::RequestHeaders)
     }
 
     #[test]

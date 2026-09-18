@@ -5,6 +5,7 @@
 
 use wasmtime::AsContextMut;
 
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_shared};
 use crate::abi::v0_2_1::types::Status;
@@ -28,7 +29,7 @@ pub(super) fn proxy_set_shared_data(
     let key = memory.read(key)?;
     let value = memory.read(value)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
-    let vm_id = state.services().vm_id();
+    let vm_id = state.abi().services().vm_id();
     from_embedder(
         "set_shared_data",
         shared.set_shared_data(call, vm_id, key, value, cas),
@@ -53,7 +54,7 @@ pub(super) fn proxy_get_shared_data(
     memory.read_u32(cas_ptr)?;
     let key = memory.read(key)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
-    let vm_id = state.services().vm_id();
+    let vm_id = state.abi().services().vm_id();
     let value = from_embedder("get_shared_data", shared.get_shared_data(call, vm_id, key))?;
     let cas = value.cas.get();
     write_return(ctx, &value.bytes, data_ptr, size_ptr)?;
@@ -361,13 +362,18 @@ mod tests {
         // Arrange
         let engine = engine();
         let replacement = Arc::new(InMemoryStore::new());
-        let call = Invocation::new(ContextId::try_from(1).unwrap(), None);
+        let call = Invocation::new(ContextId::try_from(1).unwrap());
         replacement
             .set_shared_data(call, VM_ID, b"k", b"from the replacement", None)
             .unwrap();
         let (mut instance, _) = shared_hosted(&engine, GUEST, Arc::new(InMemoryStore::new()));
-        let services = instance.services().clone().with_shared(replacement);
-        *instance.services_mut() = services;
+        let services = instance
+            .state()
+            .abi()
+            .services()
+            .clone()
+            .with_shared(replacement);
+        *instance.state_mut().abi_mut().services_mut() = services;
 
         // Act
         let found = get(&mut instance, b"k");
@@ -386,7 +392,12 @@ mod tests {
         let store: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut mine, _) = shared_hosted(&engine, GUEST, Arc::clone(&store));
         let (mut theirs, _) = shared_hosted(&engine, GUEST, Arc::clone(&store));
-        *theirs.services_mut() = theirs.services().clone().with_vm_id(b"other-vm".to_vec());
+        *theirs.state_mut().abi_mut().services_mut() = theirs
+            .state()
+            .abi()
+            .services()
+            .clone()
+            .with_vm_id(b"other-vm".to_vec());
         set(&mut mine, b"k", b"mine", 0);
 
         // Act

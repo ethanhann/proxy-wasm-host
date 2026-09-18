@@ -31,7 +31,7 @@ pub(super) fn proxy_define_metric(
     memory.read_u32(return_metric_id)?;
     let name = memory.read(name)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
-    let vm_id = state.services().vm_id();
+    let vm_id = state.abi().services().vm_id();
     let metric = from_embedder(
         "define_metric",
         shared.define_metric(call, vm_id, kind, name),
@@ -247,7 +247,6 @@ mod tests {
         let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let other = crate::abi::v0_2_1::Invocation::new(
             crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
-            None,
         );
         let theirs = shared
             .define_metric(other, b"vm-2", MetricType::Gauge, b"secret")

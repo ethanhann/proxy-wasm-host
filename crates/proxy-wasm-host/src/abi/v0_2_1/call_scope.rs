@@ -136,7 +136,7 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     /// Calls `proxy_on_vm_start` on a root context.
     ///
     /// The guest is told the length of the VM configuration that
-    /// [`VmServices::with_vm_configuration`](crate::runtime::VmServices::with_vm_configuration)
+    /// [`VmServices::with_vm_configuration`](crate::abi::v0_2_1::VmServices::with_vm_configuration)
     /// holds, and it reads the bytes from the `VM_CONFIGURATION` buffer.
     /// A `false` answer refuses the whole instance.
     ///
@@ -154,6 +154,7 @@ impl<'a, H: StreamState> CallScope<'a, H> {
             .guest
             .instance()
             .state()
+            .abi()
             .services()
             .vm_configuration()
             .len();
@@ -281,17 +282,6 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     }
 }
 
-impl<H: StreamState> Drop for CallScope<'_, H> {
-    fn drop(&mut self) {
-        let state = self.guest.instance_mut().state_mut();
-        let _ = state.abi_mut().take_stream_state();
-        if state.abi_mut().current_callback().is_some() {
-            state.poison();
-            state.abi_mut().set_current_callback(None);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -365,7 +355,7 @@ mod tests {
 
     fn guest_with_vm_configuration(engine: &Engine, wat: &str, bytes: &[u8]) -> Guest {
         let module = Module::new(engine, &wat_bytes(wat)).unwrap();
-        let services = crate::runtime::VmServices::new(std::sync::Arc::new(
+        let services = crate::abi::v0_2_1::VmServices::new(std::sync::Arc::new(
             crate::runtime::test_support::RecordingSink::default(),
         ))
         .with_vm_configuration(bytes.to_vec());
@@ -1133,5 +1123,68 @@ mod tests {
         // Assert
         assert!(second.calls().is_empty());
         assert!(!guest.instance().is_poisoned());
+    }
+    #[test]
+    fn a_body_that_returns_early_still_yields_the_stream_state() {
+        // Arrange
+        let engine = engine();
+        let (mut guest, _, stream) = with_stream(&engine, HEADER_WRITER);
+
+        // Act
+        let (answer, recording) = guest.with(RecordingStream::new(), |scope| {
+            let action = scope.on_request_headers(stream, 0, true)?;
+            Err::<(), Error>(Error::Config {
+                message: format!("stopping after {action:?}"),
+            })
+        });
+
+        // Assert
+        assert!(answer.is_err());
+        assert_eq!(recording.calls().len(), 1);
+    }
+
+    #[test]
+    fn a_dropped_scope_leaves_the_stream_state_recoverable() {
+        // Arrange
+        let engine = engine();
+        let (mut guest, _, stream) = with_stream(&engine, HEADER_WRITER);
+        let mut scope = guest.enter(RecordingStream::new());
+        scope.on_request_headers(stream, 0, true).unwrap();
+        drop(scope);
+
+        // Act
+        let recovered = guest.take_stream::<RecordingStream>();
+
+        // Assert
+        assert_eq!(recovered.map(|s| s.calls().len()), Some(1));
+    }
+
+    #[test]
+    fn a_take_that_names_the_wrong_type_leaves_the_value() {
+        // Arrange
+        let engine = engine();
+        let (mut guest, _, _) = with_stream(&engine, HEADER_WRITER);
+        drop(guest.enter(RecordingStream::new()));
+
+        // Act
+        let refused = guest.take_stream::<NoStream>();
+
+        // Assert
+        assert!(refused.is_none());
+        assert!(guest.take_stream::<RecordingStream>().is_some());
+    }
+
+    #[test]
+    fn a_root_scope_that_drops_detaches_nothing() {
+        // Arrange
+        let engine = engine();
+        let (mut guest, _) = with_root(&engine, HEADER_WRITER);
+        drop(guest.enter_root());
+
+        // Act
+        let detached = guest.take_stream_any();
+
+        // Assert
+        assert!(detached.is_none());
     }
 }

@@ -1,11 +1,11 @@
 //! The runtime below the ABI.
 //!
-//! An [`Engine`] compiles a [`Module`], and an [`Instance`] runs it inside a
+//! An [`Engine`] compiles a [`Module`], and an instance runs it inside a
 //! store.
-//! You supply the services a guest needs through [`VmServices`], and
+//! The ABI layer supplies the services a guest needs, and
 //! [`Limits`] bound the CPU time, the fuel, and the memory of each instance.
-//! Host functions read and write guest memory through [`GuestPtr`],
-//! [`GuestSlice`], and [`GuestMemory`], so every access is bounds checked.
+//! Host functions read and write guest memory through `GuestPtr`,
+//! `GuestSlice`, and `GuestMemory`, so every access is bounds checked.
 
 mod alloc;
 mod engine;
@@ -17,17 +17,15 @@ mod layering;
 mod limits;
 mod memory;
 mod module;
-mod services;
 
 #[cfg(test)]
 pub(crate) mod test_support;
 
 pub use engine::{Engine, EngineConfig};
-pub use instance::Instance;
+pub(crate) use instance::Instance;
 pub use limits::Limits;
-pub use memory::{GuestMemory, GuestPtr, GuestSlice};
+pub(crate) use memory::{GuestMemory, GuestPtr, GuestSlice};
 pub use module::Module;
-pub use services::{Clock, LogSink, SystemClock, VmServices};
 
 pub(crate) use alloc::write_return;
 pub(crate) use host_state::HostState;

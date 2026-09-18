@@ -40,7 +40,7 @@ struct Metrics {
 /// Every instance that holds the same `Arc` shares this state, which is what
 /// lets one VM resolve a queue that another registered.
 /// It is the default of
-/// [`VmServices::with_shared`](crate::runtime::VmServices::with_shared),
+/// [`VmServices::with_shared`](crate::abi::v0_2_1::VmServices::with_shared),
 /// so a guest works without any shared state of your own.
 ///
 /// It serves one process.

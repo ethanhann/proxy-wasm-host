@@ -2,6 +2,7 @@
 
 use wasmtime::AsContextMut;
 
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::runtime::{GuestPtr, HostState, split};
 
@@ -11,7 +12,7 @@ pub(super) fn proxy_get_current_time_nanoseconds(
 ) -> Result<(), Failure> {
     let return_time = GuestPtr::try_from(return_time)?;
     let (mut memory, state) = split(ctx)?;
-    let now = state.services().clock().realtime_nanos();
+    let now = state.abi().services().clock().realtime_nanos();
     memory.write_u64(return_time, now)?;
     Ok(())
 }
@@ -23,8 +24,9 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::test_support::{outcome, status};
     use crate::abi::v0_2_1::types::Status;
+    use crate::abi::v0_2_1::{Clock, VmServices};
     use crate::runtime::test_support::{RecordingSink, engine, wat_bytes};
-    use crate::runtime::{Clock, GuestPtr, Instance, Limits, Module, VmServices};
+    use crate::runtime::{GuestPtr, Instance, Limits, Module};
 
     const GUEST: &str = r#"(module
         (import "env" "proxy_get_current_time_nanoseconds" (func $now (param i32) (result i32)))
@@ -49,7 +51,13 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services =
             VmServices::new(Arc::new(RecordingSink::default())).with_clock(Arc::new(Fixed));
-        Instance::new(&engine, &module, services, &Limits::default()).unwrap()
+        Instance::new(
+            &engine,
+            &module,
+            crate::abi::state(services),
+            &Limits::default(),
+        )
+        .unwrap()
     }
 
     #[test]

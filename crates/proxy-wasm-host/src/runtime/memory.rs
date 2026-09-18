@@ -70,6 +70,7 @@ impl GuestSlice {
     }
 
     /// Whether the range spans no bytes.
+    #[cfg(test)]
     pub fn is_empty(self) -> bool {
         self.len == 0
     }
@@ -119,6 +120,7 @@ impl<'a> GuestMemory<'a> {
     }
 
     /// The memory size in bytes.
+    #[cfg(test)]
     pub fn size(&self) -> usize {
         self.bytes.len()
     }

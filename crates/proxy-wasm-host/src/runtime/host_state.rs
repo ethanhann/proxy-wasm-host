@@ -4,8 +4,6 @@ use std::any::Any;
 
 use wasmtime::{Memory, StoreLimits, TypedFunc};
 
-use crate::runtime::VmServices;
-
 /// The store data of one instance.
 ///
 /// The runtime keeps the cached memory handle, the guest allocator, the store
@@ -16,7 +14,6 @@ use crate::runtime::VmServices;
 /// The type is crate private, so nothing outside the crate can clear the
 /// poison flag or replace the cached handles.
 pub(crate) struct HostState {
-    services: VmServices,
     store_limits: StoreLimits,
     memory: Option<Memory>,
     allocator: Option<TypedFunc<i32, i32>>,
@@ -25,23 +22,14 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    pub(crate) fn new(services: VmServices, abi: Box<dyn Any + Send>) -> Self {
+    pub(crate) fn new(abi: Box<dyn Any + Send>) -> Self {
         Self {
-            services,
             store_limits: StoreLimits::default(),
             memory: None,
             allocator: None,
             poisoned: false,
             abi,
         }
-    }
-
-    pub(crate) fn services(&self) -> &VmServices {
-        &self.services
-    }
-
-    pub(crate) fn services_mut(&mut self) -> &mut VmServices {
-        &mut self.services
     }
 
     pub(crate) fn is_poisoned(&self) -> bool {
@@ -89,18 +77,13 @@ impl HostState {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use super::*;
-    use crate::runtime::test_support::RecordingSink;
 
     #[test]
     fn poison_is_observable() {
         // Arrange
-        let mut state = HostState::new(
-            VmServices::new(Arc::new(RecordingSink::default())),
-            crate::abi::state(),
-        );
+        let mut state = HostState::new(crate::abi::state(crate::runtime::test_support::services()));
 
         // Act
         state.poison();
@@ -112,10 +95,10 @@ mod tests {
     #[test]
     fn a_new_state_holds_nothing_and_is_not_poisoned() {
         // Arrange
-        let services = VmServices::new(Arc::new(RecordingSink::default()));
+        let abi = crate::abi::state(crate::runtime::test_support::services());
 
         // Act
-        let state = HostState::new(services, crate::abi::state());
+        let state = HostState::new(abi);
 
         // Assert
         assert!(state.memory().is_none());

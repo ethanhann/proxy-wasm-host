@@ -77,3 +77,25 @@ impl<H: StreamState> CallScope<'_, H> {
         Ok(())
     }
 }
+
+impl<H: StreamState> Drop for CallScope<'_, H> {
+    fn drop(&mut self) {
+        let held = self
+            .guest
+            .instance_mut()
+            .state_mut()
+            .abi_mut()
+            .take_stream_state();
+        // A root scope is routinely dropped rather than finished, and the
+        // value it holds serves nothing, so detaching it would report on the
+        // ordinary lifecycle.
+        if let Some(held) = held.filter(|held| !held.serves_nothing()) {
+            self.guest.detach(held);
+        }
+        let state = self.guest.instance_mut().state_mut();
+        if state.abi_mut().current_callback().is_some() {
+            state.poison();
+            state.abi_mut().set_current_callback(None);
+        }
+    }
+}

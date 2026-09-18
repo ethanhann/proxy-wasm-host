@@ -2,6 +2,7 @@
 
 use wasmtime::AsContextMut;
 
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::LogLevel;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split};
@@ -16,7 +17,7 @@ pub(super) fn proxy_log(
     let slice = GuestSlice::try_from((message_data, message_size))?;
     let (memory, state) = split(ctx)?;
     let message = memory.read(slice)?;
-    state.services().log().log(level, message);
+    state.abi().services().log().log(level, message);
     Ok(())
 }
 
@@ -26,7 +27,7 @@ pub(super) fn proxy_get_log_level(
 ) -> Result<(), Failure> {
     let return_log_level = GuestPtr::try_from(return_log_level)?;
     let (mut memory, state) = split(ctx)?;
-    let level = i32::from(state.services().log_level()).cast_unsigned();
+    let level = i32::from(state.abi().services().log_level()).cast_unsigned();
     memory.write_u32(return_log_level, level)?;
     Ok(())
 }
@@ -135,7 +136,11 @@ mod tests {
         let engine = engine();
         let sink = Arc::new(RecordingSink::default());
         let mut instance = instance_with_sink(&engine, LEVEL_GUEST, sink).unwrap();
-        instance.services_mut().set_log_level(LogLevel::Critical);
+        instance
+            .state_mut()
+            .abi_mut()
+            .services_mut()
+            .set_log_level(LogLevel::Critical);
 
         // Act
         let result = instance.call::<i32, i32>("level", 16).map(status);

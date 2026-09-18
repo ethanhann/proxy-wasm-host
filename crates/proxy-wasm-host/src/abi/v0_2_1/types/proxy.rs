@@ -405,3 +405,56 @@ mod tests {
         assert_eq!(results, unknown("MetricType", &values));
     }
 }
+
+impl std::fmt::Display for Status {
+    /// The ABI's own name for the status.
+    ///
+    /// The match names every variant, so a version that adds one stops the
+    /// build rather than printing something the ABI does not use.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Status::Ok => "OK",
+            Status::NotFound => "NOT_FOUND",
+            Status::BadArgument => "BAD_ARGUMENT",
+            Status::SerializationFailure => "SERIALIZATION_FAILURE",
+            Status::ParseFailure => "PARSE_FAILURE",
+            Status::InvalidMemoryAccess => "INVALID_MEMORY_ACCESS",
+            Status::Empty => "EMPTY",
+            Status::CasMismatch => "CAS_MISMATCH",
+            Status::InternalFailure => "INTERNAL_FAILURE",
+            Status::Unimplemented => "UNIMPLEMENTED",
+        };
+        f.write_str(name)
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::*;
+
+    #[test]
+    fn every_status_prints_the_name_the_abi_uses() {
+        // Arrange
+        let statuses = Status::ALL;
+
+        // Act
+        let printed: Vec<String> = statuses.iter().map(ToString::to_string).collect();
+
+        // Assert
+        assert_eq!(
+            printed,
+            [
+                "OK",
+                "NOT_FOUND",
+                "BAD_ARGUMENT",
+                "SERIALIZATION_FAILURE",
+                "PARSE_FAILURE",
+                "INVALID_MEMORY_ACCESS",
+                "EMPTY",
+                "CAS_MISMATCH",
+                "INTERNAL_FAILURE",
+                "UNIMPLEMENTED",
+            ]
+        );
+    }
+}

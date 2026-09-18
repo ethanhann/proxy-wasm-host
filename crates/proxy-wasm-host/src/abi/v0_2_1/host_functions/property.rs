@@ -52,7 +52,7 @@ fn served(path: &[&[u8]]) -> Served<WellKnown> {
 /// rejected.
 fn well_known(state: &HostState, name: WellKnown) -> Result<Vec<u8>, Failure> {
     match name {
-        WellKnown::VmId => Ok(state.services().vm_id().to_vec()),
+        WellKnown::VmId => Ok(state.abi().services().vm_id().to_vec()),
         WellKnown::Name => Ok(plugin_of(state)?.name().to_vec()),
         WellKnown::RootId => Ok(plugin_of(state)?.root_id().to_vec()),
     }
@@ -119,12 +119,13 @@ pub(super) fn proxy_set_property(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::PluginConfig;
+    use crate::abi::v0_2_1::VmServices;
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, returned, status, unhosted, write,
     };
     use crate::codec::path::encode_path;
     use crate::runtime::test_support::{RecordingSink, engine, wat_bytes};
-    use crate::runtime::{Instance, Limits, Module, VmServices};
+    use crate::runtime::{Instance, Limits, Module};
 
     const PATH: i32 = 1024;
     const VALUE: i32 = 1200;
@@ -168,7 +169,13 @@ mod tests {
         let module = Module::new(engine, &wat_bytes(GUEST)).unwrap();
         let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_id(b"vm-1".to_vec());
-        let mut instance = Instance::new(engine, &module, services, &Limits::default()).unwrap();
+        let mut instance = Instance::new(
+            engine,
+            &module,
+            crate::abi::state(services),
+            &Limits::default(),
+        )
+        .unwrap();
         let state = instance.state_mut();
         let root = state.abi_mut().contexts_mut().create(None).unwrap();
         state.abi_mut().contexts_mut().set_plugin(
@@ -216,7 +223,13 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_id(b"vm-1".to_vec());
-        let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
+        let mut instance = Instance::new(
+            &engine,
+            &module,
+            crate::abi::state(services),
+            &Limits::default(),
+        )
+        .unwrap();
 
         // Act
         let result = get(&mut instance, &[b"plugin_vm_id"]);

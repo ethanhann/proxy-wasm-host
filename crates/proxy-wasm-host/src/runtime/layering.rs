@@ -30,17 +30,6 @@ mod tests {
                      and the default one is this version's",
         },
         Allowed {
-            file: "runtime/services.rs",
-            reason: "the services an embedder supplies carry a log level and \
-                     the shared services, and the type moves to the ABI layer \
-                     with its rename",
-        },
-        Allowed {
-            file: "runtime/test_support.rs",
-            reason: "the test services build a log level, and they follow the \
-                     services",
-        },
-        Allowed {
             file: "runtime/layering.rs",
             reason: "the check holds the text it searches for",
         },

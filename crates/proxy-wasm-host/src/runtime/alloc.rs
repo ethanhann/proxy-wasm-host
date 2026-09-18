@@ -100,7 +100,7 @@ mod tests {
         let mut instance = instance(&engine, FIXED).unwrap();
 
         // Act
-        let slice = instance.write_to_guest(b"hello").unwrap();
+        let slice = write_to_guest(instance.store_mut(), b"hello").unwrap();
 
         // Assert
         assert_eq!((slice.ptr().address(), slice.len()), (1024, 5));
@@ -121,7 +121,7 @@ mod tests {
         let mut instance = instance(&engine, wat).unwrap();
 
         // Act
-        let address = instance.allocate(4).unwrap();
+        let address = allocate(instance.store_mut(), 4).unwrap();
 
         // Assert
         assert_eq!(address.address(), 2048);
@@ -139,7 +139,7 @@ mod tests {
         let mut instance = instance(&engine, wat).unwrap();
 
         // Act
-        let address = instance.allocate(4).unwrap();
+        let address = allocate(instance.store_mut(), 4).unwrap();
 
         // Assert
         assert_eq!(address.address(), 1024);
@@ -163,7 +163,7 @@ mod tests {
         let mut instance = instance(&engine, wat).unwrap();
 
         // Act
-        let result = instance.allocate(16);
+        let result = allocate(instance.store_mut(), 16);
 
         // Assert
         assert!(matches!(result, Err(Error::AllocationFailed { size: 16 })));
@@ -181,7 +181,7 @@ mod tests {
         let mut instance = instance(&engine, wat).unwrap();
 
         // Act
-        let slice = instance.write_to_guest(b"").unwrap();
+        let slice = write_to_guest(instance.store_mut(), b"").unwrap();
 
         // Assert
         assert_eq!((slice.ptr().address(), slice.len()), (0, 0));
@@ -194,7 +194,7 @@ mod tests {
         let mut instance = instance(&engine, FIXED).unwrap();
 
         // Act
-        let result = instance.allocate(u32::MAX);
+        let result = allocate(instance.store_mut(), u32::MAX);
 
         // Assert
         assert!(matches!(result, Err(Error::ValueTooLarge { size }) if size == u32::MAX as usize));
@@ -211,7 +211,7 @@ mod tests {
         let mut instance = instance(&engine, wat).unwrap();
 
         // Act
-        let result = instance.write_to_guest(b"12345678");
+        let result = write_to_guest(instance.store_mut(), b"12345678");
 
         // Assert
         assert!(matches!(
@@ -235,12 +235,15 @@ mod tests {
         let mut instance = instance(&engine, wat).unwrap();
 
         // Act
-        let result = instance.allocate(1);
+        let result = allocate(instance.store_mut(), 1);
 
         // Assert
         assert!(matches!(result, Err(Error::Trap { .. })));
         assert!(instance.is_poisoned());
-        assert!(matches!(instance.allocate(1), Err(Error::Poisoned)));
+        assert!(matches!(
+            allocate(instance.store_mut(), 1),
+            Err(Error::Poisoned)
+        ));
     }
 
     #[test]
@@ -256,7 +259,7 @@ mod tests {
         let mut instance = instance(&engine, wat).unwrap();
 
         // Act
-        let slice = instance.write_to_guest(b"grown").unwrap();
+        let slice = write_to_guest(instance.store_mut(), b"grown").unwrap();
 
         // Assert
         assert_eq!(slice.ptr().address(), 70_000);
