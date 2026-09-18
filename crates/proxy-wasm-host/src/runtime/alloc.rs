@@ -84,9 +84,10 @@ pub(crate) fn write_return(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::MemoryError;
-    use crate::runtime::Instance;
-    use crate::runtime::test_support::{engine, instance};
+    use crate::error::{Limit, MemoryError};
+    use crate::runtime::guest_call::Budget;
+    use crate::runtime::test_support::{engine, instance, services, wat_bytes};
+    use crate::runtime::{Engine, EngineConfig, Instance, Limits, Module};
 
     const FIXED: &str = r#"(module
         (memory (export "memory") 1)
@@ -355,5 +356,133 @@ mod tests {
 
         // Assert
         assert!(matches!(allocated, Err(Error::Poisoned)));
+    }
+
+    /// A guest that works, takes an allocation from the host, and works
+    /// again, all inside one call.
+    ///
+    /// `fuel_twice` spends the same fuel on each side of the allocation.
+    /// `tick_twice` moves the epoch `n` times on each side of it.
+    const ALLOCATES_MID_CALL: &str = r#"(module
+        (import "env" "take" (func $take))
+        (import "env" "tick" (func $tick))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+        (func $spend (result i32)
+            (local $i i32)
+            (loop $l
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))
+            (local.get $i))
+        (func $ticks (param $n i32)
+            (local $i i32)
+            (loop $l
+                call $tick
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br_if $l (i32.lt_u (local.get $i) (local.get $n)))))
+        (func (export "fuel_once") (result i32) call $spend)
+        (func (export "fuel_twice") (result i32)
+            call $spend
+            drop
+            call $take
+            call $spend)
+        (func (export "tick_twice") (param $n i32)
+            (call $ticks (local.get $n))
+            call $take
+            (call $ticks (local.get $n))))"#;
+
+    /// An engine whose guests can ask the host for an allocation through
+    /// `env.take` and can move the epoch through `env.tick`.
+    fn mid_call_engine() -> Engine {
+        EngineConfig::new()
+            .with_external_ticks(true)
+            .with_fuel_enabled(true)
+            .build_with(|linker| {
+                linker
+                    .func_wrap(
+                        "env",
+                        "take",
+                        |mut caller: wasmtime::Caller<'_, HostState>| -> wasmtime::Result<()> {
+                            allocate(&mut caller, 16)?;
+                            Ok(())
+                        },
+                    )
+                    .and_then(|linker| {
+                        linker.func_wrap(
+                            "env",
+                            "tick",
+                            |caller: wasmtime::Caller<'_, HostState>| {
+                                caller.engine().increment_epoch();
+                            },
+                        )
+                    })
+                    .map_err(|source| Error::Config {
+                        message: format!("the test imports could not be registered: {source}"),
+                    })?;
+                Ok(())
+            })
+            .unwrap()
+    }
+
+    fn mid_call_instance(engine: &Engine, limits: &Limits) -> Instance {
+        let module = Module::new(engine, &wat_bytes(ALLOCATES_MID_CALL)).unwrap();
+        Instance::new(engine, &module, crate::abi::state(services()), limits).unwrap()
+    }
+
+    /// The fuel one call of `fuel_once` costs on this engine, measured so a
+    /// change to wasmtime's cost model cannot make the budget cover two.
+    fn fuel_once_cost(engine: &Engine) -> u64 {
+        let limits = Limits::new().with_fuel(u64::from(u32::MAX));
+        let mut instance = mid_call_instance(engine, &limits);
+        let before = instance.store_mut().get_fuel().unwrap();
+        instance.call::<(), i32>("fuel_once", ()).unwrap();
+        before - instance.store_mut().get_fuel().unwrap()
+    }
+
+    #[test]
+    fn an_allocation_inside_a_call_does_not_restore_the_fuel() {
+        // Arrange
+        let engine = mid_call_engine();
+        let cost = fuel_once_cost(&engine);
+        let limits = Limits::new().with_fuel(cost + cost / 2);
+        let mut instance = mid_call_instance(&engine, &limits);
+
+        // Act
+        let result = instance.call::<(), i32>("fuel_twice", ());
+
+        // Assert
+        assert!(
+            matches!(result, Err(Error::LimitExceeded { limit: Limit::Fuel })),
+            "the budget covers one loop, so the second loop passes only on restored fuel: {result:?}"
+        );
+        assert!(instance.is_poisoned());
+    }
+
+    #[test]
+    fn an_allocation_inside_a_call_does_not_move_the_epoch_deadline() {
+        // Arrange
+        let engine = mid_call_engine();
+        let limits = Limits::new()
+            .with_cpu_time(engine.epoch_period() * 8)
+            .with_fuel(u64::from(u32::MAX));
+        let ticks = Budget::new(&limits, &engine).epoch_ticks;
+        let each_side = i32::try_from(ticks - 1).unwrap();
+        let mut instance = mid_call_instance(&engine, &limits);
+
+        // Act
+        let result = instance.call::<(i32,), ()>("tick_twice", (each_side,));
+
+        // Assert
+        assert_eq!(ticks, 8);
+        assert!(
+            matches!(
+                result,
+                Err(Error::LimitExceeded {
+                    limit: Limit::Epoch
+                })
+            ),
+            "each side stays below the deadline alone, so both pass only on a moved deadline: {result:?}"
+        );
+        assert!(instance.is_poisoned());
     }
 }
