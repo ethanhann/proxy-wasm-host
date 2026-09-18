@@ -2,7 +2,7 @@
 //!
 //! An [`Engine`] compiles a [`Module`], and an [`Instance`] runs it inside a
 //! store.
-//! You supply the services a guest needs through [`HostServices`], and
+//! You supply the services a guest needs through [`VmServices`], and
 //! [`Limits`] bound the CPU time, the fuel, and the memory of each instance.
 //! Host functions read and write guest memory through [`GuestPtr`],
 //! [`GuestSlice`], and [`GuestMemory`], so every access is bounds checked.
@@ -27,7 +27,7 @@ pub use instance::Instance;
 pub use limits::Limits;
 pub use memory::{GuestMemory, GuestPtr, GuestSlice};
 pub use module::Module;
-pub use services::{Clock, HostServices, LogSink, SystemClock};
+pub use services::{Clock, LogSink, SystemClock, VmServices};
 
 pub(crate) use alloc::write_return;
 pub(crate) use host_state::HostState;

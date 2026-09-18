@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::Error;
 use crate::abi::v0_2_1::types::LogLevel;
-use crate::runtime::{Engine, EngineConfig, HostServices, Instance, Limits, LogSink, Module};
+use crate::runtime::{Engine, EngineConfig, Instance, Limits, LogSink, Module, VmServices};
 
 /// One memory page, a stub allocator that returns 1024, and a `_start`.
 pub(crate) const MINIMAL_GUEST: &str = r#"(module
@@ -51,8 +51,8 @@ pub(crate) fn wat_bytes(wat: &str) -> Vec<u8> {
 }
 
 /// Services with a fresh recording sink.
-pub(crate) fn services() -> HostServices {
-    HostServices::new(Arc::new(RecordingSink::default()))
+pub(crate) fn services() -> VmServices {
+    VmServices::new(Arc::new(RecordingSink::default()))
 }
 
 /// An instance of `wat` with a recording sink and the default limits.
@@ -73,5 +73,5 @@ pub(crate) fn instance_with_sink(
     sink: Arc<RecordingSink>,
 ) -> Result<Instance, Error> {
     let module = Module::new(engine, &wat_bytes(wat))?;
-    Instance::new(engine, &module, HostServices::new(sink), &Limits::default())
+    Instance::new(engine, &module, VmServices::new(sink), &Limits::default())
 }

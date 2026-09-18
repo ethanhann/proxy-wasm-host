@@ -24,7 +24,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{outcome, status};
     use crate::abi::v0_2_1::types::Status;
     use crate::runtime::test_support::{RecordingSink, engine, wat_bytes};
-    use crate::runtime::{Clock, GuestPtr, HostServices, Instance, Limits, Module};
+    use crate::runtime::{Clock, GuestPtr, Instance, Limits, Module, VmServices};
 
     const GUEST: &str = r#"(module
         (import "env" "proxy_get_current_time_nanoseconds" (func $now (param i32) (result i32)))
@@ -48,7 +48,7 @@ mod tests {
         let engine = engine();
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services =
-            HostServices::new(Arc::new(RecordingSink::default())).with_clock(Arc::new(Fixed));
+            VmServices::new(Arc::new(RecordingSink::default())).with_clock(Arc::new(Fixed));
         Instance::new(&engine, &module, services, &Limits::default()).unwrap()
     }
 

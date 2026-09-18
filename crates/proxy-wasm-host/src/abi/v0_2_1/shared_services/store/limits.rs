@@ -1,29 +1,29 @@
 //! What the in memory shared services allow a guest to store.
 
-/// What [`MemoryServices`] allows a guest to store.
+/// What [`InMemoryStore`] allows a guest to store.
 ///
 /// The default allows 4096 keys of at most 64 KiB each and 1024 items on a
 /// queue, which bounds a guest that writes without ever reading.
 ///
-/// [`MemoryServices`]: super::MemoryServices
+/// [`InMemoryStore`]: super::InMemoryStore
 ///
 /// ```
-/// use proxy_wasm_host::abi::v0_2_1::{MemoryLimits, MemoryServices};
+/// use proxy_wasm_host::abi::v0_2_1::{InMemoryStore, InMemoryStoreLimits};
 ///
-/// let limits = MemoryLimits::new().with_value_bytes(4 * 1024);
-/// let services = MemoryServices::new().with_limits(limits);
+/// let limits = InMemoryStoreLimits::new().with_value_bytes(4 * 1024);
+/// let services = InMemoryStore::new().with_limits(limits);
 /// assert_eq!(limits.value_bytes(), 4 * 1024);
 /// # let _ = services;
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct Limits {
+pub struct InMemoryStoreLimits {
     value_bytes: usize,
     keys: usize,
     queue_items: usize,
 }
 
-impl Default for Limits {
+impl Default for InMemoryStoreLimits {
     fn default() -> Self {
         Self {
             value_bytes: 64 * 1024,
@@ -33,7 +33,7 @@ impl Default for Limits {
     }
 }
 
-impl Limits {
+impl InMemoryStoreLimits {
     /// The limits described on the type.
     pub fn new() -> Self {
         Self::default()
@@ -83,10 +83,10 @@ mod tests {
     #[test]
     fn new_returns_the_default_limits() {
         // Arrange
-        let default = Limits::default();
+        let default = InMemoryStoreLimits::default();
 
         // Act
-        let built = Limits::new();
+        let built = InMemoryStoreLimits::new();
 
         // Assert
         assert_eq!(built, default);
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn each_builder_method_is_reported_by_its_getter() {
         // Arrange
-        let base = Limits::new();
+        let base = InMemoryStoreLimits::new();
 
         // Act
         let built = base.with_value_bytes(4).with_keys(5).with_queue_items(6);

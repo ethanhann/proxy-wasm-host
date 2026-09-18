@@ -83,7 +83,7 @@ mod tests {
     }
 
     #[test]
-    fn the_name_and_the_arguments_reach_the_stream_host() {
+    fn the_name_and_the_arguments_reach_the_stream_state() {
         // Arrange
         let engine = engine();
         let stream = RecordingStream::new().with_foreign_function(b"compress", b"done");
@@ -118,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn a_name_the_stream_host_does_not_serve_is_not_found() {
+    fn a_name_the_stream_state_does_not_serve_is_not_found() {
         // Arrange
         let engine = engine();
         let (mut instance, _) = hosted(&engine, GUEST, RecordingStream::new());
@@ -131,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn a_body_with_no_stream_host_or_no_context_is_not_found() {
+    fn a_body_with_no_stream_state_or_no_context_is_not_found() {
         // Arrange
         let engine = engine();
         let (mut without_stream, _) = unhosted(&engine, GUEST);
@@ -148,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn every_pointer_is_checked_before_the_stream_host_is_asked() {
+    fn every_pointer_is_checked_before_the_stream_state_is_asked() {
         // Arrange
         let engine = engine();
         let (mut instance, _) = hosted(&engine, GUEST, RecordingStream::new());

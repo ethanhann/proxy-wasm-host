@@ -1,7 +1,7 @@
 //! The three buffer functions.
 //!
 //! The crate serves `VM_CONFIGURATION` and `PLUGIN_CONFIGURATION` from the
-//! values the embedder gave it, and asks the stream host for every other
+//! values the embedder gave it, and asks the stream state for every other
 //! buffer.
 //! Each body resolves the buffer type before the context, so a configuration
 //! read never needs a callback to be running.
@@ -197,9 +197,9 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, status, unhosted, write,
     };
-    use crate::abi::v0_2_1::{Access, Plugin};
+    use crate::abi::v0_2_1::{Access, PluginConfig};
     use crate::runtime::test_support::{RecordingSink, engine, wat_bytes};
-    use crate::runtime::{GuestSlice, HostServices, Instance, Limits, Module};
+    use crate::runtime::{GuestSlice, Instance, Limits, Module, VmServices};
 
     const BODY: i32 = BufferType::HttpRequestBody as i32;
     const VM: i32 = BufferType::VmConfiguration as i32;
@@ -303,15 +303,15 @@ mod tests {
     fn configured(vm: &[u8], plugin: &[u8]) -> Instance {
         let engine = engine();
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
-        let services = HostServices::new(std::sync::Arc::new(RecordingSink::default()))
+        let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_configuration(vm.to_vec());
         let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
         let state = instance.state_mut();
         let root = state.abi_mut().contexts_mut().create(None).unwrap();
-        state
-            .abi_mut()
-            .contexts_mut()
-            .set_plugin(root, Plugin::new().with_configuration(plugin.to_vec()));
+        state.abi_mut().contexts_mut().set_plugin(
+            root,
+            PluginConfig::new().with_configuration(plugin.to_vec()),
+        );
         state.abi_mut().contexts_mut().set_effective(root);
         instance
     }
@@ -428,7 +428,7 @@ mod tests {
         // Arrange
         let engine = engine();
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
-        let services = HostServices::new(std::sync::Arc::new(RecordingSink::default()))
+        let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_configuration(b"vm bytes".to_vec());
         let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
 
@@ -730,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn a_configuration_the_crate_serves_is_never_asked_of_the_stream_host() {
+    fn a_configuration_the_crate_serves_is_never_asked_of_the_stream_state() {
         // Arrange
         // The crate answers the two configuration buffers itself, so an
         // embedder must never see them.
@@ -738,7 +738,7 @@ mod tests {
         instance
             .state_mut()
             .abi_mut()
-            .set_stream_host(Box::new(RecordingStream::new()));
+            .set_stream_state(Box::new(RecordingStream::new()));
 
         // Act
         let results = [
@@ -763,7 +763,10 @@ mod tests {
         let mut instance = configured(b"vm", b"mine");
         let contexts = instance.state_mut().abi_mut().contexts_mut();
         let theirs = contexts.create(None).unwrap();
-        contexts.set_plugin(theirs, Plugin::new().with_configuration(b"theirs".to_vec()));
+        contexts.set_plugin(
+            theirs,
+            PluginConfig::new().with_configuration(b"theirs".to_vec()),
+        );
 
         // Act
         let result = get(&mut instance, PLUGIN, 0, -1);
@@ -774,13 +777,13 @@ mod tests {
     }
 
     #[test]
-    fn a_write_to_a_configuration_the_crate_serves_is_never_asked_of_the_stream_host() {
+    fn a_write_to_a_configuration_the_crate_serves_is_never_asked_of_the_stream_state() {
         // Arrange
         let mut instance = configured(b"vm bytes", b"plugin bytes");
         instance
             .state_mut()
             .abi_mut()
-            .set_stream_host(Box::new(RecordingStream::new()));
+            .set_stream_state(Box::new(RecordingStream::new()));
 
         // Act
         let results = [

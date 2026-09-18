@@ -9,9 +9,9 @@ use crate::Error;
 use crate::abi::AbiVersion;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::{
-    CallScope, Callback, ContextId, ContextState, ContextType, NoStream, Plugin, StreamHost,
+    CallScope, Callback, ContextId, ContextState, ContextType, NoStream, PluginConfig, StreamState,
 };
-use crate::runtime::{Engine, HostServices, Instance, Limits, Module};
+use crate::runtime::{Engine, Instance, Limits, Module, VmServices};
 use callbacks::Callbacks;
 
 /// A running guest and the ABI conversation with it.
@@ -22,7 +22,7 @@ use callbacks::Callbacks;
 ///
 /// A root context is created first, because both SDKs look it up by the
 /// first parameter of `proxy_on_vm_start`.
-/// The stream host you give to [`Guest::enter`] is owned for the duration of
+/// The stream state you give to [`Guest::enter`] is owned for the duration of
 /// the scope and must be `'static`, so move your request state in and take it
 /// back with [`CallScope::finish`].
 ///
@@ -31,8 +31,8 @@ use callbacks::Callbacks;
 ///
 /// ```
 /// use proxy_wasm_host::abi::v0_2_1::types::{Action, MapType, Status};
-/// use proxy_wasm_host::abi::v0_2_1::{Access, Guest, HostCall, Plugin, StreamHost};
-/// use proxy_wasm_host::runtime::{Engine, HostServices, Limits, LogSink, Module};
+/// use proxy_wasm_host::abi::v0_2_1::{Access, Guest, Invocation, PluginConfig, StreamState};
+/// use proxy_wasm_host::runtime::{Engine, VmServices, Limits, LogSink, Module};
 /// use proxy_wasm_host::{HeaderMap, VecHeaderMap};
 ///
 /// struct Stderr;
@@ -45,8 +45,8 @@ use callbacks::Callbacks;
 /// struct Request {
 ///     headers: VecHeaderMap,
 /// }
-/// impl StreamHost for Request {
-///     fn header_map(&mut self, _: HostCall, _: Access, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
+/// impl StreamState for Request {
+///     fn header_map(&mut self, _: Invocation, _: Access, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
 ///         match map {
 ///             MapType::HttpRequestHeaders => Ok(&mut self.headers),
 ///             _ => Err(Status::NotFound),
@@ -61,13 +61,13 @@ use callbacks::Callbacks;
 ///     (func (export "proxy_abi_version_0_2_1")))"#;
 /// let engine = Engine::new()?;
 /// let module = Module::new(&engine, &wat::parse_str(wat).unwrap())?;
-/// let services = HostServices::new(std::sync::Arc::new(Stderr));
+/// let services = VmServices::new(std::sync::Arc::new(Stderr));
 /// let mut guest = Guest::new(&engine, &module, services, &Limits::default())?;
 ///
 /// let mut root_scope = guest.enter_root();
 /// let root = root_scope.on_context_create(None)?;
 /// assert!(root_scope.on_vm_start(root)?);
-/// assert!(root_scope.on_configure(root, Plugin::new())?);
+/// assert!(root_scope.on_configure(root, PluginConfig::new())?);
 /// drop(root_scope);
 ///
 /// let request = Request { headers: VecHeaderMap::default() };
@@ -115,7 +115,7 @@ impl Guest {
     pub fn new(
         engine: &Engine,
         module: &Module,
-        services: HostServices,
+        services: VmServices,
         limits: &Limits,
     ) -> Result<Self, Error> {
         let abi = module.abi()?;
@@ -189,7 +189,7 @@ impl Guest {
     ///
     /// [`CallScope::on_configure`] records it, so this is `None` until that
     /// callback has run on the root.
-    pub fn plugin(&self, context: ContextId) -> Option<&Plugin> {
+    pub fn plugin(&self, context: ContextId) -> Option<&PluginConfig> {
         self.instance.state().abi().contexts().plugin(context)
     }
 
@@ -220,12 +220,12 @@ impl Guest {
     /// requires that of store data.
     /// Move your request state in and take it back out rather than lending a
     /// borrow.
-    /// The value replaces any stream host a forgotten scope left installed.
-    pub fn enter<H: StreamHost>(&mut self, stream: H) -> CallScope<'_, H> {
+    /// The value replaces any stream state a forgotten scope left installed.
+    pub fn enter<H: StreamState>(&mut self, stream: H) -> CallScope<'_, H> {
         self.instance
             .state_mut()
             .abi_mut()
-            .set_stream_host(Box::new(stream));
+            .set_stream_state(Box::new(stream));
         CallScope::new(self)
     }
 

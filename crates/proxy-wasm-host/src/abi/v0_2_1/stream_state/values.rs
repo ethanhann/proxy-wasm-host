@@ -1,4 +1,4 @@
-//! The values a stream host exchanges with a guest.
+//! The values a stream state exchanges with a guest.
 
 use std::borrow::Cow;
 

@@ -207,7 +207,7 @@ mod tests {
         instance
             .state_mut()
             .abi_mut()
-            .set_stream_host(Box::new(NoStream));
+            .set_stream_state(Box::new(NoStream));
 
         // Act
         let result = outcome(proxy_send_local_response(

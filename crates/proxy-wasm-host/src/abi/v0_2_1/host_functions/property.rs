@@ -3,12 +3,12 @@
 //! The ABI names three properties that belong to Proxy-Wasm itself, and the
 //! crate answers those from the plugin of the root and from the host
 //! services.
-//! Every other path goes to the stream host.
+//! Every other path goes to the stream state.
 
 use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::AbiAccess;
-use crate::abi::v0_2_1::Plugin;
+use crate::abi::v0_2_1::PluginConfig;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::Served;
 use crate::abi::v0_2_1::host_functions::call::{context, from_embedder, with_stream};
@@ -60,7 +60,7 @@ fn well_known(state: &HostState, name: WellKnown) -> Result<Vec<u8>, Failure> {
 
 /// The plugin of the effective context, which a root the guest rejected does
 /// not have.
-fn plugin_of(state: &HostState) -> Result<&Plugin, Failure> {
+fn plugin_of(state: &HostState) -> Result<&PluginConfig, Failure> {
     let effective = context(state, Status::NotFound)?;
     state
         .abi()
@@ -118,13 +118,13 @@ pub(super) fn proxy_set_property(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::v0_2_1::Plugin;
+    use crate::abi::v0_2_1::PluginConfig;
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, returned, status, unhosted, write,
     };
     use crate::codec::path::encode_path;
     use crate::runtime::test_support::{RecordingSink, engine, wat_bytes};
-    use crate::runtime::{HostServices, Instance, Limits, Module};
+    use crate::runtime::{Instance, Limits, Module, VmServices};
 
     const PATH: i32 = 1024;
     const VALUE: i32 = 1200;
@@ -166,14 +166,14 @@ mod tests {
     /// An instance with a VM id and a plugin on the root that a callback set.
     fn with_plugin(engine: &crate::runtime::Engine) -> Instance {
         let module = Module::new(engine, &wat_bytes(GUEST)).unwrap();
-        let services = HostServices::new(std::sync::Arc::new(RecordingSink::default()))
+        let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_id(b"vm-1".to_vec());
         let mut instance = Instance::new(engine, &module, services, &Limits::default()).unwrap();
         let state = instance.state_mut();
         let root = state.abi_mut().contexts_mut().create(None).unwrap();
         state.abi_mut().contexts_mut().set_plugin(
             root,
-            Plugin::new()
+            PluginConfig::new()
                 .with_name(*b"auth")
                 .with_root_id(*b"auth_root"),
         );
@@ -214,7 +214,7 @@ mod tests {
         // Arrange
         let engine = engine();
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
-        let services = HostServices::new(std::sync::Arc::new(RecordingSink::default()))
+        let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_id(b"vm-1".to_vec());
         let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
 
@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn a_well_known_path_never_reaches_the_stream_host() {
+    fn a_well_known_path_never_reaches_the_stream_state() {
         // Arrange
         let engine = engine();
         let stream = RecordingStream::new().with_property(&[b"plugin_name"], b"wrong");
@@ -236,7 +236,7 @@ mod tests {
             .state_mut()
             .abi_mut()
             .contexts_mut()
-            .set_plugin(root, Plugin::new().with_name(*b"auth"));
+            .set_plugin(root, PluginConfig::new().with_name(*b"auth"));
 
         // Act
         let result = get(&mut instance, &[b"plugin_name"]);
@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn another_path_reaches_the_stream_host() {
+    fn another_path_reaches_the_stream_state() {
         // Arrange
         let engine = engine();
         let stream = RecordingStream::new().with_property(&[b"route", b"name"], b"main");
@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn a_path_the_stream_host_does_not_serve_is_not_found() {
+    fn a_path_the_stream_state_does_not_serve_is_not_found() {
         // Arrange
         let engine = engine();
         let (mut instance, _) = hosted(&engine, GUEST, RecordingStream::new());
@@ -279,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_path_reaches_the_stream_host() {
+    fn an_empty_path_reaches_the_stream_state() {
         // Arrange
         let engine = engine();
         let (mut instance, _) = hosted(&engine, GUEST, RecordingStream::new());
@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn a_write_reaches_the_stream_host_with_the_segments() {
+    fn a_write_reaches_the_stream_state_with_the_segments() {
         // Arrange
         let engine = engine();
         let (mut instance, root) = hosted(&engine, GUEST, RecordingStream::new());
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn a_write_to_a_well_known_path_is_refused_without_the_stream_host() {
+    fn a_write_to_a_well_known_path_is_refused_without_the_stream_state() {
         // Arrange
         let engine = engine();
         let (mut instance, _) = hosted(&engine, GUEST, RecordingStream::new());
@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn a_body_with_no_stream_host_or_no_context_is_not_found() {
+    fn a_body_with_no_stream_state_or_no_context_is_not_found() {
         // Arrange
         let engine = engine();
         let (mut without_stream, _) = unhosted(&engine, GUEST);
@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn every_pointer_is_checked_before_the_stream_host_is_asked() {
+    fn every_pointer_is_checked_before_the_stream_state_is_asked() {
         // Arrange
         let engine = engine();
         let (mut instance, _) = hosted(&engine, GUEST, RecordingStream::new());
@@ -429,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn a_root_with_no_plugin_never_asks_the_stream_host_for_a_well_known_name() {
+    fn a_root_with_no_plugin_never_asks_the_stream_state_for_a_well_known_name() {
         // Arrange
         let engine = engine();
         let stream = RecordingStream::new().with_property(&[b"plugin_name"], b"wrong");
@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn a_well_known_property_is_never_asked_of_the_stream_host() {
+    fn a_well_known_property_is_never_asked_of_the_stream_state() {
         // Arrange
         // The crate answers the three plugin properties itself, so an
         // embedder must never see them.
@@ -457,7 +457,7 @@ mod tests {
         instance
             .state_mut()
             .abi_mut()
-            .set_stream_host(Box::new(RecordingStream::new()));
+            .set_stream_state(Box::new(RecordingStream::new()));
 
         // Act
         let results = [

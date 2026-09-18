@@ -17,19 +17,19 @@
 /// For example, a plugin with a configuration and no name:
 ///
 /// ```
-/// use proxy_wasm_host::abi::v0_2_1::Plugin;
+/// use proxy_wasm_host::abi::v0_2_1::PluginConfig;
 ///
-/// let plugin = Plugin::new().with_configuration(*br#"{"deny":["/admin"]}"#);
+/// let plugin = PluginConfig::new().with_configuration(*br#"{"deny":["/admin"]}"#);
 /// assert_eq!(plugin.configuration().len(), 19);
 /// ```
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct Plugin {
+pub struct PluginConfig {
     name: Vec<u8>,
     root_id: Vec<u8>,
     configuration: Vec<u8>,
 }
 
-impl Plugin {
+impl PluginConfig {
     /// A plugin with no name, no root id, and no configuration.
     pub fn new() -> Self {
         Self::default()
@@ -88,7 +88,7 @@ mod tests {
         let expected: &[u8] = b"";
 
         // Act
-        let plugin = Plugin::new();
+        let plugin = PluginConfig::new();
 
         // Assert
         assert_eq!(plugin.name(), expected);
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn each_builder_method_stores_its_own_value() {
         // Arrange
-        let plugin = Plugin::new();
+        let plugin = PluginConfig::new();
 
         // Act
         let plugin = plugin

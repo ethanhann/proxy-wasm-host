@@ -257,7 +257,7 @@ mod tests {
     use crate::runtime::test_support::{
         RecordingSink, engine, instance, instance_with_sink, wat_bytes,
     };
-    use crate::runtime::{Clock, HostServices, Instance, Limits, Module};
+    use crate::runtime::{Clock, Instance, Limits, Module, VmServices};
 
     const HEADER: &str = r#"
         (memory (export "memory") 1)
@@ -410,7 +410,7 @@ mod tests {
         );
         let module = Module::new(&engine, &wat_bytes(&wat)).unwrap();
         let services =
-            HostServices::new(Arc::new(RecordingSink::default())).with_clock(Arc::new(FixedClock));
+            VmServices::new(Arc::new(RecordingSink::default())).with_clock(Arc::new(FixedClock));
         let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
 
         // Act
@@ -489,7 +489,7 @@ mod tests {
             (b"KEY".to_vec(), b"value".to_vec()),
         ];
         let services =
-            HostServices::new(Arc::new(RecordingSink::default())).with_environment(variables);
+            VmServices::new(Arc::new(RecordingSink::default())).with_environment(variables);
         let mut instance = Instance::new(&engine, &module, services, &Limits::default()).unwrap();
         assert!(std::env::var_os("PATH").is_some(), "the process has a PATH");
 

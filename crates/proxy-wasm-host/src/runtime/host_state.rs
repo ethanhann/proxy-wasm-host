@@ -4,7 +4,7 @@ use std::any::Any;
 
 use wasmtime::{Memory, StoreLimits, TypedFunc};
 
-use crate::runtime::HostServices;
+use crate::runtime::VmServices;
 
 /// The store data of one instance.
 ///
@@ -16,7 +16,7 @@ use crate::runtime::HostServices;
 /// The type is crate private, so nothing outside the crate can clear the
 /// poison flag or replace the cached handles.
 pub(crate) struct HostState {
-    services: HostServices,
+    services: VmServices,
     store_limits: StoreLimits,
     memory: Option<Memory>,
     allocator: Option<TypedFunc<i32, i32>>,
@@ -25,7 +25,7 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    pub(crate) fn new(services: HostServices, abi: Box<dyn Any + Send>) -> Self {
+    pub(crate) fn new(services: VmServices, abi: Box<dyn Any + Send>) -> Self {
         Self {
             services,
             store_limits: StoreLimits::default(),
@@ -36,11 +36,11 @@ impl HostState {
         }
     }
 
-    pub(crate) fn services(&self) -> &HostServices {
+    pub(crate) fn services(&self) -> &VmServices {
         &self.services
     }
 
-    pub(crate) fn services_mut(&mut self) -> &mut HostServices {
+    pub(crate) fn services_mut(&mut self) -> &mut VmServices {
         &mut self.services
     }
 
@@ -98,7 +98,7 @@ mod tests {
     fn poison_is_observable() {
         // Arrange
         let mut state = HostState::new(
-            HostServices::new(Arc::new(RecordingSink::default())),
+            VmServices::new(Arc::new(RecordingSink::default())),
             crate::abi::state(),
         );
 
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn a_new_state_holds_nothing_and_is_not_poisoned() {
         // Arrange
-        let services = HostServices::new(Arc::new(RecordingSink::default()));
+        let services = VmServices::new(Arc::new(RecordingSink::default()));
 
         // Act
         let state = HostState::new(services, crate::abi::state());

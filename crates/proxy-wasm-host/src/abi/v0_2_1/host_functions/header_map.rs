@@ -1,7 +1,7 @@
 //! The seven header map functions.
 //!
 //! Each one converts its arguments, checks every guest address it will use,
-//! asks the stream host for the map, acts on the map, and last writes to
+//! asks the stream state for the map, acts on the map, and last writes to
 //! guest memory.
 
 use std::borrow::Cow;
@@ -572,10 +572,10 @@ mod tests {
     }
 
     #[test]
-    fn without_a_stream_host_or_an_effective_context_every_function_is_bad_argument() {
+    fn without_a_stream_state_or_an_effective_context_every_function_is_bad_argument() {
         // Arrange
         let (_engine, mut no_stream, _) = setup(two_pairs());
-        let _ = no_stream.state_mut().abi_mut().take_stream_host();
+        let _ = no_stream.state_mut().abi_mut().take_stream_state();
         let (_engine2, mut no_context, root) = setup(two_pairs());
         let _ = no_context.state_mut().abi_mut().contexts_mut().remove(root);
 
@@ -671,7 +671,7 @@ mod tests {
                 let state = instance.state_mut();
                 let root = state.abi_mut().contexts_mut().create(None).unwrap();
                 state.abi_mut().contexts_mut().set_effective(root);
-                state.abi_mut().set_stream_host(Box::new(two_pairs()));
+                state.abi_mut().set_stream_state(Box::new(two_pairs()));
                 instance
             })
             .collect();

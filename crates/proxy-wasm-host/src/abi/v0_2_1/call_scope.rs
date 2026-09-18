@@ -10,30 +10,30 @@ use std::marker::PhantomData;
 use crate::Error;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::types::Action;
-use crate::abi::v0_2_1::{Callback, ContextId, Guest, Plugin, StreamHost};
+use crate::abi::v0_2_1::{Callback, ContextId, Guest, PluginConfig, StreamState};
 
-/// A group of callbacks that share one stream host.
+/// A group of callbacks that share one stream state.
 ///
 /// [`Guest::enter`] gives you a scope, the callback methods run the guest,
-/// and [`CallScope::finish`] gives the stream host back.
-/// Between callbacks you reach the stream host through [`CallScope::stream`]
+/// and [`CallScope::finish`] gives the stream state back.
+/// Between callbacks you reach the stream state through [`CallScope::stream`]
 /// and [`CallScope::stream_mut`].
-/// Dropping the scope without `finish` drops the stream host.
+/// Dropping the scope without `finish` drops the stream state.
 ///
-/// A panic in your [`StreamHost`] unwinds through the guest, and the
+/// A panic in your [`StreamState`] unwinds through the guest, and the
 /// callback that was running never returns.
 /// The scope notices that on drop, on `finish`, and on the next callback,
 /// and poisons the instance each time, so the guest never runs again on host
 /// state that a callback left half updated.
 /// A panic elsewhere while the scope lives leaves the instance usable.
-/// `std::mem::forget` on a scope leaves the stream host installed until the
+/// `std::mem::forget` on a scope leaves the stream state installed until the
 /// next [`Guest::enter`].
-pub struct CallScope<'a, H: StreamHost> {
+pub struct CallScope<'a, H: StreamState> {
     guest: &'a mut Guest,
     stream: PhantomData<H>,
 }
 
-impl<H: StreamHost> fmt::Debug for CallScope<'_, H> {
+impl<H: StreamState> fmt::Debug for CallScope<'_, H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CallScope")
             .field("guest", &self.guest)
@@ -42,7 +42,7 @@ impl<H: StreamHost> fmt::Debug for CallScope<'_, H> {
     }
 }
 
-impl<'a, H: StreamHost> CallScope<'a, H> {
+impl<'a, H: StreamState> CallScope<'a, H> {
     pub(crate) fn new(guest: &'a mut Guest) -> Self {
         Self {
             guest,
@@ -55,38 +55,38 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
         self.guest
     }
 
-    /// The stream host this scope lends to the guest.
+    /// The stream state this scope lends to the guest.
     ///
     /// # Panics
     ///
-    /// Panics only if the installed stream host is not the value
+    /// Panics only if the installed stream state is not the value
     /// [`Guest::enter`] stored, which cannot happen through the public API.
     pub fn stream(&self) -> &H {
         self.guest
             .instance()
             .state()
             .abi()
-            .stream_host_as_ref::<H>()
+            .stream_state_as_ref::<H>()
             .unwrap_or_else(|| {
-                unreachable!("the scope holds the guest, so its stream host is installed")
+                unreachable!("the scope holds the guest, so its stream state is installed")
             })
     }
 
-    /// The stream host this scope lends to the guest, for changes between
+    /// The stream state this scope lends to the guest, for changes between
     /// callbacks.
     ///
     /// # Panics
     ///
-    /// Panics only if the installed stream host is not the value
+    /// Panics only if the installed stream state is not the value
     /// [`Guest::enter`] stored, which cannot happen through the public API.
     pub fn stream_mut(&mut self) -> &mut H {
         self.guest
             .instance_mut()
             .state_mut()
             .abi_mut()
-            .stream_host_as::<H>()
+            .stream_state_as::<H>()
             .unwrap_or_else(|| {
-                unreachable!("the scope holds the guest, so its stream host is installed")
+                unreachable!("the scope holds the guest, so its stream state is installed")
             })
     }
 
@@ -136,7 +136,7 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
     /// Calls `proxy_on_vm_start` on a root context.
     ///
     /// The guest is told the length of the VM configuration that
-    /// [`HostServices::with_vm_configuration`](crate::runtime::HostServices::with_vm_configuration)
+    /// [`VmServices::with_vm_configuration`](crate::runtime::VmServices::with_vm_configuration)
     /// holds, and it reads the bytes from the `VM_CONFIGURATION` buffer.
     /// A `false` answer refuses the whole instance.
     ///
@@ -192,7 +192,7 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
     /// # Errors
     ///
     /// The same as [`CallScope::on_vm_start`].
-    pub fn on_configure(&mut self, root: ContextId, plugin: Plugin) -> Result<bool, Error> {
+    pub fn on_configure(&mut self, root: ContextId, plugin: PluginConfig) -> Result<bool, Error> {
         prologue::live(self.guest)?;
         prologue::require_root(self.guest, root)?;
         prologue::accepted(self.guest, root)?;
@@ -250,7 +250,7 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
         Action::try_from(value).map_err(|_| Error::UnexpectedReturn { callback, value })
     }
 
-    /// Takes the stream host back.
+    /// Takes the stream state back.
     ///
     /// It works on a poisoned instance as well, because the value is in the
     /// store data whatever the guest did.
@@ -259,7 +259,7 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
     ///
     /// # Panics
     ///
-    /// Panics only if the installed stream host is not the value
+    /// Panics only if the installed stream state is not the value
     /// [`Guest::enter`] stored, which cannot happen through the public API.
     #[must_use]
     pub fn finish(self) -> H {
@@ -269,22 +269,22 @@ impl<'a, H: StreamHost> CallScope<'a, H> {
         }
         state
             .abi_mut()
-            .take_stream_host()
+            .take_stream_state()
             .and_then(|boxed| {
                 let any: Box<dyn Any + Send> = boxed;
                 any.downcast::<H>().ok()
             })
             .map_or_else(
-                || unreachable!("the scope holds the guest, so its stream host is installed"),
+                || unreachable!("the scope holds the guest, so its stream state is installed"),
                 |stream| *stream,
             )
     }
 }
 
-impl<H: StreamHost> Drop for CallScope<'_, H> {
+impl<H: StreamState> Drop for CallScope<'_, H> {
     fn drop(&mut self) {
         let state = self.guest.instance_mut().state_mut();
-        let _ = state.abi_mut().take_stream_host();
+        let _ = state.abi_mut().take_stream_state();
         if state.abi_mut().current_callback().is_some() {
             state.poison();
             state.abi_mut().set_current_callback(None);
@@ -299,7 +299,7 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::test_support::{RecordingStream, status};
     use crate::abi::v0_2_1::types::{MapType, Status};
-    use crate::abi::v0_2_1::{Access, ContextProblem, ContextState, HostCall, NoStream};
+    use crate::abi::v0_2_1::{Access, ContextProblem, ContextState, Invocation, NoStream};
     use crate::header_map::HeaderMap;
     use crate::runtime::test_support::{engine, services, wat_bytes};
     use crate::runtime::{Engine, GuestPtr, Limits, Module};
@@ -365,7 +365,7 @@ mod tests {
 
     fn guest_with_vm_configuration(engine: &Engine, wat: &str, bytes: &[u8]) -> Guest {
         let module = Module::new(engine, &wat_bytes(wat)).unwrap();
-        let services = crate::runtime::HostServices::new(std::sync::Arc::new(
+        let services = crate::runtime::VmServices::new(std::sync::Arc::new(
             crate::runtime::test_support::RecordingSink::default(),
         ))
         .with_vm_configuration(bytes.to_vec());
@@ -411,7 +411,7 @@ mod tests {
         assert!(
             !guest
                 .enter_root()
-                .on_configure(root, Plugin::new())
+                .on_configure(root, PluginConfig::new())
                 .unwrap()
         );
         answer(&mut guest, 1);
@@ -429,14 +429,14 @@ mod tests {
 
     struct Panicking;
 
-    impl StreamHost for Panicking {
+    impl StreamState for Panicking {
         fn header_map(
             &mut self,
-            _: HostCall,
+            _: Invocation,
             _: Access,
             _: MapType,
         ) -> Result<&mut dyn HeaderMap, Status> {
-            panic!("the stream host failed")
+            panic!("the stream state failed")
         }
     }
 
@@ -498,7 +498,7 @@ mod tests {
         // Arrange
         let engine = engine();
         let (mut guest, root) = with_root(&engine, RECORDER);
-        let plugin = Plugin::new().with_configuration(b"123456".to_vec());
+        let plugin = PluginConfig::new().with_configuration(b"123456".to_vec());
         let mut scope = guest.enter_root();
 
         // Act
@@ -520,7 +520,7 @@ mod tests {
         // Arrange
         let engine = engine();
         let (mut guest, root, stream) = with_stream(&engine, RECORDER);
-        let plugin = Plugin::new().with_name(b"auth".to_vec());
+        let plugin = PluginConfig::new().with_name(b"auth".to_vec());
 
         // Act
         let configured = guest.enter_root().on_configure(root, plugin).unwrap();
@@ -541,7 +541,7 @@ mod tests {
         // Act
         let results = (
             scope.on_vm_start(stream),
-            scope.on_configure(id(9), Plugin::new()),
+            scope.on_configure(id(9), PluginConfig::new()),
             scope.on_request_headers(root, 0, true),
         );
 
@@ -568,7 +568,7 @@ mod tests {
         answer(&mut guest, 7);
 
         // Act
-        let result = guest.enter_root().on_configure(root, Plugin::new());
+        let result = guest.enter_root().on_configure(root, PluginConfig::new());
 
         // Assert
         assert!(matches!(
@@ -795,7 +795,7 @@ mod tests {
         let results = (
             scope.on_context_create(None).unwrap(),
             scope.on_vm_start(id(1)).unwrap(),
-            scope.on_configure(id(1), Plugin::new()).unwrap(),
+            scope.on_configure(id(1), PluginConfig::new()).unwrap(),
             scope.on_context_create(Some(id(1))).unwrap(),
             scope.on_request_headers(id(2), 0, true).unwrap(),
             scope.on_done(id(2)).unwrap(),
@@ -886,7 +886,7 @@ mod tests {
     }
 
     #[test]
-    fn a_dropped_scope_leaves_no_stream_host() {
+    fn a_dropped_scope_leaves_no_stream_state() {
         // Arrange
         let engine = engine();
         let (mut guest, _, _) = with_stream(&engine, HEADER_WRITER);
@@ -903,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    fn a_panic_in_the_stream_host_poisons_the_instance_when_the_scope_unwinds() {
+    fn a_panic_in_the_stream_state_poisons_the_instance_when_the_scope_unwinds() {
         // Arrange
         let engine = engine();
         let (mut guest, _, stream) = with_stream(&engine, HEADER_WRITER);
@@ -976,7 +976,7 @@ mod tests {
         let results = (
             scope.on_context_create(None),
             scope.on_vm_start(id(9)),
-            scope.on_configure(id(9), Plugin::new()),
+            scope.on_configure(id(9), PluginConfig::new()),
             scope.on_request_headers(id(9), 0, true),
             scope.on_done(id(9)),
             scope.on_log(id(9)),
@@ -1017,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn no_stream_is_a_stream_host_that_serves_nothing() {
+    fn no_stream_is_a_stream_state_that_serves_nothing() {
         // Arrange
         let engine = engine();
         let (mut guest, _, stream) = with_stream(&engine, HEADER_WRITER);
@@ -1048,7 +1048,7 @@ mod tests {
         assert!(text.ends_with("NoStream\" }"));
     }
 
-    impl<H: StreamHost> CallScope<'_, H> {
+    impl<H: StreamState> CallScope<'_, H> {
         fn guest_mut(&mut self) -> &mut Guest {
             self.guest
         }
@@ -1070,7 +1070,7 @@ mod tests {
         // Arrange
         let engine = engine();
         let (mut guest, root) = with_root(&engine, CONFIGURATION_READER);
-        let plugin = Plugin::new().with_configuration(b"plugin bytes".to_vec());
+        let plugin = PluginConfig::new().with_configuration(b"plugin bytes".to_vec());
 
         // Act
         let configured = guest.enter_root().on_configure(root, plugin).unwrap();
@@ -1104,7 +1104,7 @@ mod tests {
         // Act
         let configured = guest
             .enter_root()
-            .on_configure(root, Plugin::new())
+            .on_configure(root, PluginConfig::new())
             .unwrap();
 
         // Assert

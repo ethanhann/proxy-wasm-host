@@ -120,7 +120,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{
         VM_ID, bare, outcome, returned, shared_hosted, status, write,
     };
-    use crate::abi::v0_2_1::{ContextId, HostCall, MemoryServices, SharedServices};
+    use crate::abi::v0_2_1::{ContextId, InMemoryStore, Invocation, SharedServices};
     use crate::runtime::test_support::engine;
     use crate::runtime::{GuestPtr, Instance};
 
@@ -192,7 +192,7 @@ mod tests {
     fn a_registration_grants_the_identifier_to_this_guest() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
 
         // Act
@@ -208,8 +208,8 @@ mod tests {
     fn a_queue_this_guest_never_obtained_is_not_found() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
-        let other = HostCall::new(ContextId::try_from(1).unwrap(), None);
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let other = Invocation::new(ContextId::try_from(1).unwrap(), None);
         let theirs = shared
             .register_shared_queue(other, b"vm-2", b"private")
             .unwrap();
@@ -243,8 +243,8 @@ mod tests {
     fn a_resolve_grants_the_identifier_as_well() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
-        let other = HostCall::new(ContextId::try_from(1).unwrap(), None);
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let other = Invocation::new(ContextId::try_from(1).unwrap(), None);
         let theirs = shared
             .register_shared_queue(other, VM_ID, b"shared")
             .unwrap();
@@ -271,7 +271,7 @@ mod tests {
     fn a_resolve_finds_a_queue_of_the_named_vm() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
         register(&mut instance, b"q");
         let (_, vm_len) = write(&mut instance, VM, VM_ID);
@@ -296,7 +296,7 @@ mod tests {
     fn a_resolve_of_a_name_no_vm_registered_is_not_found() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
         let (_, vm_len) = write(&mut instance, VM, VM_ID);
         let (_, name_len) = write(&mut instance, NAME, b"q");
@@ -319,7 +319,7 @@ mod tests {
     fn an_item_goes_in_and_comes_back_out() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
         register(&mut instance, b"q");
         let id = returned_id(&mut instance).cast_signed();
@@ -347,7 +347,7 @@ mod tests {
     fn a_dequeue_of_an_empty_queue_is_empty_and_of_an_unknown_one_is_not_found() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
         register(&mut instance, b"q");
         let id = returned_id(&mut instance).cast_signed();
@@ -374,7 +374,7 @@ mod tests {
     fn a_queue_identifier_of_zero_is_not_found() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
 
         // Act
@@ -459,7 +459,7 @@ mod tests {
     fn a_body_under_a_refused_root_is_not_found() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, root) = shared_hosted(&engine, GUEST, shared);
         instance.state_mut().abi_mut().contexts_mut().reject(root);
 
@@ -477,7 +477,7 @@ mod tests {
         // never registered the queue cannot reach it by naming it. This dies
         // if the grant set is shared between instances.
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut mine, _) = shared_hosted(&engine, GUEST, Arc::clone(&shared));
         let (mut theirs, _) = shared_hosted(&engine, GUEST, Arc::clone(&shared));
         register(&mut mine, b"shared-name");
@@ -506,9 +506,9 @@ mod tests {
         // identifier this guest was granted names a queue of another VM
         // inside the replacement.
         let engine = engine();
-        let first: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
-        let second: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
-        let other = HostCall::new(ContextId::try_from(1).unwrap(), None);
+        let first: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let second: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let other = Invocation::new(ContextId::try_from(1).unwrap(), None);
         let theirs = second
             .register_shared_queue(other, b"other-vm", b"private")
             .unwrap();

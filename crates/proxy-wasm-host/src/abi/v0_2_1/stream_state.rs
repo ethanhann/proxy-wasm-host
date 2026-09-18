@@ -24,13 +24,13 @@ pub enum Access {
 ///
 /// The ABI allows each map and each buffer only in named callbacks, and only
 /// the crate knows which callback is running.
-/// A [`StreamHost`] method receives this so that you can apply those rules.
+/// A [`StreamState`] method receives this so that you can apply those rules.
 /// The two methods that name a resource the guest can read or write receive
 /// an [`Access`] beside it.
-/// Build one with [`HostCall::new`] when you test your own stream host.
+/// Build one with [`Invocation::new`] when you test your own stream state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct HostCall {
+pub struct Invocation {
     /// The effective context, which the guest may have changed with
     /// `proxy_set_effective_context`.
     pub context: ContextId,
@@ -39,7 +39,7 @@ pub struct HostCall {
     pub callback: Option<Callback>,
 }
 
-impl HostCall {
+impl Invocation {
     /// A call on `context` from `callback`.
     pub fn new(context: ContextId, callback: Option<Callback>) -> Self {
         Self { context, callback }
@@ -61,26 +61,26 @@ impl HostCall {
 /// lists for a resource that is not available.
 /// The crate reports the same status when it cannot reach you at all, which
 /// happens when no callback has run, when the guest refused the root context,
-/// and when no stream host is installed.
+/// and when no stream state is installed.
 ///
 /// | Method | Default status | A refusal from the value you return |
 /// |---|---|---|
-/// | [`header_map`](StreamHost::header_map) | [`Status::BadArgument`] | [`Status::BadArgument`] |
-/// | [`buffer`](StreamHost::buffer) | [`Status::NotFound`] | [`Status::NotFound`] |
-/// | [`continue_stream`](StreamHost::continue_stream) | [`Status::Unimplemented`] | none |
-/// | [`close_stream`](StreamHost::close_stream) | [`Status::Unimplemented`] | none |
-/// | [`callout_status`](StreamHost::callout_status) | [`Status::Unimplemented`] | none |
-/// | [`send_local_response`](StreamHost::send_local_response) | [`Status::Unimplemented`] | none |
-/// | [`property`](StreamHost::property) | [`Status::NotFound`] | none |
-/// | [`set_property`](StreamHost::set_property) | [`Status::NotFound`] | none |
-/// | [`call_foreign_function`](StreamHost::call_foreign_function) | [`Status::NotFound`] | none |
+/// | [`header_map`](StreamState::header_map) | [`Status::BadArgument`] | [`Status::BadArgument`] |
+/// | [`buffer`](StreamState::buffer) | [`Status::NotFound`] | [`Status::NotFound`] |
+/// | [`continue_stream`](StreamState::continue_stream) | [`Status::Unimplemented`] | none |
+/// | [`close_stream`](StreamState::close_stream) | [`Status::Unimplemented`] | none |
+/// | [`callout_status`](StreamState::callout_status) | [`Status::Unimplemented`] | none |
+/// | [`send_local_response`](StreamState::send_local_response) | [`Status::Unimplemented`] | none |
+/// | [`property`](StreamState::property) | [`Status::NotFound`] | none |
+/// | [`set_property`](StreamState::set_property) | [`Status::NotFound`] | none |
+/// | [`call_foreign_function`](StreamState::call_foreign_function) | [`Status::NotFound`] | none |
 ///
 /// A guest built with the Rust SDK ends its stream on any status other than
 /// `OK` from most of these functions, and reads `NOT_FOUND` from a buffer or
 /// from a property read as an absent value.
 /// Every default body reports itself through `tracing` at the warn level,
 /// so a method you forgot reaches your log before it reaches a guest.
-pub trait StreamHost: Any + Send {
+pub trait StreamState: Any + Send {
     // `Any` lets the scope give your own value back without a downcast of
     // your own, and it requires `Self: 'static`, which wasmtime requires of
     // store data.
@@ -105,15 +105,15 @@ pub trait StreamHost: Any + Send {
     ///
     /// ```
     /// use proxy_wasm_host::abi::v0_2_1::types::{MapType, Status};
-    /// use proxy_wasm_host::abi::v0_2_1::{Access, Callback, HostCall, StreamHost};
+    /// use proxy_wasm_host::abi::v0_2_1::{Access, Callback, Invocation, StreamState};
     /// use proxy_wasm_host::{HeaderMap, VecHeaderMap};
     ///
     /// struct Request {
     ///     headers: VecHeaderMap,
     /// }
     ///
-    /// impl StreamHost for Request {
-    ///     fn header_map(&mut self, call: HostCall, access: Access, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
+    /// impl StreamState for Request {
+    ///     fn header_map(&mut self, call: Invocation, access: Access, map: MapType) -> Result<&mut dyn HeaderMap, Status> {
     ///         match (map, call.callback, access) {
     ///             (MapType::HttpRequestHeaders, Some(Callback::RequestHeaders), _)
     ///             | (MapType::HttpRequestHeaders, Some(Callback::Log), Access::Read) => {
@@ -132,7 +132,7 @@ pub trait StreamHost: Any + Send {
     /// no map was touched.
     fn header_map(
         &mut self,
-        call: HostCall,
+        call: Invocation,
         access: Access,
         map: MapType,
     ) -> Result<&mut dyn HeaderMap, Status> {
@@ -174,7 +174,7 @@ pub trait StreamHost: Any + Send {
     /// no buffer was touched.
     fn buffer(
         &mut self,
-        call: HostCall,
+        call: Invocation,
         access: Access,
         buffer: BufferType,
     ) -> Result<&mut dyn Buffer, Status> {
@@ -195,7 +195,7 @@ pub trait StreamHost: Any + Send {
     ///
     /// The status you return goes to the guest unchanged, except that
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
-    fn continue_stream(&mut self, call: HostCall, stream: StreamType) -> Result<(), Status> {
+    fn continue_stream(&mut self, call: Invocation, stream: StreamType) -> Result<(), Status> {
         unserved("continue_stream");
         let _ = (call, stream);
         Err(Status::Unimplemented)
@@ -210,7 +210,7 @@ pub trait StreamHost: Any + Send {
     ///
     /// The status you return goes to the guest unchanged, except that
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
-    fn close_stream(&mut self, call: HostCall, stream: StreamType) -> Result<(), Status> {
+    fn close_stream(&mut self, call: Invocation, stream: StreamType) -> Result<(), Status> {
         unserved("close_stream");
         let _ = (call, stream);
         Err(Status::Unimplemented)
@@ -230,7 +230,7 @@ pub trait StreamHost: Any + Send {
     ///
     /// The status you return goes to the guest unchanged, except that
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
-    fn callout_status(&mut self, call: HostCall) -> Result<CalloutStatus<'_>, Status> {
+    fn callout_status(&mut self, call: Invocation) -> Result<CalloutStatus<'_>, Status> {
         unserved("callout_status");
         let _ = call;
         Err(Status::Unimplemented)
@@ -252,7 +252,7 @@ pub trait StreamHost: Any + Send {
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
     fn send_local_response(
         &mut self,
-        call: HostCall,
+        call: Invocation,
         response: LocalResponse<'_>,
     ) -> Result<(), Status> {
         unserved("send_local_response");
@@ -277,7 +277,7 @@ pub trait StreamHost: Any + Send {
     /// you hold and cannot serialize.
     /// A guest built with the Rust SDK reads `NOT_FOUND` as an absent value
     /// and stops on anything else.
-    fn property(&mut self, call: HostCall, path: &[&[u8]]) -> Result<Vec<u8>, Status> {
+    fn property(&mut self, call: Invocation, path: &[&[u8]]) -> Result<Vec<u8>, Status> {
         unserved("property");
         let _ = (call, path);
         Err(Status::NotFound)
@@ -294,7 +294,12 @@ pub trait StreamHost: Any + Send {
     /// default body does.
     /// A guest built with the Rust SDK stops on any status but `OK`, so
     /// serve this if your guests write properties.
-    fn set_property(&mut self, call: HostCall, path: &[&[u8]], value: &[u8]) -> Result<(), Status> {
+    fn set_property(
+        &mut self,
+        call: Invocation,
+        path: &[&[u8]],
+        value: &[u8],
+    ) -> Result<(), Status> {
         unserved("set_property");
         let _ = (call, path, value);
         Err(Status::NotFound)
@@ -311,7 +316,7 @@ pub trait StreamHost: Any + Send {
     /// default body does.
     fn call_foreign_function(
         &mut self,
-        call: HostCall,
+        call: Invocation,
         request: ForeignCall<'_>,
     ) -> Result<Vec<u8>, Status> {
         unserved("call_foreign_function");
@@ -320,11 +325,11 @@ pub trait StreamHost: Any + Send {
     }
 }
 
-/// A stream host that serves nothing, for the callbacks of a root context.
+/// A stream state that serves nothing, for the callbacks of a root context.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct NoStream;
 
-impl StreamHost for NoStream {}
+impl StreamState for NoStream {}
 
 #[cfg(test)]
 mod tests {
@@ -334,10 +339,10 @@ mod tests {
 
     struct Empty;
 
-    impl StreamHost for Empty {}
+    impl StreamState for Empty {}
 
-    fn call() -> HostCall {
-        HostCall::new(
+    fn call() -> Invocation {
+        Invocation::new(
             ContextId::try_from(1).unwrap(),
             Some(Callback::RequestHeaders),
         )
@@ -385,7 +390,7 @@ mod tests {
         assert_eq!(results, (Some(Status::NotFound), Some(Status::NotFound)));
     }
 
-    fn unimplemented_answers(stream: &mut dyn StreamHost) -> [Option<Status>; 4] {
+    fn unimplemented_answers(stream: &mut dyn StreamState) -> [Option<Status>; 4] {
         [
             stream
                 .continue_stream(call(), StreamType::HttpRequest)
@@ -398,7 +403,7 @@ mod tests {
         ]
     }
 
-    fn not_found_answers(stream: &mut dyn StreamHost) -> [Option<Status>; 3] {
+    fn not_found_answers(stream: &mut dyn StreamState) -> [Option<Status>; 3] {
         [
             stream.property(call(), &[b"route"]).err(),
             stream.set_property(call(), &[b"route"], b"main").err(),

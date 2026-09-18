@@ -4,7 +4,7 @@ use std::sync::{Mutex, PoisonError};
 
 use crate::abi::v0_2_1::types::{MetricType, Status};
 use crate::abi::v0_2_1::{
-    HostCall, MemoryServices, MetricId, QueueId, SharedServices, SharedValue,
+    InMemoryStore, Invocation, MetricId, QueueId, SharedServices, SharedValue,
 };
 
 /// One call a body made into the shared services.
@@ -26,11 +26,11 @@ pub(crate) enum SharedCall {
 /// refuse them all with one status.
 ///
 /// A test keeps its own `Arc` of this and passes a clone to
-/// `HostServices::with_shared`, because the trait is not downcastable.
+/// `VmServices::with_shared`, because the trait is not downcastable.
 #[derive(Debug, Default)]
 pub(crate) struct RecordingServices {
-    inner: MemoryServices,
-    calls: Mutex<Vec<(HostCall, SharedCall)>>,
+    inner: InMemoryStore,
+    calls: Mutex<Vec<(Invocation, SharedCall)>>,
     refusal: Option<Status>,
 }
 
@@ -45,14 +45,14 @@ impl RecordingServices {
         self
     }
 
-    pub(crate) fn calls(&self) -> Vec<(HostCall, SharedCall)> {
+    pub(crate) fn calls(&self) -> Vec<(Invocation, SharedCall)> {
         self.calls
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
-    fn record<T>(&self, call: HostCall, made: SharedCall, answer: T) -> Result<T, Status> {
+    fn record<T>(&self, call: Invocation, made: SharedCall, answer: T) -> Result<T, Status> {
         self.calls
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -67,7 +67,7 @@ impl RecordingServices {
 impl SharedServices for RecordingServices {
     fn get_shared_data(
         &self,
-        call: HostCall,
+        call: Invocation,
         vm_id: &[u8],
         key: &[u8],
     ) -> Result<SharedValue, Status> {
@@ -78,7 +78,7 @@ impl SharedServices for RecordingServices {
 
     fn set_shared_data(
         &self,
-        call: HostCall,
+        call: Invocation,
         vm_id: &[u8],
         key: &[u8],
         value: &[u8],
@@ -91,7 +91,7 @@ impl SharedServices for RecordingServices {
 
     fn register_shared_queue(
         &self,
-        call: HostCall,
+        call: Invocation,
         vm_id: &[u8],
         name: &[u8],
     ) -> Result<QueueId, Status> {
@@ -102,7 +102,7 @@ impl SharedServices for RecordingServices {
 
     fn resolve_shared_queue(
         &self,
-        call: HostCall,
+        call: Invocation,
         vm_id: &[u8],
         name: &[u8],
     ) -> Result<QueueId, Status> {
@@ -113,7 +113,7 @@ impl SharedServices for RecordingServices {
 
     fn enqueue_shared_queue(
         &self,
-        call: HostCall,
+        call: Invocation,
         queue: QueueId,
         value: &[u8],
     ) -> Result<(), Status> {
@@ -122,7 +122,7 @@ impl SharedServices for RecordingServices {
         self.inner.enqueue_shared_queue(call, queue, value)
     }
 
-    fn dequeue_shared_queue(&self, call: HostCall, queue: QueueId) -> Result<Vec<u8>, Status> {
+    fn dequeue_shared_queue(&self, call: Invocation, queue: QueueId) -> Result<Vec<u8>, Status> {
         let made = SharedCall::Dequeue(queue);
         self.record(call, made, ())?;
         self.inner.dequeue_shared_queue(call, queue)
@@ -130,7 +130,7 @@ impl SharedServices for RecordingServices {
 
     fn define_metric(
         &self,
-        call: HostCall,
+        call: Invocation,
         vm_id: &[u8],
         kind: MetricType,
         name: &[u8],
@@ -140,19 +140,24 @@ impl SharedServices for RecordingServices {
         self.inner.define_metric(call, vm_id, kind, name)
     }
 
-    fn record_metric(&self, call: HostCall, metric: MetricId, value: u64) -> Result<(), Status> {
+    fn record_metric(&self, call: Invocation, metric: MetricId, value: u64) -> Result<(), Status> {
         let made = SharedCall::Record(metric, value);
         self.record(call, made, ())?;
         self.inner.record_metric(call, metric, value)
     }
 
-    fn increment_metric(&self, call: HostCall, metric: MetricId, delta: i64) -> Result<(), Status> {
+    fn increment_metric(
+        &self,
+        call: Invocation,
+        metric: MetricId,
+        delta: i64,
+    ) -> Result<(), Status> {
         let made = SharedCall::Increment(metric, delta);
         self.record(call, made, ())?;
         self.inner.increment_metric(call, metric, delta)
     }
 
-    fn get_metric(&self, call: HostCall, metric: MetricId) -> Result<u64, Status> {
+    fn get_metric(&self, call: Invocation, metric: MetricId) -> Result<u64, Status> {
         let made = SharedCall::GetMetric(metric);
         self.record(call, made, ())?;
         self.inner.get_metric(call, metric)

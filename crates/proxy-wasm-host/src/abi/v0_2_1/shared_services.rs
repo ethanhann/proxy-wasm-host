@@ -1,16 +1,16 @@
 //! The state a VM shares with every other VM that holds the same value.
 
 mod ids;
-mod memory;
+mod store;
 
 use std::num::NonZeroU32;
 
-use crate::abi::v0_2_1::HostCall;
+use crate::abi::v0_2_1::Invocation;
 use crate::abi::v0_2_1::types::{MetricType, Status};
 use crate::abi::v0_2_1::unserved::unserved;
 
 pub use ids::{InvalidMetricId, InvalidQueueId, MetricId, QueueId};
-pub use memory::{Limits as MemoryLimits, MemoryServices};
+pub use store::{InMemoryStore, InMemoryStoreLimits};
 
 /// One value of the shared data, with the number that guards a write to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,8 +41,8 @@ impl SharedValue {
 /// behind a lock, and a method may run while another thread holds the same
 /// value.
 /// You supply one through
-/// [`HostServices::with_shared`](crate::runtime::HostServices::with_shared),
-/// which defaults to [`MemoryServices`].
+/// [`VmServices::with_shared`](crate::runtime::VmServices::with_shared),
+/// which defaults to [`InMemoryStore`].
 ///
 /// The shared data, the queues, and the metrics are separated by the VM id
 /// rather than by the context, because a context identifier starts at one in
@@ -51,7 +51,7 @@ impl SharedValue {
 /// same control the ABI gives you for a queue.
 /// A VM id you leave empty puts every plugin of that process in one
 /// namespace, so set one per plugin through
-/// [`HostServices::with_vm_id`](crate::runtime::HostServices::with_vm_id).
+/// [`VmServices::with_vm_id`](crate::runtime::VmServices::with_vm_id).
 ///
 /// The crate refuses a queue or a metric identifier that the guest did not
 /// obtain through a register, a resolve, or a define in this instance, so an
@@ -75,7 +75,7 @@ pub trait SharedServices: Send + Sync {
     /// the default body does.
     fn get_shared_data(
         &self,
-        call: HostCall,
+        call: Invocation,
         vm_id: &[u8],
         key: &[u8],
     ) -> Result<SharedValue, Status> {
@@ -99,7 +99,7 @@ pub trait SharedServices: Send + Sync {
     /// A guest built with the Rust SDK stops on that status.
     fn set_shared_data(
         &self,
-        call: HostCall,
+        call: Invocation,
         vm_id: &[u8],
         key: &[u8],
         value: &[u8],
@@ -123,7 +123,7 @@ pub trait SharedServices: Send + Sync {
     /// serve this if your guests register queues.
     fn register_shared_queue(
         &self,
-        call: HostCall,
+        call: Invocation,
         vm_id: &[u8],
         name: &[u8],
     ) -> Result<QueueId, Status> {
@@ -140,7 +140,7 @@ pub trait SharedServices: Send + Sync {
     /// the default body does.
     fn resolve_shared_queue(
         &self,
-        call: HostCall,
+        call: Invocation,
         vm_id: &[u8],
         name: &[u8],
     ) -> Result<QueueId, Status> {
@@ -157,7 +157,7 @@ pub trait SharedServices: Send + Sync {
     /// default body does.
     fn enqueue_shared_queue(
         &self,
-        call: HostCall,
+        call: Invocation,
         queue: QueueId,
         value: &[u8],
     ) -> Result<(), Status> {
@@ -177,7 +177,7 @@ pub trait SharedServices: Send + Sync {
     /// Report [`Status::Empty`] for a queue that holds nothing and
     /// [`Status::NotFound`] for one you do not hold, which the default body
     /// does.
-    fn dequeue_shared_queue(&self, call: HostCall, queue: QueueId) -> Result<Vec<u8>, Status> {
+    fn dequeue_shared_queue(&self, call: Invocation, queue: QueueId) -> Result<Vec<u8>, Status> {
         let _ = (call, queue);
         unserved("dequeue_shared_queue");
         Err(Status::NotFound)
@@ -195,7 +195,7 @@ pub trait SharedServices: Send + Sync {
     /// serve this if your guests define metrics.
     fn define_metric(
         &self,
-        call: HostCall,
+        call: Invocation,
         vm_id: &[u8],
         kind: MetricType,
         name: &[u8],
@@ -214,7 +214,7 @@ pub trait SharedServices: Send + Sync {
     ///
     /// Report [`Status::NotFound`] for a metric you do not hold, which the
     /// default body does.
-    fn record_metric(&self, call: HostCall, metric: MetricId, value: u64) -> Result<(), Status> {
+    fn record_metric(&self, call: Invocation, metric: MetricId, value: u64) -> Result<(), Status> {
         let _ = (call, metric, value);
         unserved("record_metric");
         Err(Status::NotFound)
@@ -227,7 +227,12 @@ pub trait SharedServices: Send + Sync {
     /// Report [`Status::BadArgument`] when the delta cannot be applied, such
     /// as a negative delta on a counter, and [`Status::NotFound`] for a
     /// metric you do not hold, which the default body does.
-    fn increment_metric(&self, call: HostCall, metric: MetricId, delta: i64) -> Result<(), Status> {
+    fn increment_metric(
+        &self,
+        call: Invocation,
+        metric: MetricId,
+        delta: i64,
+    ) -> Result<(), Status> {
         let _ = (call, metric, delta);
         unserved("increment_metric");
         Err(Status::NotFound)
@@ -240,7 +245,7 @@ pub trait SharedServices: Send + Sync {
     /// Report [`Status::NotFound`] for a metric you do not hold, which the
     /// default body does, and [`Status::BadArgument`] for a kind with no
     /// single value, such as a histogram.
-    fn get_metric(&self, call: HostCall, metric: MetricId) -> Result<u64, Status> {
+    fn get_metric(&self, call: Invocation, metric: MetricId) -> Result<u64, Status> {
         let _ = (call, metric);
         unserved("get_metric");
         Err(Status::NotFound)

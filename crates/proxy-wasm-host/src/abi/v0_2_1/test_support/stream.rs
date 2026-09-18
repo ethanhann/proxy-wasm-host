@@ -1,4 +1,4 @@
-//! The stream host double that the ABI layer's tests share.
+//! The stream state double that the ABI layer's tests share.
 
 mod host;
 
@@ -9,7 +9,7 @@ use super::doubles::{Ranges, ReadOnlyBuffer, ReadOnlyMap, RecordingBuffer, owned
 use crate::Buffer;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::types::{BufferType, MapType, Status, StreamType};
-use crate::abi::v0_2_1::{Access, ForeignCall, HostCall, LocalResponse};
+use crate::abi::v0_2_1::{Access, ForeignCall, Invocation, LocalResponse};
 use crate::header_map::HeaderMap;
 use crate::runtime::HostState;
 
@@ -17,7 +17,7 @@ use crate::runtime::HostState;
 pub(crate) type Path = Vec<Vec<u8>>;
 
 /// One write a body made to a property.
-pub(crate) type PropertyWrite = (HostCall, Path, Vec<u8>);
+pub(crate) type PropertyWrite = (Invocation, Path, Vec<u8>);
 
 /// A stream operation the guest asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,25 +26,25 @@ pub(crate) enum Operation {
     Close(StreamType),
 }
 
-/// A stream host that serves what it was given and records every call.
+/// A stream state that serves what it was given and records every call.
 pub(crate) struct RecordingStream {
     maps: HashMap<MapType, Box<dyn HeaderMap + Send>>,
     map_refusals: HashMap<MapType, Status>,
-    calls: Vec<(HostCall, Access, MapType)>,
+    calls: Vec<(Invocation, Access, MapType)>,
     buffers: HashMap<BufferType, Box<dyn Buffer + Send>>,
     buffer_refusals: HashMap<BufferType, Status>,
-    buffer_calls: Vec<(HostCall, Access, BufferType)>,
-    operations: Vec<(HostCall, Operation)>,
+    buffer_calls: Vec<(Invocation, Access, BufferType)>,
+    operations: Vec<(Invocation, Operation)>,
     operation_refusal: Option<Status>,
     callout: Option<(u32, Vec<u8>)>,
-    callout_calls: Vec<HostCall>,
-    local_response: Option<(HostCall, LocalResponse<'static>)>,
+    callout_calls: Vec<Invocation>,
+    local_response: Option<(Invocation, LocalResponse<'static>)>,
     ranges: Ranges,
     properties: HashMap<Path, Vec<u8>>,
-    property_reads: Vec<(HostCall, Path)>,
+    property_reads: Vec<(Invocation, Path)>,
     property_writes: Vec<PropertyWrite>,
     foreign: HashMap<Vec<u8>, Vec<u8>>,
-    foreign_calls: Vec<(HostCall, ForeignCall<'static>)>,
+    foreign_calls: Vec<(Invocation, ForeignCall<'static>)>,
     refuse_with_ok: bool,
 }
 
@@ -127,7 +127,7 @@ impl RecordingStream {
         self
     }
 
-    pub(crate) fn property_reads(&self) -> &[(HostCall, Path)] {
+    pub(crate) fn property_reads(&self) -> &[(Invocation, Path)] {
         &self.property_reads
     }
 
@@ -135,7 +135,7 @@ impl RecordingStream {
         &self.property_writes
     }
 
-    pub(crate) fn foreign_calls(&self) -> &[(HostCall, ForeignCall<'static>)] {
+    pub(crate) fn foreign_calls(&self) -> &[(Invocation, ForeignCall<'static>)] {
         &self.foreign_calls
     }
 
@@ -185,7 +185,7 @@ impl RecordingStream {
     pub(crate) fn pairs_in(state: &mut HostState) -> Vec<(String, String)> {
         state
             .abi_mut()
-            .stream_host_as::<Self>()
+            .stream_state_as::<Self>()
             .expect("a RecordingStream is installed")
             .pairs(MapType::HttpRequestHeaders)
     }
@@ -194,28 +194,28 @@ impl RecordingStream {
     pub(crate) fn bytes_in(state: &mut HostState, buffer: BufferType) -> Vec<u8> {
         state
             .abi_mut()
-            .stream_host_as::<Self>()
+            .stream_state_as::<Self>()
             .expect("a RecordingStream is installed")
             .bytes(buffer)
     }
 
-    pub(crate) fn calls(&self) -> &[(HostCall, Access, MapType)] {
+    pub(crate) fn calls(&self) -> &[(Invocation, Access, MapType)] {
         &self.calls
     }
 
-    pub(crate) fn buffer_calls(&self) -> &[(HostCall, Access, BufferType)] {
+    pub(crate) fn buffer_calls(&self) -> &[(Invocation, Access, BufferType)] {
         &self.buffer_calls
     }
 
-    pub(crate) fn operations(&self) -> &[(HostCall, Operation)] {
+    pub(crate) fn operations(&self) -> &[(Invocation, Operation)] {
         &self.operations
     }
 
-    pub(crate) fn callout_calls(&self) -> &[HostCall] {
+    pub(crate) fn callout_calls(&self) -> &[Invocation] {
         &self.callout_calls
     }
 
-    pub(crate) fn local_response(&self) -> Option<&(HostCall, LocalResponse<'static>)> {
+    pub(crate) fn local_response(&self) -> Option<&(Invocation, LocalResponse<'static>)> {
         self.local_response.as_ref()
     }
 
@@ -223,11 +223,11 @@ impl RecordingStream {
     pub(crate) fn take(state: &mut HostState) -> Self {
         let boxed = state
             .abi_mut()
-            .take_stream_host()
-            .expect("a stream host is installed");
+            .take_stream_state()
+            .expect("a stream state is installed");
         let any: Box<dyn Any + Send> = boxed;
         *any.downcast::<Self>()
-            .expect("the stream host is a RecordingStream")
+            .expect("the stream state is a RecordingStream")
     }
 }
 

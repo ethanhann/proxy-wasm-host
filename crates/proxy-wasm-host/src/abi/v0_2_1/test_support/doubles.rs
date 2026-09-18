@@ -1,4 +1,4 @@
-//! The header maps and buffers that the stream host double lends.
+//! The header maps and buffers that the stream state double lends.
 
 use std::borrow::Cow;
 use std::ops::ControlFlow;

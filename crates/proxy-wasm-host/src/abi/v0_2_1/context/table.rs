@@ -5,7 +5,9 @@ use std::num::NonZeroU32;
 use std::time::Duration;
 
 use crate::Error;
-use crate::abi::v0_2_1::{Callback, ContextId, ContextProblem, ContextState, ContextType, Plugin};
+use crate::abi::v0_2_1::{
+    Callback, ContextId, ContextProblem, ContextState, ContextType, PluginConfig,
+};
 
 /// The live contexts of one instance.
 #[derive(Debug)]
@@ -22,7 +24,7 @@ struct ContextEntry {
     parent: Option<ContextId>,
     state: ContextState,
     rejected: bool,
-    plugin: Option<Plugin>,
+    plugin: Option<PluginConfig>,
     tick_period: Option<Duration>,
 }
 
@@ -173,7 +175,7 @@ impl ContextTable {
     }
 
     /// Records the plugin of a root context, and reports whether it did.
-    pub(crate) fn set_plugin(&mut self, root: ContextId, plugin: Plugin) -> bool {
+    pub(crate) fn set_plugin(&mut self, root: ContextId, plugin: PluginConfig) -> bool {
         match self.entries.get_mut(&root) {
             Some(entry) if entry.context_type == ContextType::Root => {
                 entry.plugin = Some(plugin);
@@ -184,7 +186,7 @@ impl ContextTable {
     }
 
     /// The plugin of the root context of `id`.
-    pub(crate) fn plugin(&self, id: ContextId) -> Option<&Plugin> {
+    pub(crate) fn plugin(&self, id: ContextId) -> Option<&PluginConfig> {
         let root = self.root_of(id)?;
         self.entries.get(&root)?.plugin.as_ref()
     }
@@ -415,7 +417,7 @@ mod tests {
     fn a_plugin_is_recorded_on_a_root_and_read_through_its_streams() {
         // Arrange
         let (mut table, root, stream) = table_with_root_and_stream();
-        let plugin = Plugin::new().with_name(b"auth".to_vec());
+        let plugin = PluginConfig::new().with_name(b"auth".to_vec());
 
         // Act
         let recorded = table.set_plugin(root, plugin);
@@ -432,7 +434,7 @@ mod tests {
         let (mut table, root, stream) = table_with_root_and_stream();
 
         // Act
-        let recorded = table.set_plugin(stream, Plugin::new().with_name(b"auth".to_vec()));
+        let recorded = table.set_plugin(stream, PluginConfig::new().with_name(b"auth".to_vec()));
 
         // Assert
         assert!(!recorded);
@@ -511,7 +513,7 @@ mod tests {
         // Arrange
         let mut table = ContextTable::new();
         let root = table.create(None).unwrap();
-        table.set_plugin(root, Plugin::new().with_name(b"auth".to_vec()));
+        table.set_plugin(root, PluginConfig::new().with_name(b"auth".to_vec()));
         table.set_tick_period(root, Some(Duration::from_millis(250)));
 
         // Act

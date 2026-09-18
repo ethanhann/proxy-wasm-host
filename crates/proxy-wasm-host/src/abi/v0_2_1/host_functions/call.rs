@@ -1,7 +1,7 @@
 //! The steps every host function that reaches the embedder shares.
 //!
 //! A host function resolves the effective context, refuses one whose root the
-//! guest rejected, and reaches the stream host the scope installed or the
+//! guest rejected, and reaches the stream state the scope installed or the
 //! shared services the embedder supplied.
 //! When any of those three fails, the guest receives the status its own ABI
 //! section lists for a resource that is not available, which the caller
@@ -13,7 +13,7 @@ use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::SharedServices;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::Status;
-use crate::abi::v0_2_1::{ContextId, HostCall, StreamHost};
+use crate::abi::v0_2_1::{ContextId, Invocation, StreamState};
 use crate::runtime::HostState;
 
 /// The effective context, refused when the guest rejected its root or the
@@ -26,14 +26,14 @@ pub(super) fn context(state: &HostState, absent: Status) -> Result<ContextId, Fa
     }
 }
 
-/// The call to report and the stream host to ask.
+/// The call to report and the stream state to ask.
 pub(super) fn with_stream(
     state: &mut HostState,
     absent: Status,
-) -> Result<(HostCall, &mut dyn StreamHost), Failure> {
+) -> Result<(Invocation, &mut dyn StreamState), Failure> {
     let context = context(state, absent)?;
-    let call = HostCall::new(context, state.abi().current_callback());
-    let stream = state.abi_mut().stream_host().ok_or(absent)?;
+    let call = Invocation::new(context, state.abi().current_callback());
+    let stream = state.abi_mut().stream_state().ok_or(absent)?;
     Ok((call, stream))
 }
 
@@ -54,11 +54,11 @@ pub(super) fn settle(state: &mut HostState) {
 pub(super) fn with_shared(
     state: &mut HostState,
     absent: Status,
-) -> Result<(HostCall, Arc<dyn SharedServices>), Failure> {
+) -> Result<(Invocation, Arc<dyn SharedServices>), Failure> {
     let shared = Arc::clone(state.services().shared());
     state.abi_mut().settle_grants(&shared);
     let context = context(state, absent)?;
-    let call = HostCall::new(context, state.abi().current_callback());
+    let call = Invocation::new(context, state.abi().current_callback());
     Ok((call, shared))
 }
 
@@ -154,7 +154,7 @@ mod tests {
         let found = with_stream(instance.state_mut(), Status::NotFound);
 
         // Assert
-        let (call, _) = found.expect("a stream host is installed");
+        let (call, _) = found.expect("a stream state is installed");
         assert_eq!(call.context, root);
         assert_eq!(call.callback, Some(Callback::RequestHeaders));
     }

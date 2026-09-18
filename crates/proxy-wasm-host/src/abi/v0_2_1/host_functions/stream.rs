@@ -144,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn no_stream_host_and_no_effective_context_both_report_unimplemented() {
+    fn no_stream_state_and_no_effective_context_both_report_unimplemented() {
         // Arrange
         let engine = engine();
         let (mut without_stream, _) = unhosted(&engine, GUEST);
@@ -170,7 +170,7 @@ mod tests {
         instance
             .state_mut()
             .abi_mut()
-            .set_stream_host(Box::new(NoStream));
+            .set_stream_state(Box::new(NoStream));
 
         // Act
         let results = [

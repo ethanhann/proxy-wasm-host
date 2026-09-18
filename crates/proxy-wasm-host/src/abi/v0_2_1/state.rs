@@ -4,7 +4,7 @@ use std::any::Any;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::abi::v0_2_1::{Callback, ContextTable, MetricId, QueueId, SharedServices, StreamHost};
+use crate::abi::v0_2_1::{Callback, ContextTable, MetricId, QueueId, SharedServices, StreamState};
 use crate::runtime::HostState;
 
 /// Reaches the ABI state the store data holds.
@@ -35,7 +35,7 @@ impl AbiAccess for HostState {
 /// The runtime holds one of these in its store data and never reads inside
 /// it, so the ABI layer adds state without a change under `runtime/`.
 pub(crate) struct AbiState {
-    stream_host: Option<Box<dyn StreamHost>>,
+    stream_state: Option<Box<dyn StreamState>>,
     contexts: ContextTable,
     current_callback: Option<Callback>,
     queues: BTreeSet<QueueId>,
@@ -46,7 +46,7 @@ pub(crate) struct AbiState {
 impl AbiState {
     pub(crate) fn new() -> Self {
         Self {
-            stream_host: None,
+            stream_state: None,
             contexts: ContextTable::new(),
             current_callback: None,
             queues: BTreeSet::new(),
@@ -98,30 +98,30 @@ impl AbiState {
         self.metrics.contains(&metric)
     }
 
-    pub(crate) fn stream_host(&mut self) -> Option<&mut dyn StreamHost> {
-        self.stream_host.as_deref_mut()
+    pub(crate) fn stream_state(&mut self) -> Option<&mut dyn StreamState> {
+        self.stream_state.as_deref_mut()
     }
 
-    pub(crate) fn set_stream_host(&mut self, stream: Box<dyn StreamHost>) {
-        self.stream_host = Some(stream);
+    pub(crate) fn set_stream_state(&mut self, stream: Box<dyn StreamState>) {
+        self.stream_state = Some(stream);
     }
 
-    pub(crate) fn take_stream_host(&mut self) -> Option<Box<dyn StreamHost>> {
-        self.stream_host.take()
+    pub(crate) fn take_stream_state(&mut self) -> Option<Box<dyn StreamState>> {
+        self.stream_state.take()
     }
 
-    /// The installed stream host as the concrete type `enter` stored, for a
+    /// The installed stream state as the concrete type `enter` stored, for a
     /// change.
-    pub(crate) fn stream_host_as<H: StreamHost>(&mut self) -> Option<&mut H> {
-        let stream: &mut dyn StreamHost = self.stream_host.as_deref_mut()?;
+    pub(crate) fn stream_state_as<H: StreamState>(&mut self) -> Option<&mut H> {
+        let stream: &mut dyn StreamState = self.stream_state.as_deref_mut()?;
         let any: &mut dyn Any = stream;
         any.downcast_mut::<H>()
     }
 
-    /// The installed stream host as the concrete type `enter` stored, for a
+    /// The installed stream state as the concrete type `enter` stored, for a
     /// read.
-    pub(crate) fn stream_host_as_ref<H: StreamHost>(&self) -> Option<&H> {
-        let stream: &dyn StreamHost = self.stream_host.as_deref()?;
+    pub(crate) fn stream_state_as_ref<H: StreamState>(&self) -> Option<&H> {
+        let stream: &dyn StreamState = self.stream_state.as_deref()?;
         let any: &dyn Any = stream;
         any.downcast_ref::<H>()
     }
@@ -164,24 +164,24 @@ mod tests {
         // Assert
         assert_eq!(first.get(), 1);
         assert!(state.current_callback().is_none());
-        assert!(state.stream_host().is_none());
+        assert!(state.stream_state().is_none());
     }
 
     #[test]
-    fn the_stream_host_downcasts_for_a_read_and_for_a_change() {
+    fn the_stream_state_downcasts_for_a_read_and_for_a_change() {
         // Arrange
         let mut state = state();
-        state.set_stream_host(Box::new(RecordingStream::new()));
+        state.set_stream_state(Box::new(RecordingStream::new()));
 
         // Act
         let found = (
-            state.stream_host_as::<RecordingStream>().is_some(),
-            state.stream_host_as::<NoStream>().is_some(),
+            state.stream_state_as::<RecordingStream>().is_some(),
+            state.stream_state_as::<NoStream>().is_some(),
         );
 
         // Assert
         assert_eq!(found, (true, false));
-        assert!(state.stream_host_as_ref::<RecordingStream>().is_some());
+        assert!(state.stream_state_as_ref::<RecordingStream>().is_some());
     }
 
     #[test]

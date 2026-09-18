@@ -3,9 +3,9 @@
 use crate::Error;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
-use crate::abi::v0_2_1::{Callback, ContextId, ContextState, StreamHost};
+use crate::abi::v0_2_1::{Callback, ContextId, ContextState, StreamState};
 
-impl<H: StreamHost> CallScope<'_, H> {
+impl<H: StreamState> CallScope<'_, H> {
     /// Calls `proxy_on_done`.
     ///
     /// `true` marks the context done.

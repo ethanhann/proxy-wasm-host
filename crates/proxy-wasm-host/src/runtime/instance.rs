@@ -5,7 +5,7 @@ use wasmtime::{Store, StoreLimitsBuilder, TypedFunc, WasmParams, WasmResults};
 use crate::Error;
 use crate::runtime::guest_call::{Budget, call_on};
 use crate::runtime::memory::{GuestMemory, GuestPtr, GuestSlice, split};
-use crate::runtime::{Engine, HostServices, HostState, Limits, Module, alloc};
+use crate::runtime::{Engine, HostState, Limits, Module, VmServices, alloc};
 
 const MEMORY_EXPORT: &str = "memory";
 
@@ -42,7 +42,7 @@ impl Instance {
     pub fn new(
         engine: &Engine,
         module: &Module,
-        services: HostServices,
+        services: VmServices,
         limits: &Limits,
     ) -> Result<Self, Error> {
         if limits.fuel().is_some() && !engine.fuel_enabled() {
@@ -104,12 +104,12 @@ impl Instance {
     }
 
     /// The services the guest uses.
-    pub fn services(&self) -> &HostServices {
+    pub fn services(&self) -> &VmServices {
         self.store.data().services()
     }
 
     /// The services the guest uses, for changes between calls.
-    pub fn services_mut(&mut self) -> &mut HostServices {
+    pub fn services_mut(&mut self) -> &mut VmServices {
         self.store.data_mut().services_mut()
     }
 

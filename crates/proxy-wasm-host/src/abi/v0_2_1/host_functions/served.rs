@@ -19,6 +19,6 @@
 pub(crate) enum Served<T> {
     /// The crate answers, from what the embedder supplied before the call.
     Crate(T),
-    /// The embedder answers, through the stream host.
+    /// The embedder answers, through the stream state.
     Embedder,
 }

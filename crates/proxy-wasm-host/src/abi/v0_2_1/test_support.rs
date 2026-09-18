@@ -11,7 +11,7 @@ use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{Callback, ContextId};
 use crate::runtime::test_support::{RecordingSink, instance, wat_bytes};
-use crate::runtime::{Engine, GuestPtr, GuestSlice, HostServices, Instance, Limits, Module};
+use crate::runtime::{Engine, GuestPtr, GuestSlice, Instance, Limits, Module, VmServices};
 
 /// The status an `i32` from a host function wrapper stands for.
 pub(crate) fn status(value: i32) -> Status {
@@ -34,12 +34,12 @@ pub(crate) fn hosted(engine: &Engine, wat: &str, stream: RecordingStream) -> (In
     instance
         .state_mut()
         .abi_mut()
-        .set_stream_host(Box::new(stream));
+        .set_stream_state(Box::new(stream));
     (instance, root)
 }
 
 /// An instance of `wat` with a root context, an effective context, and no
-/// stream host.
+/// stream state.
 pub(crate) fn unhosted(engine: &Engine, wat: &str) -> (Instance, ContextId) {
     let mut instance = instance(engine, wat).unwrap();
     let state = instance.state_mut();
@@ -51,7 +51,7 @@ pub(crate) fn unhosted(engine: &Engine, wat: &str) -> (Instance, ContextId) {
     (instance, root)
 }
 
-/// An instance of `wat` with no context and no stream host, as a guest sees
+/// An instance of `wat` with no context and no stream state, as a guest sees
 /// before any callback has run.
 pub(crate) fn bare(engine: &Engine, wat: &str) -> Instance {
     instance(engine, wat).unwrap()
@@ -68,7 +68,7 @@ pub(crate) fn shared_hosted(
     shared: std::sync::Arc<dyn crate::abi::v0_2_1::SharedServices>,
 ) -> (Instance, ContextId) {
     let module = Module::new(engine, &wat_bytes(wat)).unwrap();
-    let services = HostServices::new(std::sync::Arc::new(RecordingSink::default()))
+    let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
         .with_vm_id(VM_ID.to_vec())
         .with_shared(shared);
     let mut instance = Instance::new(engine, &module, services, &Limits::default()).unwrap();
@@ -82,8 +82,8 @@ pub(crate) fn shared_hosted(
 }
 
 /// A call from the request header callback on context one.
-pub(crate) fn call() -> crate::abi::v0_2_1::HostCall {
-    crate::abi::v0_2_1::HostCall::new(
+pub(crate) fn call() -> crate::abi::v0_2_1::Invocation {
+    crate::abi::v0_2_1::Invocation::new(
         ContextId::try_from(1).unwrap(),
         Some(Callback::RequestHeaders),
     )

@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::abi::v0_2_1::types::LogLevel;
-use crate::abi::v0_2_1::{MemoryServices, SharedServices};
+use crate::abi::v0_2_1::{InMemoryStore, SharedServices};
 
 /// Where guest log output goes.
 ///
@@ -72,10 +72,10 @@ impl Clock for SystemClock {
 ///
 /// The inputs of one plugin live elsewhere.
 /// The plugin name, the plugin root id, and the plugin configuration reach the
-/// crate through [`Plugin`](crate::abi::v0_2_1::Plugin), because the ABI reads
+/// crate through [`PluginConfig`](crate::abi::v0_2_1::PluginConfig), because the ABI reads
 /// them for one root context.
 #[derive(Clone)]
-pub struct HostServices {
+pub struct VmServices {
     log: Arc<dyn LogSink>,
     clock: Arc<dyn Clock>,
     environment: Vec<(Vec<u8>, Vec<u8>)>,
@@ -85,9 +85,9 @@ pub struct HostServices {
     shared: Arc<dyn SharedServices>,
 }
 
-impl std::fmt::Debug for HostServices {
+impl std::fmt::Debug for VmServices {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HostServices")
+        f.debug_struct("VmServices")
             .field("log_level", &self.log_level)
             .field("environment_variables", &self.environment.len())
             .field("vm_id", &String::from_utf8_lossy(&self.vm_id))
@@ -96,16 +96,16 @@ impl std::fmt::Debug for HostServices {
     }
 }
 
-impl HostServices {
+impl VmServices {
     /// Services that log to `log`, read [`SystemClock`], report
-    /// [`LogLevel::Info`], hold a [`MemoryServices`], and have no
+    /// [`LogLevel::Info`], hold a [`InMemoryStore`], and have no
     /// environment, no VM id, and no VM configuration.
     ///
     /// The store this installs is private to the value you get back, so two
     /// instances built with two of these share no queue, no key, and no
     /// metric.
     /// Clone one value, or pass one store to both through
-    /// [`HostServices::with_shared`], when you want them shared.
+    /// [`VmServices::with_shared`], when you want them shared.
     ///
     /// The VM id is empty, and the VM id is what separates one plugin's
     /// shared data and metrics from another's, so set one per plugin.
@@ -117,7 +117,7 @@ impl HostServices {
             log_level: LogLevel::Info,
             vm_id: Vec::new(),
             vm_configuration: Vec::new(),
-            shared: Arc::new(MemoryServices::new()),
+            shared: Arc::new(InMemoryStore::new()),
         }
     }
 
@@ -190,7 +190,7 @@ impl HostServices {
     ///
     /// Several instances that hold the same value share that state, which is
     /// what lets one VM resolve a queue another registered.
-    /// The default is an [`Arc`] of [`MemoryServices`], which serves one
+    /// The default is an [`Arc`] of [`InMemoryStore`], which serves one
     /// process.
     #[must_use]
     pub fn with_shared(mut self, shared: Arc<dyn SharedServices>) -> Self {
@@ -254,8 +254,8 @@ mod tests {
     use super::*;
     use crate::runtime::test_support::RecordingSink;
 
-    fn services() -> HostServices {
-        HostServices::new(Arc::new(RecordingSink::default()))
+    fn services() -> VmServices {
+        VmServices::new(Arc::new(RecordingSink::default()))
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod tests {
         let log = Arc::new(RecordingSink::default());
 
         // Act
-        let services = HostServices::new(log);
+        let services = VmServices::new(log);
 
         // Assert
         assert_eq!(services.log_level(), LogLevel::Info);
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn the_shared_services_default_to_the_in_memory_one() {
         // Arrange
-        let call = crate::abi::v0_2_1::HostCall::new(
+        let call = crate::abi::v0_2_1::Invocation::new(
             crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
             None,
         );
@@ -391,8 +391,8 @@ mod tests {
     #[test]
     fn with_shared_replaces_the_default() {
         // Arrange
-        let mine: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
-        let call = crate::abi::v0_2_1::HostCall::new(
+        let mine: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let call = crate::abi::v0_2_1::Invocation::new(
             crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
             None,
         );

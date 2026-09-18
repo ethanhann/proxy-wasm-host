@@ -11,9 +11,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use proxy_wasm_host::abi::AbiVersion;
 use proxy_wasm_host::abi::v0_2_1::types::{Action, LogLevel, MapType, Status};
-use proxy_wasm_host::abi::v0_2_1::{Access, ContextId, Guest, HostCall, Plugin, StreamHost};
+use proxy_wasm_host::abi::v0_2_1::{
+    Access, ContextId, Guest, Invocation, PluginConfig, StreamState,
+};
 use proxy_wasm_host::codec::pairs::PairVisitor;
-use proxy_wasm_host::runtime::{Engine, HostServices, Limits, LogSink, Module};
+use proxy_wasm_host::runtime::{Engine, Limits, LogSink, Module, VmServices};
 use proxy_wasm_host::{Error, HeaderMap, NotAllowed, VecHeaderMap};
 
 const RUST_SDK: &[u8] = include_bytes!("fixtures/add-request-header.wasm");
@@ -37,10 +39,10 @@ struct Request {
     headers: VecHeaderMap,
 }
 
-impl StreamHost for Request {
+impl StreamState for Request {
     fn header_map(
         &mut self,
-        _: HostCall,
+        _: Invocation,
         _: Access,
         map: MapType,
     ) -> Result<&mut dyn HeaderMap, Status> {
@@ -87,10 +89,10 @@ struct SealedRequest {
     headers: Sealed,
 }
 
-impl StreamHost for SealedRequest {
+impl StreamState for SealedRequest {
     fn header_map(
         &mut self,
-        _: HostCall,
+        _: Invocation,
         _: Access,
         map: MapType,
     ) -> Result<&mut dyn HeaderMap, Status> {
@@ -107,19 +109,19 @@ struct Lifecycle {
     sink: Arc<Sink>,
     root: Option<ContextId>,
     stream: Option<ContextId>,
-    plugin: Plugin,
+    plugin: PluginConfig,
 }
 
 impl Lifecycle {
     fn new(bytes: &[u8]) -> Self {
-        Self::configured(bytes, Vec::new(), Plugin::new())
+        Self::configured(bytes, Vec::new(), PluginConfig::new())
     }
 
-    fn configured(bytes: &[u8], vm_configuration: Vec<u8>, plugin: Plugin) -> Self {
+    fn configured(bytes: &[u8], vm_configuration: Vec<u8>, plugin: PluginConfig) -> Self {
         let engine = Engine::new().unwrap();
         let module = Module::new(&engine, bytes).unwrap();
         let sink = Arc::new(Sink::default());
-        let services = HostServices::new(sink.clone()).with_vm_configuration(vm_configuration);
+        let services = VmServices::new(sink.clone()).with_vm_configuration(vm_configuration);
         let guest = Guest::new(&engine, &module, services, &Limits::default()).unwrap();
         Self {
             guest,
@@ -156,7 +158,7 @@ impl Lifecycle {
         lifecycle
     }
 
-    fn request_headers<H: StreamHost>(&mut self, request: H) -> (Result<Action, Error>, H) {
+    fn request_headers<H: StreamState>(&mut self, request: H) -> (Result<Action, Error>, H) {
         let mut scope = self.guest.enter(request);
         let action = scope.on_request_headers(self.stream.unwrap(), 0, true);
         (action, scope.finish())
@@ -164,7 +166,7 @@ impl Lifecycle {
 
     /// Runs done, log, and delete on the stream context with `request` lent
     /// to the guest, and gives the request back.
-    fn finalize<H: StreamHost>(&mut self, request: H) -> (Result<bool, Error>, H) {
+    fn finalize<H: StreamState>(&mut self, request: H) -> (Result<bool, Error>, H) {
         let stream = self.stream.unwrap();
         let mut scope = self.guest.enter(request);
         let done = scope
@@ -296,7 +298,7 @@ fn a_refused_write_ends_the_stream_of_the_rust_sdk_guest() {
 #[test]
 fn the_lifecycle_survives_a_vm_and_a_plugin_configuration() {
     // Arrange
-    let plugin = Plugin::new()
+    let plugin = PluginConfig::new()
         .with_name(b"add-header".to_vec())
         .with_configuration(br#"{"header":"Wasm-Context"}"#.to_vec());
     let configured = Lifecycle::configured(RUST_SDK, b"vm bytes".to_vec(), plugin);

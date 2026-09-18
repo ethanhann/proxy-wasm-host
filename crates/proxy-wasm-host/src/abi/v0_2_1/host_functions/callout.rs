@@ -1,7 +1,7 @@
 //! `proxy_get_status`.
 //!
 //! The status belongs to the callout that the running callback delivers, so
-//! the stream host answers it.
+//! the stream state answers it.
 
 use wasmtime::AsContextMut;
 
@@ -136,7 +136,7 @@ mod tests {
         instance
             .state_mut()
             .abi_mut()
-            .set_stream_host(Box::new(NoStream));
+            .set_stream_state(Box::new(NoStream));
         let root = instance
             .state_mut()
             .abi_mut()

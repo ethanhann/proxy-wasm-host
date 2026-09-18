@@ -2,13 +2,13 @@
 
 mod limits;
 
-pub use limits::Limits;
+pub use limits::InMemoryStoreLimits;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroU32;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use crate::abi::v0_2_1::HostCall;
+use crate::abi::v0_2_1::Invocation;
 use crate::abi::v0_2_1::types::{MetricType, Status};
 
 use super::{MetricId, QueueId, SharedServices, SharedValue};
@@ -40,7 +40,7 @@ struct Metrics {
 /// Every instance that holds the same `Arc` shares this state, which is what
 /// lets one VM resolve a queue that another registered.
 /// It is the default of
-/// [`HostServices::with_shared`](crate::runtime::HostServices::with_shared),
+/// [`VmServices::with_shared`](crate::runtime::VmServices::with_shared),
 /// so a guest works without any shared state of your own.
 ///
 /// It serves one process.
@@ -53,20 +53,20 @@ struct Metrics {
 ///
 /// A guest drives every one of these families directly, so the store bounds
 /// what it holds.
-/// [`Limits::default`] allows 4096 keys of at most 64 KiB each and 1024 items
+/// [`InMemoryStoreLimits::default`] allows 4096 keys of at most 64 KiB each and 1024 items
 /// on a queue, and a write past a bound reports
 /// [`Status::InternalFailure`].
-/// Change them with [`MemoryServices::with_limits`].
+/// Change them with [`InMemoryStore::with_limits`].
 ///
 /// A histogram takes an observation and keeps no value, because the ABI gives
 /// a guest no way to read one back, and a read of a histogram reports
 /// [`Status::BadArgument`], which is what the reference host does.
 #[derive(Debug, Default)]
-pub struct MemoryServices {
+pub struct InMemoryStore {
     data: Mutex<BTreeMap<Key, (Vec<u8>, NonZeroU32)>>,
     queues: Mutex<Queues>,
     metrics: Mutex<Metrics>,
-    limits: Limits,
+    limits: InMemoryStoreLimits,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -85,7 +85,7 @@ fn next_id(next: &mut u32) -> Option<NonZeroU32> {
     NonZeroU32::new(value)
 }
 
-impl MemoryServices {
+impl InMemoryStore {
     /// An empty store, with no data, no queue, and no metric.
     pub fn new() -> Self {
         Self::default()
@@ -93,16 +93,16 @@ impl MemoryServices {
 
     /// Replaces what the store allows a guest to hold.
     #[must_use]
-    pub fn with_limits(mut self, limits: Limits) -> Self {
+    pub fn with_limits(mut self, limits: InMemoryStoreLimits) -> Self {
         self.limits = limits;
         self
     }
 }
 
-impl SharedServices for MemoryServices {
+impl SharedServices for InMemoryStore {
     fn get_shared_data(
         &self,
-        _: HostCall,
+        _: Invocation,
         vm_id: &[u8],
         key: &[u8],
     ) -> Result<SharedValue, Status> {
@@ -114,7 +114,7 @@ impl SharedServices for MemoryServices {
 
     fn set_shared_data(
         &self,
-        _: HostCall,
+        _: Invocation,
         vm_id: &[u8],
         key: &[u8],
         value: &[u8],
@@ -146,7 +146,7 @@ impl SharedServices for MemoryServices {
 
     fn register_shared_queue(
         &self,
-        _: HostCall,
+        _: Invocation,
         vm_id: &[u8],
         name: &[u8],
     ) -> Result<QueueId, Status> {
@@ -163,7 +163,7 @@ impl SharedServices for MemoryServices {
 
     fn resolve_shared_queue(
         &self,
-        _: HostCall,
+        _: Invocation,
         vm_id: &[u8],
         name: &[u8],
     ) -> Result<QueueId, Status> {
@@ -176,7 +176,7 @@ impl SharedServices for MemoryServices {
 
     fn enqueue_shared_queue(
         &self,
-        _: HostCall,
+        _: Invocation,
         queue: QueueId,
         value: &[u8],
     ) -> Result<(), Status> {
@@ -193,7 +193,7 @@ impl SharedServices for MemoryServices {
         Ok(())
     }
 
-    fn dequeue_shared_queue(&self, _: HostCall, queue: QueueId) -> Result<Vec<u8>, Status> {
+    fn dequeue_shared_queue(&self, _: Invocation, queue: QueueId) -> Result<Vec<u8>, Status> {
         let mut queues = lock(&self.queues);
         let items = queues.items.get_mut(&queue).ok_or(Status::NotFound)?;
         items.pop_front().ok_or(Status::Empty)
@@ -201,7 +201,7 @@ impl SharedServices for MemoryServices {
 
     fn define_metric(
         &self,
-        _: HostCall,
+        _: Invocation,
         vm_id: &[u8],
         kind: MetricType,
         name: &[u8],
@@ -222,7 +222,7 @@ impl SharedServices for MemoryServices {
         Ok(id)
     }
 
-    fn record_metric(&self, _: HostCall, metric: MetricId, value: u64) -> Result<(), Status> {
+    fn record_metric(&self, _: Invocation, metric: MetricId, value: u64) -> Result<(), Status> {
         let mut metrics = lock(&self.metrics);
         let entry = metrics.entries.get_mut(&metric).ok_or(Status::NotFound)?;
         match entry.kind {
@@ -232,7 +232,7 @@ impl SharedServices for MemoryServices {
         Ok(())
     }
 
-    fn increment_metric(&self, _: HostCall, metric: MetricId, delta: i64) -> Result<(), Status> {
+    fn increment_metric(&self, _: Invocation, metric: MetricId, delta: i64) -> Result<(), Status> {
         let mut metrics = lock(&self.metrics);
         let entry = metrics.entries.get_mut(&metric).ok_or(Status::NotFound)?;
         match entry.kind {
@@ -247,7 +247,7 @@ impl SharedServices for MemoryServices {
         Ok(())
     }
 
-    fn get_metric(&self, _: HostCall, metric: MetricId) -> Result<u64, Status> {
+    fn get_metric(&self, _: Invocation, metric: MetricId) -> Result<u64, Status> {
         let metrics = lock(&self.metrics);
         let entry = metrics.entries.get(&metric).ok_or(Status::NotFound)?;
         match entry.kind {
@@ -267,11 +267,11 @@ mod tests {
     const VM: &[u8] = b"vm-1";
     const OTHER_VM: &[u8] = b"vm-2";
 
-    fn queue(services: &MemoryServices, vm: &[u8]) -> QueueId {
+    fn queue(services: &InMemoryStore, vm: &[u8]) -> QueueId {
         services.register_shared_queue(call(), vm, b"q").unwrap()
     }
 
-    fn counter(services: &MemoryServices) -> MetricId {
+    fn counter(services: &InMemoryStore) -> MetricId {
         services
             .define_metric(call(), VM, MetricType::Counter, b"requests")
             .unwrap()
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn a_value_reads_back_with_a_number_that_is_not_zero() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         services
             .set_shared_data(call(), VM, b"k", b"v", None)
             .unwrap();
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn a_key_of_one_vm_is_not_visible_to_another() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         services
             .set_shared_data(call(), VM, b"k", b"secret", None)
             .unwrap();
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn an_absent_key_is_not_found() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
 
         // Act
         let found = services.get_shared_data(call(), VM, b"missing");
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn a_stale_number_is_refused_and_the_value_stays() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         services
             .set_shared_data(call(), VM, b"k", b"first", None)
             .unwrap();
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn the_number_the_store_reports_writes_the_value() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         services
             .set_shared_data(call(), VM, b"k", b"first", None)
             .unwrap();
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn no_number_writes_over_any_value() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         services
             .set_shared_data(call(), VM, b"k", b"first", None)
             .unwrap();
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn a_number_on_a_key_that_is_not_there_writes_it() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
 
         // Act
         let written = services.set_shared_data(call(), VM, b"k", b"v", Some(7));
@@ -407,7 +407,8 @@ mod tests {
     #[test]
     fn a_value_past_the_limit_is_refused() {
         // Arrange
-        let services = MemoryServices::new().with_limits(Limits::new().with_value_bytes(4));
+        let services =
+            InMemoryStore::new().with_limits(InMemoryStoreLimits::new().with_value_bytes(4));
 
         // Act
         let refused = services.set_shared_data(call(), VM, b"k", b"12345", None);
@@ -419,7 +420,7 @@ mod tests {
     #[test]
     fn a_key_past_the_limit_is_refused() {
         // Arrange
-        let services = MemoryServices::new().with_limits(Limits::new().with_keys(1));
+        let services = InMemoryStore::new().with_limits(InMemoryStoreLimits::new().with_keys(1));
         services
             .set_shared_data(call(), VM, b"first", b"v", None)
             .unwrap();
@@ -441,7 +442,8 @@ mod tests {
     #[test]
     fn a_queue_past_its_depth_refuses_the_item() {
         // Arrange
-        let services = MemoryServices::new().with_limits(Limits::new().with_queue_items(1));
+        let services =
+            InMemoryStore::new().with_limits(InMemoryStoreLimits::new().with_queue_items(1));
         let id = queue(&services, VM);
         services.enqueue_shared_queue(call(), id, b"first").unwrap();
 
@@ -467,7 +469,7 @@ mod tests {
     #[test]
     fn a_registration_that_repeats_a_name_opens_the_same_queue() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let first = queue(&services, VM);
 
         // Act
@@ -480,7 +482,7 @@ mod tests {
     #[test]
     fn a_queue_resolves_through_a_second_holder_of_the_same_value() {
         // Arrange
-        let services = Arc::new(MemoryServices::new());
+        let services = Arc::new(InMemoryStore::new());
         let registered = queue(&services, VM);
         let second_instance = Arc::clone(&services);
 
@@ -494,7 +496,7 @@ mod tests {
     #[test]
     fn a_queue_no_vm_registered_is_not_found() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
 
         // Act
         let resolved = services.resolve_shared_queue(call(), VM, b"q");
@@ -506,7 +508,7 @@ mod tests {
     #[test]
     fn an_item_moves_through_the_queue_in_order() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let id = queue(&services, VM);
         services.enqueue_shared_queue(call(), id, b"first").unwrap();
         services
@@ -529,7 +531,7 @@ mod tests {
     #[test]
     fn a_queue_that_is_not_there_is_not_found() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let absent = QueueId::try_from(9u32).unwrap();
 
         // Act
@@ -546,7 +548,7 @@ mod tests {
     #[test]
     fn a_metric_carries_a_value_above_the_thirty_two_bit_limit() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let metric = services
             .define_metric(call(), VM, MetricType::Gauge, b"bytes")
             .unwrap();
@@ -563,7 +565,7 @@ mod tests {
     #[test]
     fn a_metric_of_one_vm_is_not_the_metric_of_another() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let mine = counter(&services);
 
         // Act
@@ -576,7 +578,7 @@ mod tests {
     #[test]
     fn a_name_defined_twice_with_one_kind_is_one_metric() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let first = counter(&services);
 
         // Act
@@ -589,7 +591,7 @@ mod tests {
     #[test]
     fn a_name_defined_with_another_kind_is_a_bad_argument() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         counter(&services);
 
         // Act
@@ -602,7 +604,7 @@ mod tests {
     #[test]
     fn a_counter_refuses_a_negative_delta() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let metric = counter(&services);
         services.increment_metric(call(), metric, 5).unwrap();
 
@@ -617,7 +619,7 @@ mod tests {
     #[test]
     fn a_gauge_that_would_go_below_zero_is_refused() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let metric = services
             .define_metric(call(), VM, MetricType::Gauge, b"live")
             .unwrap();
@@ -634,7 +636,7 @@ mod tests {
     #[test]
     fn a_gauge_accepts_a_negative_delta() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let metric = services
             .define_metric(call(), VM, MetricType::Gauge, b"live")
             .unwrap();
@@ -651,7 +653,7 @@ mod tests {
     #[test]
     fn a_histogram_takes_an_observation_and_refuses_the_other_two() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let metric = services
             .define_metric(call(), VM, MetricType::Histogram, b"latency")
             .unwrap();
@@ -671,7 +673,7 @@ mod tests {
     #[test]
     fn a_metric_that_is_not_there_is_not_found() {
         // Arrange
-        let services = MemoryServices::new();
+        let services = InMemoryStore::new();
         let absent = MetricId::try_from(9u32).unwrap();
 
         // Act

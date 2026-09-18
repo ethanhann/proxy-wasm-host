@@ -105,7 +105,7 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::test_support::services::{RecordingServices, SharedCall};
     use crate::abi::v0_2_1::test_support::{VM_ID, bare, outcome, shared_hosted, status, write};
-    use crate::abi::v0_2_1::{MemoryServices, SharedServices};
+    use crate::abi::v0_2_1::{InMemoryStore, SharedServices};
     use crate::runtime::Instance;
     use crate::runtime::test_support::engine;
 
@@ -197,7 +197,7 @@ mod tests {
     fn a_value_above_the_thirty_two_bit_limit_survives_both_directions() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
         define(&mut instance, i32::from(MetricType::Gauge), b"bytes");
         let id = defined_id(&mut instance);
@@ -225,7 +225,7 @@ mod tests {
     fn a_counter_refuses_a_negative_delta() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
         let id = counter(&mut instance);
 
@@ -244,8 +244,8 @@ mod tests {
     fn a_metric_this_guest_never_defined_is_not_found() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
-        let other = crate::abi::v0_2_1::HostCall::new(
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let other = crate::abi::v0_2_1::Invocation::new(
             crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
             None,
         );
@@ -279,7 +279,7 @@ mod tests {
     fn a_metric_that_is_not_there_is_not_found() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
 
         // Act
@@ -305,7 +305,7 @@ mod tests {
     fn a_metric_identifier_of_zero_is_not_found() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, _) = shared_hosted(&engine, GUEST, shared);
 
         // Act
@@ -363,7 +363,7 @@ mod tests {
     fn a_body_under_a_refused_root_is_not_found() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut instance, root) = shared_hosted(&engine, GUEST, shared);
         instance.state_mut().abi_mut().contexts_mut().reject(root);
 
