@@ -20,7 +20,10 @@ mod property;
 mod shared_data;
 mod shared_queue;
 mod stream;
+#[cfg(not(test))]
 mod table;
+#[cfg(test)]
+pub(crate) mod table;
 mod timer;
 
 pub(crate) use failure::{Failure, complete, stub};

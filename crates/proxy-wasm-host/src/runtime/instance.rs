@@ -246,10 +246,79 @@ mod tests {
         MINIMAL_GUEST, engine, instance, instance_from, services, wat_bytes,
     };
 
-    const SPIN: &str = r#"(module
+    /// A guest whose loop ends on its own, so a test cannot hang when a limit
+    /// is not enforced.
+    const BOUNDED: &str = r#"(module
         (memory (export "memory") 1)
         (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
-        (func (export "spin") (loop br 0)))"#;
+        (func (export "burn") (result i32)
+            (local $i i32)
+            (loop $l
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))
+            (local.get $i)))"#;
+
+    /// A bounded guest that moves the epoch itself, so the deadline can pass
+    /// during a call with no second thread.
+    const TICKING: &str = r#"(module
+        (import "env" "tick" (func $tick))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+        (func (export "burn") (result i32)
+            (local $i i32)
+            (loop $l
+                call $tick
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))
+            (local.get $i)))"#;
+
+    /// A guest whose allocator costs as much as its loop, so a test can tell
+    /// a refilled budget from a spent one on the allocator path.
+    const COSTLY_ALLOCATOR: &str = r#"(module
+        (memory (export "memory") 1)
+        (func $spend (result i32)
+            (local $i i32)
+            (loop $l
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))
+            (local.get $i))
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32)
+            call $spend
+            drop
+            i32.const 1024)
+        (func (export "burn") (result i32) call $spend))"#;
+
+    /// The loop of `BOUNDED` costs about this much fuel, so a budget above it
+    /// serves one call and a budget below two serves only the first.
+    const LOOP_FUEL: u64 = 8_000;
+
+    fn fuelled_engine() -> Engine {
+        EngineConfig::new()
+            .with_external_ticks(true)
+            .with_fuel_enabled(true)
+            .build()
+            .unwrap()
+    }
+
+    /// An engine whose guests can move the epoch through an `env.tick` import.
+    ///
+    /// The guest moves the clock itself, so a deadline can pass during a call
+    /// with no second thread and no sleep.
+    fn ticking_engine() -> Engine {
+        EngineConfig::new()
+            .with_external_ticks(true)
+            .build_with(|linker| {
+                linker
+                    .func_wrap("env", "tick", |caller: wasmtime::Caller<'_, HostState>| {
+                        caller.engine().increment_epoch();
+                    })
+                    .map_err(|source| Error::Config {
+                        message: format!("the tick import could not be registered: {source}"),
+                    })?;
+                Ok(())
+            })
+            .unwrap()
+    }
 
     fn assert_send<T: Send>() {}
 
@@ -480,32 +549,48 @@ mod tests {
     }
 
     #[test]
-    fn a_spinning_guest_is_stopped_by_the_epoch() {
+    fn a_guest_that_outlives_its_epoch_deadline_is_stopped() {
         // Arrange
-        let engine = engine();
-        let module = Module::new(&engine, &wat_bytes(SPIN)).unwrap();
-        let limits = Limits::new().with_cpu_time(Duration::from_millis(20));
+        let engine = ticking_engine();
+        let module = Module::new(&engine, &wat_bytes(TICKING)).unwrap();
+        let limits = Limits::new().with_cpu_time(Duration::from_millis(10));
         let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
-        let ticker = engine.clone();
-        let thread = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
-            for _ in 0..5 {
-                ticker.increment_epoch();
-            }
-        });
 
         // Act
-        let result = instance.call::<(), ()>("spin", ());
+        let result = instance.call::<(), i32>("burn", ());
 
         // Assert
-        thread.join().unwrap();
-        assert!(matches!(
-            result,
-            Err(Error::LimitExceeded {
-                limit: Limit::Epoch
-            })
-        ));
+        assert!(
+            matches!(
+                result,
+                Err(Error::LimitExceeded {
+                    limit: Limit::Epoch
+                })
+            ),
+            "the guest moved the epoch past its own deadline, so it must be stopped"
+        );
         assert!(instance.is_poisoned());
+    }
+
+    #[test]
+    fn a_call_gets_a_fresh_epoch_deadline_when_the_epoch_moved_since_construction() {
+        // Arrange
+        let engine = engine();
+        let module = Module::new(&engine, &wat_bytes(MINIMAL_GUEST)).unwrap();
+        let limits = Limits::new().with_cpu_time(Duration::from_millis(10));
+        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
+        for _ in 0..5 {
+            engine.increment_epoch();
+        }
+
+        // Act
+        let result = instance.call::<(i32,), i32>("proxy_on_memory_allocate", (1,));
+
+        // Assert
+        assert!(
+            matches!(result, Ok(1024)),
+            "the call refills the deadline, so an epoch that moved since construction is harmless"
+        );
     }
 
     #[test]
@@ -527,25 +612,40 @@ mod tests {
     }
 
     #[test]
-    fn a_spinning_guest_is_stopped_by_fuel() {
+    fn a_bounded_guest_is_stopped_by_fuel() {
         // Arrange
-        let engine = EngineConfig::new()
-            .with_external_ticks(true)
-            .with_fuel_enabled(true)
-            .build()
-            .unwrap();
-        let module = Module::new(&engine, &wat_bytes(SPIN)).unwrap();
-        let limits = Limits::new().with_fuel(10_000);
+        let engine = fuelled_engine();
+        let module = Module::new(&engine, &wat_bytes(BOUNDED)).unwrap();
+        let limits = Limits::new().with_fuel(LOOP_FUEL / 4);
         let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
 
         // Act
-        let result = instance.call::<(), ()>("spin", ());
+        let result = instance.call::<(), i32>("burn", ());
 
         // Assert
         assert!(matches!(
             result,
             Err(Error::LimitExceeded { limit: Limit::Fuel })
         ));
+    }
+
+    #[test]
+    fn a_second_call_gets_a_fresh_fuel_budget() {
+        // Arrange
+        let engine = fuelled_engine();
+        let module = Module::new(&engine, &wat_bytes(BOUNDED)).unwrap();
+        let limits = Limits::new().with_fuel(LOOP_FUEL + LOOP_FUEL / 2);
+        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
+        assert!(instance.call::<(), i32>("burn", ()).is_ok());
+
+        // Act
+        let second = instance.call::<(), i32>("burn", ());
+
+        // Assert
+        assert!(
+            matches!(second, Ok(1000)),
+            "the budget the constructor set covers one call, so a second call proves the refill"
+        );
     }
 
     #[test]
@@ -602,5 +702,43 @@ mod tests {
 
         // Assert
         assert!(matches!(grown, Ok(-1)));
+    }
+
+    #[test]
+    fn an_allocation_after_a_call_that_spent_the_fuel_gets_a_fresh_budget() {
+        // Arrange
+        let engine = fuelled_engine();
+        let module = Module::new(&engine, &wat_bytes(COSTLY_ALLOCATOR)).unwrap();
+        let limits = Limits::new().with_fuel(LOOP_FUEL + LOOP_FUEL / 2);
+        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
+        assert!(instance.call::<(), i32>("burn", ()).is_ok());
+
+        // Act
+        let allocated = instance.allocate(16);
+
+        // Assert
+        assert!(
+            allocated.is_ok(),
+            "the allocator path refills, so the fuel the call spent does not starve it"
+        );
+    }
+
+    #[test]
+    fn a_write_after_a_call_that_spent_the_fuel_gets_a_fresh_budget() {
+        // Arrange
+        let engine = fuelled_engine();
+        let module = Module::new(&engine, &wat_bytes(COSTLY_ALLOCATOR)).unwrap();
+        let limits = Limits::new().with_fuel(LOOP_FUEL + LOOP_FUEL / 2);
+        let mut instance = Instance::new(&engine, &module, services(), &limits).unwrap();
+        assert!(instance.call::<(), i32>("burn", ()).is_ok());
+
+        // Act
+        let written = instance.write_to_guest(b"bytes for the guest");
+
+        // Assert
+        assert!(
+            written.is_ok(),
+            "the write path refills, so the fuel the call spent does not starve it"
+        );
     }
 }

@@ -466,4 +466,33 @@ mod tests {
         // Assert
         assert_eq!(result, Status::NotFound);
     }
+
+    #[test]
+    fn a_queue_one_guest_registered_is_not_granted_to_another_of_the_same_vm() {
+        // Arrange
+        // The grant is per instance, so a second guest of the same VM that
+        // never registered the queue cannot reach it by naming it. This dies
+        // if the grant set is shared between instances.
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let (mut mine, _) = shared_hosted(&engine, GUEST, Arc::clone(&shared));
+        let (mut theirs, _) = shared_hosted(&engine, GUEST, Arc::clone(&shared));
+        assert_eq!(register(&mut mine, b"shared-name"), Status::Ok);
+        let queue = returned_id(&mut mine).cast_signed();
+
+        // Act
+        let found = status(
+            theirs
+                .call::<(i32, i32, i32), i32>("dequeue", (queue, RETURN_DATA, RETURN_SIZE))
+                .unwrap(),
+        );
+
+        // Assert
+        assert_eq!(found, Status::NotFound);
+        assert!(
+            mine.state()
+                .abi()
+                .holds_queue(QueueId::try_from(queue).unwrap())
+        );
+    }
 }

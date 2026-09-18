@@ -60,9 +60,12 @@ impl SharedValue {
 /// The trait is not downcastable, so keep your own `Arc` if you want your
 /// concrete type back.
 ///
-/// Every method has a default body that reports the status its own ABI
-/// section lists for a resource that is not available, so you implement what
-/// you serve.
+/// Every method has a default body that reports [`Status::NotFound`], so you
+/// implement what you serve.
+/// The ABI names no status for a function the host does not implement, so
+/// this is the crate's own rule rather than the ABI's, and `NOT_FOUND` is
+/// chosen because a guest can act on it.
+/// Every default body also logs a warning that names itself.
 pub trait SharedServices: Send + Sync {
     /// The value and the compare and swap number of one key.
     ///
@@ -91,7 +94,9 @@ pub trait SharedServices: Send + Sync {
     /// # Errors
     ///
     /// Report [`Status::CasMismatch`] when the number does not match.
-    /// The default body discards the write and reports success.
+    /// The default body reports [`Status::NotFound`], which matches the read,
+    /// so a guest is never told that a write landed when nothing holds it.
+    /// A guest built with the Rust SDK stops on that status.
     fn set_shared_data(
         &self,
         call: HostCall,
@@ -102,7 +107,7 @@ pub trait SharedServices: Send + Sync {
     ) -> Result<(), Status> {
         let _ = (call, vm_id, key, value, cas);
         unserved("set_shared_data");
-        Ok(())
+        Err(Status::NotFound)
     }
 
     /// Opens a queue under a name, and creates it when it is new.
@@ -252,7 +257,7 @@ mod tests {
     impl SharedServices for Empty {}
 
     #[test]
-    fn the_default_bodies_report_not_found_or_discard_the_write() {
+    fn every_default_body_reports_not_found() {
         // Arrange
         let empty = Empty;
         let id = QueueId::try_from(1u32).unwrap();
@@ -261,6 +266,7 @@ mod tests {
         // Act
         let results = [
             empty.get_shared_data(call(), b"vm", b"k").err(),
+            empty.set_shared_data(call(), b"vm", b"k", b"v", None).err(),
             empty.register_shared_queue(call(), b"vm", b"q").err(),
             empty.resolve_shared_queue(call(), b"vm", b"q").err(),
             empty.enqueue_shared_queue(call(), id, b"v").err(),
@@ -274,10 +280,6 @@ mod tests {
         ];
 
         // Assert
-        assert_eq!(results, [Some(Status::NotFound); 9]);
-        assert_eq!(
-            empty.set_shared_data(call(), b"vm", b"k", b"v", None),
-            Ok(())
-        );
+        assert_eq!(results, [Some(Status::NotFound); 10]);
     }
 }

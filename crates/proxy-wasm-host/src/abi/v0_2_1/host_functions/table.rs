@@ -155,42 +155,14 @@ host_functions! {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
-    use std::fmt::Write as _;
 
     use wasmtime::ExternType;
 
     use super::*;
-    use crate::abi::v0_2_1::test_support::status;
+    use crate::abi::v0_2_1::test_support::{import_everything, status};
     use crate::abi::v0_2_1::types::Status;
     use crate::runtime::test_support::{engine, instance};
     use crate::runtime::{Module, WASI_FUNCTIONS};
-
-    fn wat_type(ty: WasmType) -> &'static str {
-        match ty {
-            WasmType::I32 => "i32",
-            WasmType::I64 => "i64",
-        }
-    }
-
-    fn import_everything() -> String {
-        let mut wat = String::from("(module\n");
-        for function in HOST_FUNCTIONS {
-            let params: Vec<&str> = function.params.iter().copied().map(wat_type).collect();
-            writeln!(
-                wat,
-                "  (import \"env\" \"{}\" (func (param {}) (result i32)))",
-                function.name,
-                params.join(" ")
-            )
-            .unwrap();
-        }
-        wat.push_str(
-            r#"  (memory (export "memory") 1)
-  (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
-  (func (export "proxy_abi_version_0_2_1")))"#,
-        );
-        wat
-    }
 
     #[test]
     fn the_table_has_39_distinct_proxy_functions_returning_i32() {

@@ -191,4 +191,37 @@ mod tests {
         assert_eq!(result.unwrap(), Status::BadArgument);
         assert_eq!(instance.state().abi().contexts().effective(), None);
     }
+
+    #[test]
+    fn the_effective_context_never_moves_to_another_root_through_the_body() {
+        // Arrange
+        // The existing test drives a guest. This one drives the body, so it
+        // dies if the two roots are no longer compared.
+        let engine = engine();
+        let mut instance = instance(&engine, CALLERS).unwrap();
+        let contexts = instance.state_mut().abi_mut().contexts_mut();
+        let mine = contexts.create(None).unwrap();
+        let theirs = contexts.create(None).unwrap();
+        let under_mine = contexts.create(Some(mine)).unwrap();
+        contexts.set_effective(mine);
+
+        // Act
+        let results = [
+            outcome(proxy_set_effective_context(
+                instance.store_mut(),
+                theirs.wire(),
+            )),
+            outcome(proxy_set_effective_context(
+                instance.store_mut(),
+                under_mine.wire(),
+            )),
+        ];
+
+        // Assert
+        assert_eq!(results, [Status::BadArgument, Status::Ok]);
+        assert_eq!(
+            instance.state().abi().contexts().effective(),
+            Some(under_mine)
+        );
+    }
 }

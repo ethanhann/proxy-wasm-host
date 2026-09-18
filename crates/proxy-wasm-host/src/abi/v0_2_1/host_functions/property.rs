@@ -430,4 +430,32 @@ mod tests {
                 .is_empty()
         );
     }
+
+    #[test]
+    fn a_well_known_property_is_never_asked_of_the_stream_host() {
+        // Arrange
+        // The crate answers the three plugin properties itself, so an
+        // embedder must never see them.
+        let engine = engine();
+        let mut instance = with_plugin(&engine);
+        instance
+            .state_mut()
+            .abi_mut()
+            .set_stream_host(Box::new(RecordingStream::new()));
+
+        // Act
+        let results = [
+            get(&mut instance, &[b"plugin_name"]),
+            get(&mut instance, &[b"plugin_root_id"]),
+            get(&mut instance, &[b"plugin_vm_id"]),
+        ];
+
+        // Assert
+        assert_eq!(results, [Status::Ok; 3]);
+        assert!(
+            RecordingStream::take(instance.state_mut())
+                .property_reads()
+                .is_empty()
+        );
+    }
 }

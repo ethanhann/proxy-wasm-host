@@ -41,7 +41,7 @@ pub(super) fn with_shared(
 ) -> Result<(HostCall, &dyn SharedServices), Failure> {
     let context = context(state, absent)?;
     let call = HostCall::new(context, state.abi().current_callback());
-    Ok((call, state.abi().shared().as_ref()))
+    Ok((call, state.services().shared().as_ref()))
 }
 
 /// The embedder's answer, with a success for a resource it never touched

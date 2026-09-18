@@ -339,4 +339,18 @@ mod tests {
         ));
         assert_eq!(allocator_calls(&mut instance), 0);
     }
+
+    #[test]
+    fn a_poisoned_state_is_refused_before_the_allocator_runs() {
+        // Arrange
+        let engine = engine();
+        let mut instance = instance(&engine, FIXED).unwrap();
+        instance.state_mut().poison();
+
+        // Act
+        let allocated = allocate(instance.store_mut(), 16);
+
+        // Assert
+        assert!(matches!(allocated, Err(Error::Poisoned)));
+    }
 }

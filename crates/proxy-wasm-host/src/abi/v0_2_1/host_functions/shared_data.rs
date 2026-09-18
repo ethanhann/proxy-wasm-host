@@ -71,7 +71,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{
         VM_ID, bare, outcome, returned, shared_hosted, status, write,
     };
-    use crate::abi::v0_2_1::{MemoryServices, SharedServices};
+    use crate::abi::v0_2_1::{ContextId, HostCall, MemoryServices, SharedServices};
     use crate::runtime::test_support::engine;
     use crate::runtime::{GuestPtr, Instance};
 
@@ -353,5 +353,45 @@ mod tests {
 
         // Assert
         assert_eq!(result, Status::NotFound);
+    }
+
+    #[test]
+    fn the_shared_services_replaced_after_construction_are_the_ones_a_guest_reads() {
+        // Arrange
+        let engine = engine();
+        let replacement = Arc::new(MemoryServices::new());
+        let call = HostCall::new(ContextId::try_from(1).unwrap(), None);
+        replacement
+            .set_shared_data(call, VM_ID, b"k", b"from the replacement", None)
+            .unwrap();
+        let (mut instance, _) = shared_hosted(&engine, GUEST, Arc::new(MemoryServices::new()));
+        let services = instance.services().clone().with_shared(replacement);
+
+        // Act
+        *instance.services_mut() = services;
+
+        // Assert
+        assert_eq!(get(&mut instance, b"k"), Status::Ok);
+        assert_eq!(value_and_cas(&mut instance).0, b"from the replacement");
+    }
+
+    #[test]
+    fn a_key_of_one_vm_is_not_visible_to_a_guest_of_another() {
+        // Arrange
+        // The existing test drives the store directly. This one drives two
+        // guests, so it dies if the VM id is dropped from the key.
+        let engine = engine();
+        let store: Arc<dyn SharedServices> = Arc::new(MemoryServices::new());
+        let (mut mine, _) = shared_hosted(&engine, GUEST, Arc::clone(&store));
+        let (mut theirs, _) = shared_hosted(&engine, GUEST, Arc::clone(&store));
+        *theirs.services_mut() = theirs.services().clone().with_vm_id(b"other-vm".to_vec());
+        assert_eq!(set(&mut mine, b"k", b"mine", 0), Status::Ok);
+
+        // Act
+        let found = get(&mut theirs, b"k");
+
+        // Assert
+        assert_eq!(found, Status::NotFound);
+        assert_eq!(get(&mut mine, b"k"), Status::Ok);
     }
 }

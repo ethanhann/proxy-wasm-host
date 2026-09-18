@@ -1111,4 +1111,19 @@ mod tests {
         assert_eq!(recorded(&mut guest, 0), 0);
         assert_eq!(guest.tick_period(root), Some(Duration::from_millis(250)));
     }
+
+    #[test]
+    fn a_dropped_scope_leaves_the_guest_ready_for_a_new_stream() {
+        // Arrange
+        let engine = engine();
+        let (mut guest, _, _) = with_stream(&engine, HEADER_WRITER);
+        drop(guest.enter(RecordingStream::new()));
+
+        // Act
+        let scope = guest.enter(RecordingStream::new());
+
+        // Assert
+        let stream = scope.finish();
+        assert!(stream.calls().is_empty());
+    }
 }

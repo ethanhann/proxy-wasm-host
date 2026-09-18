@@ -1,5 +1,9 @@
 //! The shared services of one process, held in memory.
 
+mod limits;
+
+pub use limits::Limits;
+
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroU32;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -65,28 +69,6 @@ pub struct MemoryServices {
     limits: Limits,
 }
 
-/// What [`MemoryServices`] allows a guest to store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct Limits {
-    /// The largest value or item, in bytes.
-    pub value_bytes: usize,
-    /// The number of keys the shared data holds.
-    pub keys: usize,
-    /// The number of items one queue holds.
-    pub queue_items: usize,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Self {
-            value_bytes: 64 * 1024,
-            keys: 4096,
-            queue_items: 1024,
-        }
-    }
-}
-
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -138,12 +120,12 @@ impl SharedServices for MemoryServices {
         value: &[u8],
         cas: Option<u32>,
     ) -> Result<(), Status> {
-        if value.len() > self.limits.value_bytes {
+        if value.len() > self.limits.value_bytes() {
             return Err(Status::InternalFailure);
         }
         let mut data = lock(&self.data);
         let held = (vm_id.to_vec(), key.to_vec());
-        if !data.contains_key(&held) && data.len() >= self.limits.keys {
+        if !data.contains_key(&held) && data.len() >= self.limits.keys() {
             return Err(Status::InternalFailure);
         }
         match data.entry(held) {
@@ -198,10 +180,10 @@ impl SharedServices for MemoryServices {
         queue: QueueId,
         value: &[u8],
     ) -> Result<(), Status> {
-        if value.len() > self.limits.value_bytes {
+        if value.len() > self.limits.value_bytes() {
             return Err(Status::InternalFailure);
         }
-        let depth = self.limits.queue_items;
+        let depth = self.limits.queue_items();
         let mut queues = lock(&self.queues);
         let items = queues.items.get_mut(&queue).ok_or(Status::NotFound)?;
         if items.len() >= depth {
@@ -425,10 +407,7 @@ mod tests {
     #[test]
     fn a_value_past_the_limit_is_refused() {
         // Arrange
-        let services = MemoryServices::new().with_limits(Limits {
-            value_bytes: 4,
-            ..Limits::default()
-        });
+        let services = MemoryServices::new().with_limits(Limits::new().with_value_bytes(4));
 
         // Act
         let refused = services.set_shared_data(call(), VM, b"k", b"12345", None);
@@ -440,10 +419,7 @@ mod tests {
     #[test]
     fn a_key_past_the_limit_is_refused() {
         // Arrange
-        let services = MemoryServices::new().with_limits(Limits {
-            keys: 1,
-            ..Limits::default()
-        });
+        let services = MemoryServices::new().with_limits(Limits::new().with_keys(1));
         services
             .set_shared_data(call(), VM, b"first", b"v", None)
             .unwrap();
@@ -465,10 +441,7 @@ mod tests {
     #[test]
     fn a_queue_past_its_depth_refuses_the_item() {
         // Arrange
-        let services = MemoryServices::new().with_limits(Limits {
-            queue_items: 1,
-            ..Limits::default()
-        });
+        let services = MemoryServices::new().with_limits(Limits::new().with_queue_items(1));
         let id = queue(&services, VM);
         services.enqueue_shared_queue(call(), id, b"first").unwrap();
 

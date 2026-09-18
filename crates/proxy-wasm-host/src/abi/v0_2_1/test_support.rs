@@ -109,3 +109,61 @@ pub(crate) fn write(instance: &mut Instance, at: i32, bytes: &[u8]) -> (i32, i32
     instance.memory().unwrap().write(slice, bytes).unwrap();
     (at, len)
 }
+
+/// A guest that imports every row of the host function table.
+///
+/// The module comes from the table, so a row added or removed reaches the
+/// tests that instantiate it.
+/// It exports no callable function, so a test that needs its own body writes
+/// its own module.
+pub(crate) fn import_everything() -> String {
+    use std::fmt::Write as _;
+
+    use crate::abi::v0_2_1::host_functions::table::{HOST_FUNCTIONS, WasmType};
+
+    fn wat_type(ty: WasmType) -> &'static str {
+        match ty {
+            WasmType::I32 => "i32",
+            WasmType::I64 => "i64",
+        }
+    }
+
+    let mut wat = String::from("(module\n");
+    for function in HOST_FUNCTIONS {
+        let params: Vec<&str> = function.params.iter().copied().map(wat_type).collect();
+        writeln!(
+            wat,
+            "  (import \"env\" \"{}\" (func (param {}) (result i32)))",
+            function.name,
+            params.join(" ")
+        )
+        .unwrap();
+    }
+    wat.push_str(
+        r#"  (memory (export "memory") 1)
+  (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+  (func (export "proxy_abi_version_0_2_1")))"#,
+    );
+    wat
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::abi::v0_2_1::host_functions::table::HOST_FUNCTIONS;
+
+    #[test]
+    fn the_generated_guest_imports_one_function_per_table_row() {
+        // Arrange
+        let expected = HOST_FUNCTIONS.len();
+
+        // Act
+        let wat = import_everything();
+
+        // Assert
+        assert_eq!(wat.matches("(import \"env\"").count(), expected);
+        for function in HOST_FUNCTIONS {
+            assert!(wat.contains(function.name), "{} is missing", function.name);
+        }
+    }
+}

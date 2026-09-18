@@ -2,9 +2,8 @@
 
 use std::any::Any;
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
-use crate::abi::v0_2_1::{Callback, ContextTable, MetricId, QueueId, SharedServices, StreamHost};
+use crate::abi::v0_2_1::{Callback, ContextTable, MetricId, QueueId, StreamHost};
 
 /// Everything ABI v0.2.1 keeps for one instance.
 ///
@@ -14,25 +13,19 @@ pub(crate) struct AbiState {
     stream_host: Option<Box<dyn StreamHost>>,
     contexts: ContextTable,
     current_callback: Option<Callback>,
-    shared: Arc<dyn SharedServices>,
     queues: BTreeSet<QueueId>,
     metrics: BTreeSet<MetricId>,
 }
 
 impl AbiState {
-    pub(crate) fn new(shared: Arc<dyn SharedServices>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             stream_host: None,
             contexts: ContextTable::new(),
             current_callback: None,
-            shared,
             queues: BTreeSet::new(),
             metrics: BTreeSet::new(),
         }
-    }
-
-    pub(crate) fn shared(&self) -> &Arc<dyn SharedServices> {
-        &self.shared
     }
 
     /// Records that this guest obtained a queue identifier.
@@ -110,7 +103,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::RecordingStream;
 
     fn state() -> AbiState {
-        AbiState::new(Arc::new(crate::abi::v0_2_1::MemoryServices::new()))
+        AbiState::new()
     }
 
     #[test]
@@ -162,9 +155,8 @@ mod tests {
     #[test]
     fn a_grant_of_one_state_is_not_a_grant_of_another() {
         // Arrange
-        let shared = Arc::new(crate::abi::v0_2_1::MemoryServices::new());
-        let mut mine = AbiState::new(shared.clone());
-        let theirs = AbiState::new(shared);
+        let mut mine = AbiState::new();
+        let theirs = AbiState::new();
         let queue = QueueId::try_from(1u32).unwrap();
 
         // Act

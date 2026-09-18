@@ -707,4 +707,48 @@ mod tests {
         assert!(stream.buffer_calls().is_empty());
         assert_eq!(stream.bytes(BufferType::HttpRequestBody), b"0123456789");
     }
+
+    #[test]
+    fn a_configuration_the_crate_serves_is_never_asked_of_the_stream_host() {
+        // Arrange
+        // The crate answers the two configuration buffers itself, so an
+        // embedder must never see them.
+        let mut instance = configured(b"vm bytes", b"plugin bytes");
+        instance
+            .state_mut()
+            .abi_mut()
+            .set_stream_host(Box::new(RecordingStream::new()));
+
+        // Act
+        let results = [
+            get(&mut instance, VM, 0, -1),
+            get(&mut instance, PLUGIN, 0, -1),
+        ];
+
+        // Assert
+        assert_eq!(results, [Status::Ok; 2]);
+        assert!(
+            RecordingStream::take(instance.state_mut())
+                .buffer_calls()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_plugin_configuration_of_another_root_is_not_reachable() {
+        // Arrange
+        // The crate serves the configuration of the root that owns the
+        // effective context, so a second root's bytes must stay out of reach.
+        let mut instance = configured(b"vm", b"mine");
+        let contexts = instance.state_mut().abi_mut().contexts_mut();
+        let theirs = contexts.create(None).unwrap();
+        contexts.set_plugin(theirs, Plugin::new().with_configuration(b"theirs".to_vec()));
+
+        // Act
+        let result = get(&mut instance, PLUGIN, 0, -1);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(returned(&mut instance), b"mine");
+    }
 }

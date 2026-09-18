@@ -108,7 +108,8 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::runtime::EngineConfig;
+    use crate::runtime::test_support::{MINIMAL_GUEST, engine, instance};
+    use crate::runtime::{EngineConfig, Limits};
 
     #[test]
     fn budget_rounds_ticks_up_and_never_below_one() {
@@ -147,5 +148,24 @@ mod tests {
         assert!(
             matches!(mapped, Error::Trap { message, backtrace: None } if message == "something else")
         );
+    }
+
+    #[test]
+    fn a_poisoned_store_is_refused_before_the_guest_runs() {
+        // Arrange
+        // Every public caller of `call_on` checks first, so this reaches the
+        // check directly. The guest writes a byte, so the assertion can tell a
+        // refusal from a call that ran.
+        let engine = engine();
+        let mut instance = instance(&engine, MINIMAL_GUEST).unwrap();
+        let allocator = instance.state().allocator().unwrap();
+        let budget = Budget::new(&Limits::default(), &engine);
+        instance.state_mut().poison();
+
+        // Act
+        let called = call_on::<i32, i32>(instance.store_mut(), budget, &allocator, 1);
+
+        // Assert
+        assert!(matches!(called, Err(Error::Poisoned)));
     }
 }
