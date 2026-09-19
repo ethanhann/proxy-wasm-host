@@ -3,10 +3,10 @@
 use wasmtime::{Linker, Store, StoreLimitsBuilder, TypedFunc, WasmParams, WasmResults};
 
 use crate::Error;
-use crate::guest_call::{Budget, call_on};
-#[cfg(any(test, feature = "test-support"))]
-use crate::memory::{GuestMemory, split};
-use crate::{Engine, HostState, Limits, Module};
+use crate::runtime::guest_call::{Budget, call_on};
+#[cfg(test)]
+use crate::runtime::memory::{GuestMemory, split};
+use crate::runtime::{Engine, HostState, Limits, Module};
 
 const MEMORY_EXPORT: &str = "memory";
 
@@ -20,7 +20,7 @@ const MEMORY_EXPORT: &str = "memory";
 /// Every later call then returns [`Error::Poisoned`], and a new instance
 /// from the same module is the recovery.
 /// Dropping the instance releases the guest memory.
-pub struct Instance {
+pub(crate) struct Instance {
     store: Store<HostState>,
     inner: wasmtime::Instance,
     module: Module,
@@ -40,13 +40,14 @@ impl Instance {
     /// # Errors
     ///
     /// Returns [`Error::Config`] when `limits` asks for fuel on an engine
-    /// without it.
+    /// without it, and when the engine meters fuel and `limits` names no
+    /// fuel budget, because a store with no fuel stops every call.
     /// Returns [`Error::Instantiate`] when `linker` lacks an import of the
     /// module, and when `linker` or `module` belongs to another engine.
     /// Returns [`Error::MissingMemory`] and [`Error::MissingAllocator`] for
     /// the two required exports, and the mapped error when a start function
     /// fails.
-    pub fn new(
+    pub(crate) fn new(
         engine: &Engine,
         linker: &Linker<HostState>,
         module: &Module,
@@ -58,8 +59,14 @@ impl Instance {
                 message: "fuel is not enabled on this engine".to_owned(),
             });
         }
+        if limits.fuel().is_none() && engine.fuel_enabled() {
+            return Err(Error::Config {
+                message: "this engine meters fuel, so the limits must name a fuel budget"
+                    .to_owned(),
+            });
+        }
         let budget = Budget::new(limits, engine);
-        let mut store = Store::new(engine.wasmtime(), HostState::with_slot(abi));
+        let mut store = Store::new(engine.wasmtime(), HostState::new(abi));
         budget.refill(&mut store)?;
         let mut builder = StoreLimitsBuilder::new();
         if let Some(bytes) = limits.memory_bytes() {
@@ -71,7 +78,7 @@ impl Instance {
         );
 
         let inner = linker
-            .instantiate(&mut store, module.compiled())
+            .instantiate(&mut store, module.wasmtime())
             .map_err(|source| Error::Instantiate {
                 source: source.into(),
             })?;
@@ -108,17 +115,17 @@ impl Instance {
     }
 
     /// Whether an earlier failure unwound a guest call.
-    pub fn is_poisoned(&self) -> bool {
+    pub(crate) fn is_poisoned(&self) -> bool {
         self.store.data().is_poisoned()
     }
 
     /// The store data.
-    pub fn state(&self) -> &HostState {
+    pub(crate) fn state(&self) -> &HostState {
         self.store.data()
     }
 
     /// The store data, for a change.
-    pub fn state_mut(&mut self) -> &mut HostState {
+    pub(crate) fn state_mut(&mut self) -> &mut HostState {
         self.store.data_mut()
     }
 
@@ -128,13 +135,13 @@ impl Instance {
     /// A call through the store does not refill the budget and does not
     /// poison the instance on failure, so production code uses
     /// [`Instance::call`].
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn store_mut(&mut self) -> &mut Store<HostState> {
+    #[cfg(test)]
+    pub(crate) fn store_mut(&mut self) -> &mut Store<HostState> {
         &mut self.store
     }
 
     /// Whether the module exports `name`.
-    pub fn has_export(&self, name: &str) -> bool {
+    pub(crate) fn has_export(&self, name: &str) -> bool {
         self.module.has_export(name)
     }
 
@@ -153,8 +160,8 @@ impl Instance {
     /// Returns [`Error::Poisoned`] after an earlier failure, and
     /// [`Error::MissingMemory`] when the cached memory handle is absent, which
     /// cannot happen after a successful construction.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn memory(&mut self) -> Result<GuestMemory<'_>, Error> {
+    #[cfg(test)]
+    pub(crate) fn memory(&mut self) -> Result<GuestMemory<'_>, Error> {
         self.ensure_live()?;
         split(&mut self.store).map(|(memory, _)| memory)
     }
@@ -167,7 +174,7 @@ impl Instance {
     /// [`Error::MissingExport`] when there is no such export,
     /// [`Error::ExportTypeMismatch`] when it is not a function of that type,
     /// and the mapped error when the call fails, which poisons the instance.
-    pub fn call<P: WasmParams, R: WasmResults>(
+    pub(crate) fn call<P: WasmParams, R: WasmResults>(
         &mut self,
         name: &str,
         params: P,
@@ -188,7 +195,7 @@ impl Instance {
     /// Returns [`Error::Poisoned`] after an earlier failure, and
     /// [`Error::ExportTypeMismatch`] when the export is not a function of
     /// that type.
-    pub fn typed_func<P: WasmParams, R: WasmResults>(
+    pub(crate) fn typed_func<P: WasmParams, R: WasmResults>(
         &mut self,
         name: &str,
     ) -> Result<Option<TypedFunc<P, R>>, Error> {
@@ -216,7 +223,7 @@ impl Instance {
     ///
     /// Returns [`Error::Poisoned`] after an earlier failure, and the mapped
     /// error when the call fails, which poisons the instance.
-    pub fn call_typed<P: WasmParams, R: WasmResults>(
+    pub(crate) fn call_typed<P: WasmParams, R: WasmResults>(
         &mut self,
         func: &TypedFunc<P, R>,
         params: P,
@@ -230,10 +237,12 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::EngineConfig;
     use crate::error::Limit;
-    use crate::memory::{GuestPtr, GuestSlice};
-    use crate::test_support::{MINIMAL_GUEST, engine, instance, instance_from, linker, wat_bytes};
+    use crate::runtime::EngineConfig;
+    use crate::runtime::memory::{GuestPtr, GuestSlice};
+    use crate::runtime::test_support::{
+        MINIMAL_GUEST, engine, instance, instance_from, linker, wat_bytes,
+    };
 
     /// A guest whose loop ends on its own, so a test cannot hang when a limit
     /// is not enforced.
@@ -407,6 +416,9 @@ mod tests {
         let result = instance_from(&engine, &module);
 
         // Assert
+        // wasmtime offers no read of the deadline, so this is indirect
+        // evidence: a store with a deadline of zero stops the write of a data
+        // segment, and the test depends on wasmtime checking it there.
         assert!(
             result.is_ok(),
             "a store with no deadline stops the instantiation at once: {:?}",
@@ -684,6 +696,24 @@ mod tests {
         assert!(
             matches!(second, Ok(1000)),
             "the budget the constructor set covers one call, so a second call proves the refill"
+        );
+    }
+
+    #[test]
+    fn a_metered_engine_with_no_fuel_budget_is_rejected() {
+        // Arrange
+        let engine = metered_engine();
+        let module = Module::new(&engine, &wat_bytes(MINIMAL_GUEST)).unwrap();
+        let limits = Limits::new();
+
+        // Act
+        let result = Instance::new(&engine, &linker(&engine), &module, Box::new(()), &limits);
+
+        // Assert
+        assert!(
+            matches!(&result, Err(Error::Config { message }) if message.contains("fuel budget")),
+            "a store that meters fuel and has none stops every call: {:?}",
+            result.err()
         );
     }
 

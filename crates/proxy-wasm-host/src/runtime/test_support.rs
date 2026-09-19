@@ -2,7 +2,8 @@
 
 use wasmtime::Linker;
 
-use crate::{Engine, EngineConfig, Error, HostState, Instance, Limits, Module};
+use crate::Error;
+use crate::runtime::{Engine, EngineConfig, HostState, Instance, Limits, Module};
 
 /// One memory page, a stub allocator that returns 1024, and a `_start`.
 pub(crate) const MINIMAL_GUEST: &str = r#"(module

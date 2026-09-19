@@ -8,8 +8,7 @@
 //! The serialization rules for maps and property paths live under [`codec`].
 //! You lend your own header maps and buffers to the crate through the
 //! [`HeaderMap`] and [`Buffer`] traits.
-//! The [`runtime`] module compiles and runs a guest, bounds its resources,
-//! and gives host functions safe access to guest memory.
+//! The [`runtime`] module compiles a guest and bounds its resources.
 //! [`abi::v0_2_1::Host`] links the host functions of the ABI on an engine.
 //! [`abi::v0_2_1::Guest`] binds a guest to the ABI and drives its callbacks.
 //!

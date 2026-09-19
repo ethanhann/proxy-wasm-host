@@ -14,9 +14,9 @@ impl<H: StreamState> CallScope<'_, H> {
     ///
     /// # Errors
     ///
-    /// Returns [`GuestError::Context`] for an unknown context and
-    /// [`GuestError::UnexpectedReturn`], and the runtime errors of
-    /// every callback.
+    /// Returns [`GuestError::Context`] for an unknown context,
+    /// [`GuestError::UnexpectedReturn`], and the
+    /// [common runtime failures](CallScope#the-common-runtime-failures).
     pub fn on_done(&mut self, context: ContextId) -> Result<bool, GuestError> {
         self.guest.require_live()?;
         prologue::require(self.guest, context)?;
@@ -42,8 +42,8 @@ impl<H: StreamState> CallScope<'_, H> {
     /// # Errors
     ///
     /// Returns [`GuestError::Context`] for an unknown context or one that is
-    /// not done, and the runtime errors of
-    /// every callback.
+    /// not done, and the
+    /// [common runtime failures](CallScope#the-common-runtime-failures).
     pub fn on_log(&mut self, context: ContextId) -> Result<(), GuestError> {
         self.guest.require_live()?;
         prologue::require_done(self.guest, context)?;
@@ -57,8 +57,8 @@ impl<H: StreamState> CallScope<'_, H> {
     /// # Errors
     ///
     /// Returns [`GuestError::Context`] for an unknown context, one that is
-    /// not done, or a root context that still has stream contexts, and the runtime errors of
-    /// every callback.
+    /// not done, or a root context that still has stream contexts, and the
+    /// [common runtime failures](CallScope#the-common-runtime-failures).
     pub fn on_delete(&mut self, context: ContextId) -> Result<(), GuestError> {
         self.guest.require_live()?;
         prologue::require_deletable(self.guest, context)?;

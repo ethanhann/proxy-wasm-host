@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::Engine;
 use crate::Error;
+use crate::runtime::Engine;
 
 const ABI_PREFIX: &str = "proxy_abi_version_";
 
@@ -13,8 +13,9 @@ const ABI_PREFIX: &str = "proxy_abi_version_";
 /// The module and its export names are reference counted, so a clone is two
 /// reference count increments.
 /// Compiling does not check the ABI version.
-/// The layer that binds a guest to an ABI reads [`Module::abi_exports`] and
-/// rejects an unsupported version by name.
+/// When you build a guest, the crate gives [`Module::abi_exports`] to
+/// `AbiVersion::detect`, so a module with an
+/// unsupported version is rejected by name.
 #[derive(Clone)]
 pub struct Module {
     inner: wasmtime::Module,
@@ -62,13 +63,7 @@ impl Module {
         &self.exports.abi
     }
 
-    /// The wasmtime module, for a test that reads its imports.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn wasmtime(&self) -> &wasmtime::Module {
-        self.compiled()
-    }
-
-    pub(crate) fn compiled(&self) -> &wasmtime::Module {
+    pub(crate) fn wasmtime(&self) -> &wasmtime::Module {
         &self.inner
     }
 }
@@ -76,7 +71,7 @@ impl Module {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{engine, wat_bytes};
+    use crate::runtime::test_support::{engine, wat_bytes};
 
     #[test]
     fn abi_exports_lists_the_version_markers_in_name_order() {
@@ -86,13 +81,14 @@ mod tests {
             (func (export "proxy_abi_version_0_2_1"))
             (func (export "other"))
             (func (export "proxy_abi_version_0_2_0")))"#;
+        let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
 
         // Act
-        let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
+        let exports = module.abi_exports();
 
         // Assert
         assert_eq!(
-            module.abi_exports(),
+            exports,
             [
                 "proxy_abi_version_0_2_0".to_owned(),
                 "proxy_abi_version_0_2_1".to_owned()

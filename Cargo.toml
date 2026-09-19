@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/proxy-wasm-host", "crates/proxy-wasm-host-internal"]
+members = ["crates/proxy-wasm-host"]
 exclude = ["crates/test-guests"]
 
 [workspace.package]

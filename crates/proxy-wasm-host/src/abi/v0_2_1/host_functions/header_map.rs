@@ -151,8 +151,9 @@ pub(super) fn proxy_remove_header_map_value(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::AbiAccess;
-    use crate::abi::v0_2_1::test_support::{RecordingStream, hosted, outcome, status, write};
-    use crate::abi::v0_2_1::test_support::{engine, instance};
+    use crate::abi::v0_2_1::test_support::{
+        RecordingStream, engine, hosted, instance, outcome, status, write,
+    };
     use crate::abi::v0_2_1::{Callback, ContextId};
     use crate::codec::pairs::encode_pairs;
     use crate::runtime::{Engine, Instance};

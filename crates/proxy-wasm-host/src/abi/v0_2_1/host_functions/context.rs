@@ -50,8 +50,7 @@ pub(super) fn proxy_set_effective_context(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::ContextState;
-    use crate::abi::v0_2_1::test_support::{MINIMAL_GUEST, engine, instance};
-    use crate::abi::v0_2_1::test_support::{outcome, status};
+    use crate::abi::v0_2_1::test_support::{MINIMAL_GUEST, engine, instance, outcome, status};
 
     const CALLERS: &str = r#"(module
         (import "env" "proxy_done" (func $done (result i32)))

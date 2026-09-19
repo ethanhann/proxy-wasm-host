@@ -12,8 +12,10 @@ impl<H: StreamState> CallScope<'_, H> {
     /// Returns [`GuestError::Context`] for an unknown context or a root
     /// context, [`GuestError::GuestRejected`], and
     /// [`GuestError::UnexpectedReturn`].
-    /// Returns [`Error::ValueTooLarge`](crate::Error::ValueTooLarge) for a
-    /// count above `i32::MAX`, and the runtime errors of every callback.
+    /// Returns [`GuestError::Runtime`] with
+    /// [`Error::ValueTooLarge`](crate::Error::ValueTooLarge) for a count
+    /// above `i32::MAX`, and the
+    /// [common runtime failures](CallScope#the-common-runtime-failures).
     pub fn on_request_headers(
         &mut self,
         context: ContextId,

@@ -15,11 +15,11 @@ use crate::runtime::HostState;
 /// state is the layer that reads it.
 ///
 /// The accessors do not fail.
-/// A host function of this version is linked only through the linker of a
-/// `Host`, which only `Guest::new` reads, and `Guest::new` fills the slot of
-/// the instance it builds.
-/// An instance with another value in its slot therefore never runs a host
-/// function that reads the slot.
+/// An instance is built only inside this crate, by `Guest::new` and by the
+/// test aids of this module, and each of them fills the slot through
+/// [`state`](crate::abi::v0_2_1::state).
+/// The runtime tests build an instance with another value in its slot, and
+/// they link no host function of this version, so nothing reads that slot.
 pub(crate) trait AbiAccess {
     fn abi(&self) -> &AbiState;
     fn abi_mut(&mut self) -> &mut AbiState;
@@ -166,10 +166,10 @@ impl AbiState {
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::NoStream;
-    use crate::abi::v0_2_1::test_support::RecordingStream;
+    use crate::abi::v0_2_1::test_support::{RecordingStream, services};
 
     fn state() -> AbiState {
-        AbiState::new(crate::abi::v0_2_1::test_support::services())
+        AbiState::new(services())
     }
 
     #[test]
@@ -221,8 +221,8 @@ mod tests {
     #[test]
     fn a_grant_of_one_state_is_not_a_grant_of_another() {
         // Arrange
-        let mut mine = AbiState::new(crate::abi::v0_2_1::test_support::services());
-        let theirs = AbiState::new(crate::abi::v0_2_1::test_support::services());
+        let mut mine = AbiState::new(services());
+        let theirs = AbiState::new(services());
         let queue = QueueId::try_from(1u32).unwrap();
 
         // Act
@@ -236,8 +236,8 @@ mod tests {
     #[test]
     fn the_trait_reaches_the_state_the_abi_root_built() {
         // Arrange
-        let services = crate::abi::v0_2_1::test_support::services();
-        let state = HostState::new(crate::abi::state(services));
+        let services = services();
+        let state = HostState::new(crate::abi::v0_2_1::state(services));
 
         // Act
         let found = state.abi().current_callback();
@@ -249,8 +249,8 @@ mod tests {
     #[test]
     fn a_write_through_the_trait_is_read_back_through_it() {
         // Arrange
-        let services = crate::abi::v0_2_1::test_support::services();
-        let mut state = HostState::new(crate::abi::state(services));
+        let services = services();
+        let mut state = HostState::new(crate::abi::v0_2_1::state(services));
 
         // Act
         state

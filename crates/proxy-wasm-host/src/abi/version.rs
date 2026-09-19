@@ -41,6 +41,12 @@ impl AbiVersion {
     }
 }
 
+impl fmt::Display for AbiVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.export_name())
+    }
+}
+
 /// A module advertises no ABI version that the crate accepts.
 ///
 /// [`Module::abi_exports`](crate::Module::abi_exports) lists what a module
@@ -52,15 +58,10 @@ pub struct UnsupportedAbi {
     pub found: Vec<String>,
 }
 
-impl fmt::Display for AbiVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.export_name())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::v0_2_1::test_support::{engine, wat_bytes};
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(ToString::to_string).collect()
@@ -115,10 +116,8 @@ mod tests {
     #[test]
     fn detect_reads_the_markers_a_module_lists() {
         // Arrange
-        let engine = crate::abi::v0_2_1::test_support::engine();
-        let bytes = crate::abi::v0_2_1::test_support::wat_bytes(
-            r#"(module (func (export "proxy_abi_version_0_2_1")))"#,
-        );
+        let engine = engine();
+        let bytes = wat_bytes(r#"(module (func (export "proxy_abi_version_0_2_1")))"#);
         let module = crate::Module::new(&engine, &bytes).unwrap();
 
         // Act

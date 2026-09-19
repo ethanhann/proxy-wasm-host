@@ -11,9 +11,9 @@ use wasmtime::{Memory, StoreLimits, TypedFunc};
 /// supplied.
 /// Everything the ABI layer keeps is in one opaque slot, which the ABI layer
 /// fills and only the ABI layer reads inside.
-/// The layer that binds a guest to an ABI is the caller of this type.
-/// No method clears the poison flag or replaces the cached handles.
-pub struct HostState {
+/// The type is crate private, so nothing outside the crate can clear the
+/// poison flag or replace the cached handles.
+pub(crate) struct HostState {
     store_limits: StoreLimits,
     memory: Option<Memory>,
     allocator: Option<TypedFunc<i32, i32>>,
@@ -22,13 +22,7 @@ pub struct HostState {
 }
 
 impl HostState {
-    /// A state with `abi` in its slot, for a test that builds its own store.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn new(abi: Box<dyn Any + Send>) -> Self {
-        Self::with_slot(abi)
-    }
-
-    pub(crate) fn with_slot(abi: Box<dyn Any + Send>) -> Self {
+    pub(crate) fn new(abi: Box<dyn Any + Send>) -> Self {
         Self {
             store_limits: StoreLimits::default(),
             memory: None,
@@ -38,8 +32,7 @@ impl HostState {
         }
     }
 
-    /// Whether an earlier failure unwound a guest call.
-    pub fn is_poisoned(&self) -> bool {
+    pub(crate) fn is_poisoned(&self) -> bool {
         self.poisoned
     }
 
@@ -67,18 +60,17 @@ impl HostState {
         self.store_limits = limits;
     }
 
-    /// Marks the instance as unusable, so every later call is refused.
-    pub fn poison(&mut self) {
+    pub(crate) fn poison(&mut self) {
         self.poisoned = true;
     }
 
     /// The slot the ABI layer filled, which only that layer reads inside.
-    pub fn abi_slot(&self) -> &(dyn Any + Send) {
+    pub(crate) fn abi_slot(&self) -> &(dyn Any + Send) {
         self.abi.as_ref()
     }
 
     /// The slot the ABI layer filled, which only that layer reads inside.
-    pub fn abi_slot_mut(&mut self) -> &mut (dyn Any + Send) {
+    pub(crate) fn abi_slot_mut(&mut self) -> &mut (dyn Any + Send) {
         self.abi.as_mut()
     }
 }

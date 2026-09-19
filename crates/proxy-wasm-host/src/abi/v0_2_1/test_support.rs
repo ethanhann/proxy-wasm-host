@@ -50,7 +50,7 @@ pub(crate) fn instance_with(
         engine,
         host.linker(),
         module,
-        crate::abi::state(services),
+        crate::abi::v0_2_1::state(services),
         &Limits::default(),
     )
 }

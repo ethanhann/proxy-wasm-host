@@ -58,8 +58,8 @@ impl Guest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::v0_2_1::test_support::{RecordingStream, status};
-    use crate::abi::v0_2_1::test_support::{engine, services, wat_bytes};
+    use crate::abi::v0_2_1::Host;
+    use crate::abi::v0_2_1::test_support::{RecordingStream, engine, services, status, wat_bytes};
     use crate::abi::v0_2_1::types::Status;
     use crate::abi::v0_2_1::{ContextId, NoStream};
     use crate::runtime::{Engine, Limits, Module};
@@ -87,7 +87,7 @@ mod tests {
     fn with_stream(engine: &Engine) -> (Guest, ContextId) {
         let module = Module::new(engine, &wat_bytes(HEADER_WRITER)).unwrap();
         let mut guest = Guest::new(
-            &crate::abi::v0_2_1::Host::new(engine).unwrap(),
+            &Host::new(engine).unwrap(),
             &module,
             services(),
             &Limits::default(),

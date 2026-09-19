@@ -195,9 +195,9 @@ pub(super) fn proxy_get_buffer_status(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::VmServices;
-    use crate::abi::v0_2_1::test_support::{RecordingSink, engine, wat_bytes};
     use crate::abi::v0_2_1::test_support::{
-        RecordingStream, bare, hosted, outcome, status, unhosted, write,
+        RecordingSink, RecordingStream, bare, engine, hosted, instance_with, outcome, status,
+        unhosted, wat_bytes, write,
     };
     use crate::abi::v0_2_1::{Access, PluginConfig};
     use crate::runtime::{GuestSlice, Instance, Module};
@@ -306,8 +306,7 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_configuration(vm.to_vec());
-        let mut instance =
-            crate::abi::v0_2_1::test_support::instance_with(&engine, &module, services).unwrap();
+        let mut instance = instance_with(&engine, &module, services).unwrap();
         let state = instance.state_mut();
         let root = state.abi_mut().contexts_mut().create(None).unwrap();
         state.abi_mut().contexts_mut().set_plugin(
@@ -432,8 +431,7 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_configuration(b"vm bytes".to_vec());
-        let mut instance =
-            crate::abi::v0_2_1::test_support::instance_with(&engine, &module, services).unwrap();
+        let mut instance = instance_with(&engine, &module, services).unwrap();
 
         // Act
         let result = get(&mut instance, VM, 0, -1);

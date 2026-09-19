@@ -69,10 +69,9 @@ mod tests {
 
     use super::*;
     use crate::abi::v0_2_1::AbiAccess;
-    use crate::abi::v0_2_1::test_support::engine;
     use crate::abi::v0_2_1::test_support::services::{RecordingServices, SharedCall};
     use crate::abi::v0_2_1::test_support::{
-        VM_ID, bare, outcome, returned, shared_hosted, status, write,
+        VM_ID, bare, engine, outcome, returned, shared_hosted, status, write,
     };
     use crate::abi::v0_2_1::{ContextId, InMemoryStore, Invocation, SharedServices};
     use crate::runtime::{GuestPtr, Instance};

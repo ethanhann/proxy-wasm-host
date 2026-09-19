@@ -37,8 +37,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::abi::v0_2_1::test_support::{RecordingSink, engine, instance_with_sink};
-    use crate::abi::v0_2_1::test_support::{outcome, status};
+    use crate::abi::v0_2_1::test_support::{
+        RecordingSink, engine, instance_with_sink, outcome, status,
+    };
     use crate::abi::v0_2_1::types::Status;
 
     const LOGGER: &str = r#"(module

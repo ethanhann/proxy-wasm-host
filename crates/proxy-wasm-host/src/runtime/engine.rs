@@ -14,7 +14,7 @@ const DEFAULT_EPOCH_PERIOD: Duration = Duration::from_millis(10);
 /// The settings of an [`Engine`].
 ///
 /// Fuel metering and the wasm stack size are engine properties in wasmtime.
-/// They live here and not in [`crate::Limits`].
+/// They live here and not in [`crate::runtime::Limits`].
 /// The struct is non exhaustive, so build it with [`EngineConfig::new`] and
 /// the `with_*` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,8 +65,11 @@ impl EngineConfig {
         self
     }
 
-    /// Enables fuel metering, so that [`crate::Limits::with_fuel`]
+    /// Enables fuel metering, so that [`crate::runtime::Limits::with_fuel`]
     /// can bound a guest call.
+    ///
+    /// A store on a metered engine starts with no fuel, so every guest you
+    /// build on this engine needs limits that name a fuel budget.
     #[must_use]
     pub fn with_fuel_enabled(mut self, enabled: bool) -> Self {
         self.fuel_enabled = enabled;
@@ -123,8 +126,8 @@ impl EngineConfig {
     }
 }
 
-/// A compiler and an epoch clock, shared by every module and
-/// instance of a process.
+/// A compiler and an epoch clock, shared by every module and instance of a
+/// process.
 ///
 /// A clone is one reference count increment.
 #[derive(Clone)]
@@ -178,8 +181,7 @@ impl Engine {
         self.inner.ticks.load(Ordering::Relaxed)
     }
 
-    /// The wasmtime engine, for a layer that builds a linker on it.
-    pub fn wasmtime(&self) -> &wasmtime::Engine {
+    pub(crate) fn wasmtime(&self) -> &wasmtime::Engine {
         &self.inner.engine
     }
 }

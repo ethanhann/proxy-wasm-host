@@ -255,8 +255,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::abi::v0_2_1::Host;
     use crate::abi::v0_2_1::test_support::{
-        RecordingSink, engine, instance, instance_with_sink, wat_bytes,
+        RecordingSink, engine, instance, instance_with, instance_with_sink, services, wat_bytes,
     };
     use crate::abi::v0_2_1::{Clock, VmServices};
     use crate::runtime::Module;
@@ -413,8 +414,7 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(&wat)).unwrap();
         let services =
             VmServices::new(Arc::new(RecordingSink::default())).with_clock(Arc::new(FixedClock));
-        let mut instance =
-            crate::abi::v0_2_1::test_support::instance_with(&engine, &module, services).unwrap();
+        let mut instance = instance_with(&engine, &module, services).unwrap();
 
         // Act
         let results = [
@@ -493,8 +493,7 @@ mod tests {
         ];
         let services =
             VmServices::new(Arc::new(RecordingSink::default())).with_environment(variables);
-        let mut instance =
-            crate::abi::v0_2_1::test_support::instance_with(&engine, &module, services).unwrap();
+        let mut instance = instance_with(&engine, &module, services).unwrap();
         assert!(std::env::var_os("PATH").is_some(), "the process has a PATH");
 
         // Act
@@ -587,12 +586,12 @@ mod tests {
     #[test]
     fn every_listed_wasi_name_is_registered() {
         // Arrange
-        let engine = crate::abi::v0_2_1::test_support::engine();
-        let host = crate::abi::v0_2_1::Host::new(&engine).unwrap();
-        let services = crate::abi::v0_2_1::test_support::services();
+        let engine = engine();
+        let host = Host::new(&engine).unwrap();
+        let services = services();
         let mut store = wasmtime::Store::new(
             engine.wasmtime(),
-            HostState::new(crate::abi::state(services)),
+            HostState::new(crate::abi::v0_2_1::state(services)),
         );
 
         // Act
@@ -615,10 +614,10 @@ mod tests {
     #[test]
     fn a_host_links_the_wasi_functions() {
         // Arrange
-        let engine = crate::abi::v0_2_1::test_support::engine();
+        let engine = engine();
 
         // Act
-        let built = crate::abi::v0_2_1::test_support::instance(&engine, WASI_IMPORTER);
+        let built = instance(&engine, WASI_IMPORTER);
 
         // Assert
         assert!(built.is_ok(), "{:?}", built.err());

@@ -9,8 +9,10 @@ use crate::abi::v0_2_1::{Callback, ContextId, ContextProblem};
 ///
 /// The first five variants are refusals that this ABI version defines, and
 /// the guest is still usable after each of them.
-/// [`GuestError::Runtime`] holds everything else, and the [`Error`] inside
-/// tells you whether the guest is poisoned.
+/// [`GuestError::Runtime`] holds every failure of the runtime.
+/// Some of those poison the guest and some do not, so after any error ask
+/// [`Guest::is_poisoned`](crate::abi::v0_2_1::Guest::is_poisoned) before you
+/// use the guest again.
 ///
 /// For example, you can tell a rejected configuration from a trap:
 ///
@@ -73,7 +75,6 @@ mod tests {
     use std::error::Error as _;
 
     use super::*;
-    use crate::error::MemoryError;
 
     #[test]
     fn the_context_errors_display_their_subject() {
@@ -126,12 +127,18 @@ mod tests {
             "no supported proxy_abi_version export, found [\"proxy_abi_version_0_1_0\"]"
         );
         assert!(matches!(error, GuestError::UnsupportedAbi(_)));
+        assert!(
+            error.source().is_none(),
+            "a transparent variant has the source of the value inside, which has none"
+        );
     }
 
     #[test]
     fn a_runtime_error_converts_and_keeps_its_text_and_its_source() {
         // Arrange
-        let inner = Error::from(MemoryError::NegativePointer { ptr: -1 });
+        let inner = Error::Compile {
+            source: "the bytes are not a module".into(),
+        };
         let expected_text = inner.to_string();
         let expected_source = inner.source().map(ToString::to_string);
 
@@ -139,11 +146,12 @@ mod tests {
         let error = GuestError::from(inner);
 
         // Assert
-        assert!(matches!(
-            error,
-            GuestError::Runtime(Error::Memory(MemoryError::NegativePointer { ptr: -1 }))
-        ));
+        assert!(matches!(error, GuestError::Runtime(Error::Compile { .. })));
         assert_eq!(error.to_string(), expected_text);
+        assert_eq!(
+            expected_source.as_deref(),
+            Some("the bytes are not a module")
+        );
         assert_eq!(error.source().map(ToString::to_string), expected_source);
     }
 }

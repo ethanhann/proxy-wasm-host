@@ -6,8 +6,8 @@
 
 use wasmtime::AsContextMut;
 
-use crate::HostState;
 use crate::error::{Error, MemoryError};
+use crate::runtime::HostState;
 
 /// One address in guest memory.
 ///
@@ -23,8 +23,7 @@ impl GuestPtr {
     }
 
     /// An address the host already validated, such as one it wrote itself.
-    /// The pointer for an address that is known to be unsigned.
-    pub fn from_address(address: u32) -> Self {
+    pub(crate) fn from_address(address: u32) -> Self {
         Self(address)
     }
 }
@@ -71,6 +70,7 @@ impl GuestSlice {
     }
 
     /// Whether the range spans no bytes.
+    #[cfg(test)]
     pub fn is_empty(self) -> bool {
         self.len == 0
     }
@@ -222,7 +222,7 @@ fn word<const N: usize>(bytes: &[u8]) -> [u8; N] {
 /// # Errors
 ///
 /// Returns [`Error::MissingMemory`] before the memory handle is cached.
-pub fn split<C: AsContextMut<Data = HostState>>(
+pub(crate) fn split<C: AsContextMut<Data = HostState>>(
     ctx: &mut C,
 ) -> Result<(GuestMemory<'_>, &mut HostState), Error> {
     let memory = ctx

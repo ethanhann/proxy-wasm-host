@@ -2,12 +2,32 @@
 //!
 //! An [`Engine`] compiles a [`Module`], and a guest runs it inside a store.
 //! [`Limits`] bound the CPU time, the fuel, and the memory of each guest.
+//! The ABI layer supplies the linker and an opaque state for each instance,
+//! so nothing here names an ABI version.
 
-#[doc(inline)]
-pub use proxy_wasm_host_internal::{Engine, EngineConfig, Limits, Module};
+mod alloc;
+mod engine;
+mod guest_call;
+mod host_state;
+mod instance;
+#[cfg(test)]
+mod layering;
+mod limits;
+mod memory;
+mod module;
 
 #[cfg(test)]
-pub(crate) use proxy_wasm_host_internal::map_guest_error;
-pub(crate) use proxy_wasm_host_internal::{
-    GuestMemory, GuestPtr, GuestSlice, HostState, Instance, split, write_return,
-};
+pub(crate) mod test_support;
+
+pub use engine::{Engine, EngineConfig};
+pub(crate) use instance::Instance;
+pub use limits::Limits;
+pub(crate) use memory::{GuestMemory, GuestPtr, GuestSlice};
+pub use module::Module;
+
+pub(crate) use alloc::write_return;
+pub(crate) use host_state::HostState;
+pub(crate) use memory::split;
+
+#[cfg(test)]
+pub(crate) use guest_call::map_guest_error;

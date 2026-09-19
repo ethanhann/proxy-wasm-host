@@ -16,11 +16,9 @@ workspace = true
 
 [dependencies]
 getrandom = "0.4"
-proxy-wasm-host-internal = { version = "=0.1.0", path = "../proxy-wasm-host-internal" }
 thiserror.workspace = true
 tracing.workspace = true
 wasmtime.workspace = true
 
 [dev-dependencies]
-proxy-wasm-host-internal = { version = "=0.1.0", path = "../proxy-wasm-host-internal", features = ["test-support"] }
 wat.workspace = true

@@ -77,6 +77,12 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{engine, instance, services, wat_bytes};
     use crate::runtime::{Limits, Module};
 
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    const _: () = {
+        let _ = assert_send_sync::<Host>;
+    };
+
     #[test]
     fn a_host_links_every_function_of_the_table() {
         // Arrange
@@ -84,7 +90,7 @@ mod tests {
         let host = Host::new(&engine).unwrap();
         let mut store = wasmtime::Store::new(
             engine.wasmtime(),
-            HostState::new(crate::abi::state(services())),
+            HostState::new(crate::abi::v0_2_1::state(services())),
         );
 
         // Act
@@ -152,6 +158,41 @@ mod tests {
         assert!(guest.is_ok(), "{:?}", guest.err());
         engine.increment_epoch();
         assert_eq!(clone.engine().ticks(), engine.ticks());
-        assert_eq!(format!("{clone:?}"), "Host { .. }");
+    }
+
+    #[test]
+    fn a_host_debugs_with_no_field() {
+        // Arrange
+        let host = Host::new(&engine()).unwrap();
+
+        // Act
+        let text = format!("{host:?}");
+
+        // Assert
+        assert_eq!(text, "Host { .. }");
+    }
+
+    #[test]
+    fn a_module_of_another_engine_is_refused_with_the_reason_in_the_source() {
+        // Arrange
+        let (engine, other) = (engine(), engine());
+        let host = Host::new(&engine).unwrap();
+        let wat = r#"(module
+            (memory (export "memory") 1)
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+            (func (export "proxy_abi_version_0_2_1")))"#;
+        let foreign = Module::new(&other, &wat_bytes(wat)).unwrap();
+
+        // Act
+        let result = Guest::new(&host, &foreign, services(), &Limits::default());
+
+        // Assert
+        let error = result.err().map(|error| format!("{error:?}"));
+        assert!(
+            error
+                .as_deref()
+                .is_some_and(|text| text.contains("Instantiate") && text.contains("Engine")),
+            "{error:?}"
+        );
     }
 }

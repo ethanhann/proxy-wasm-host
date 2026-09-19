@@ -9,9 +9,9 @@
 use wasmtime::AsContextMut;
 
 use crate::Error;
-use crate::HostState;
-use crate::guest_call::fail;
-use crate::memory::{GuestPtr, GuestSlice, split};
+use crate::runtime::HostState;
+use crate::runtime::guest_call::fail;
+use crate::runtime::memory::{GuestPtr, GuestSlice, split};
 
 /// Asks the guest allocator for `size` bytes.
 ///
@@ -71,7 +71,7 @@ pub(crate) fn write_to_guest(
 /// [`Error::AllocationFailed`] for a null allocation, [`Error::Poisoned`]
 /// after an earlier failure, and the mapped error when the allocator fails,
 /// which poisons the state.
-pub fn write_return(
+pub(crate) fn write_return(
     ctx: &mut impl AsContextMut<Data = HostState>,
     bytes: &[u8],
     return_data: GuestPtr,
@@ -93,9 +93,9 @@ pub fn write_return(
 mod tests {
     use super::*;
     use crate::error::{Limit, MemoryError};
-    use crate::guest_call::Budget;
-    use crate::test_support::{engine, instance, linker, wat_bytes};
-    use crate::{Engine, EngineConfig, Instance, Limits, Module};
+    use crate::runtime::guest_call::Budget;
+    use crate::runtime::test_support::{engine, instance, linker, wat_bytes};
+    use crate::runtime::{Engine, EngineConfig, Instance, Limits, Module};
 
     const FIXED: &str = r#"(module
         (memory (export "memory") 1)

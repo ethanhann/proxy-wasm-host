@@ -1,7 +1,7 @@
 //! What a guest exports beside the ABI's own callbacks.
 
 use crate::Error;
-use crate::abi::v0_2_1::{AbiAccess, Guest};
+use crate::abi::v0_2_1::{AbiAccess, Guest, GuestError};
 
 /// Every callback and every allocator the ABI names starts with this.
 const ABI_PREFIX: &str = "proxy_";
@@ -50,24 +50,25 @@ impl Guest {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Config`] for a name that starts with `proxy_` and for
-    /// `malloc`, because the crate calls those itself and a call from you
-    /// would leave the guest and the context table disagreeing.
-    /// Returns [`Error::Poisoned`] after an earlier failure, which includes a
+    /// Every failure is a [`GuestError::Runtime`].
+    /// The error inside is [`Error::Config`] for a name that starts with
+    /// `proxy_` and for `malloc`, because the crate calls those itself and a
+    /// call from you would leave the guest and the context table disagreeing.
+    /// It is [`Error::Poisoned`] after an earlier failure, which includes a
     /// callback that never returned.
-    /// Returns the errors of a guest call otherwise.
+    /// It is the error of the guest call otherwise.
     pub fn call_export<P: wasmtime::WasmParams, R: wasmtime::WasmResults>(
         &mut self,
         name: &str,
         params: P,
-    ) -> Result<R, Error> {
+    ) -> Result<R, GuestError> {
         if name.starts_with(ABI_PREFIX) || name == LIBC_ALLOCATOR {
-            return Err(Error::Config {
+            return Err(GuestError::Runtime(Error::Config {
                 message: format!("{name} belongs to the ABI, and the crate calls it itself"),
-            });
+            }));
         }
         self.require_live()?;
-        self.instance.call(name, params)
+        Ok(self.instance.call(name, params)?)
     }
 }
 
@@ -75,6 +76,7 @@ impl Guest {
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::Callback;
+    use crate::abi::v0_2_1::Host;
     use crate::abi::v0_2_1::test_support::{engine, services, wat_bytes};
     use crate::runtime::{Engine, Limits, Module};
 
@@ -95,7 +97,7 @@ mod tests {
     fn guest(engine: &Engine) -> Guest {
         let module = Module::new(engine, &wat_bytes(ADDER)).unwrap();
         Guest::new(
-            &crate::abi::v0_2_1::Host::new(engine).unwrap(),
+            &Host::new(engine).unwrap(),
             &module,
             services(),
             &Limits::default(),
@@ -103,9 +105,9 @@ mod tests {
         .unwrap()
     }
 
-    fn refused_name(result: Result<(), Error>) -> Option<String> {
+    fn refused_name(result: Result<(), GuestError>) -> Option<String> {
         match result {
-            Err(Error::Config { message }) => Some(message),
+            Err(GuestError::Runtime(Error::Config { message })) => Some(message),
             _ => None,
         }
     }
@@ -134,7 +136,9 @@ mod tests {
         let result = guest.call_export::<(), ()>("absent", ());
 
         // Assert
-        assert!(matches!(result, Err(Error::MissingExport { name }) if name == "absent"));
+        assert!(
+            matches!(result, Err(GuestError::Runtime(Error::MissingExport { name })) if name == "absent")
+        );
         assert!(!guest.is_poisoned());
     }
 
@@ -189,7 +193,7 @@ mod tests {
         let result = guest.call_export::<(i32, i32), i32>("add", (2, 3));
 
         // Assert
-        assert!(matches!(result, Err(Error::Poisoned)));
+        assert!(matches!(result, Err(GuestError::Runtime(Error::Poisoned))));
         assert!(guest.is_poisoned());
     }
 
@@ -217,7 +221,7 @@ mod tests {
             (func (export "crash") unreachable))"#;
         let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
         let mut guest = Guest::new(
-            &crate::abi::v0_2_1::Host::new(&engine).unwrap(),
+            &Host::new(&engine).unwrap(),
             &module,
             services(),
             &Limits::default(),
@@ -229,7 +233,10 @@ mod tests {
         let result = guest.call_export::<(), ()>("crash", ());
 
         // Assert
-        assert!(matches!(result, Err(Error::Trap { .. })));
+        assert!(matches!(
+            result,
+            Err(GuestError::Runtime(Error::Trap { .. }))
+        ));
         assert_eq!((before, guest.is_poisoned()), (false, true));
     }
 }

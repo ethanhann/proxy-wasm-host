@@ -24,10 +24,17 @@ use crate::abi::v0_2_1::{Callback, ContextId, Guest, PluginConfig, StreamState};
 /// A [`NoStream`](crate::abi::v0_2_1::NoStream) is the exception, because it
 /// holds nothing to give back.
 ///
+/// # The common runtime failures
+///
 /// Every callback returns [`GuestError::Runtime`] for a failure of the
 /// runtime.
 /// The error inside is [`Error::Poisoned`](crate::Error::Poisoned) after an
 /// earlier failure, or the error of the guest call, which poisons the guest.
+/// A callback that converts an argument for the guest can also refuse it
+/// with [`Error::ValueTooLarge`](crate::Error::ValueTooLarge) before the
+/// guest runs, which does not poison the guest.
+/// After any error, [`Guest::is_poisoned`] tells you whether the guest is
+/// still usable.
 ///
 /// A panic in your [`StreamState`] unwinds through the guest, and the
 /// callback that was running never returns.
@@ -111,9 +118,9 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     /// # Errors
     ///
     /// Returns [`GuestError::Context`] when the parent is unknown or not a
-    /// root context, [`GuestError::GuestRejected`], and
-    /// [`GuestError::ContextIdsExhausted`], and the runtime errors of every
-    /// callback.
+    /// root context, [`GuestError::GuestRejected`],
+    /// [`GuestError::ContextIdsExhausted`], and the
+    /// [common runtime failures](CallScope#the-common-runtime-failures).
     pub fn on_context_create(
         &mut self,
         parent: Option<ContextId>,
@@ -158,9 +165,10 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     /// Returns [`GuestError::Context`] when `root` is unknown or a stream
     /// context, [`GuestError::GuestRejected`], and
     /// [`GuestError::UnexpectedReturn`].
-    /// Returns [`Error::ValueTooLarge`](crate::Error::ValueTooLarge) for a
-    /// configuration above `i32::MAX` bytes, and the runtime errors of every
-    /// callback.
+    /// Returns [`GuestError::Runtime`] with
+    /// [`Error::ValueTooLarge`](crate::Error::ValueTooLarge) for a
+    /// configuration above `i32::MAX` bytes, and the
+    /// [common runtime failures](CallScope#the-common-runtime-failures).
     pub fn on_vm_start(&mut self, root: ContextId) -> Result<bool, GuestError> {
         self.guest.require_live()?;
         prologue::require_root(self.guest, root)?;
@@ -207,7 +215,13 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     ///
     /// # Errors
     ///
-    /// The same as [`CallScope::on_vm_start`].
+    /// Returns [`GuestError::Context`] when `root` is unknown or a stream
+    /// context, [`GuestError::GuestRejected`], and
+    /// [`GuestError::UnexpectedReturn`].
+    /// Returns [`GuestError::Runtime`] with
+    /// [`Error::ValueTooLarge`](crate::Error::ValueTooLarge) for a
+    /// configuration above `i32::MAX` bytes, and the
+    /// [common runtime failures](CallScope#the-common-runtime-failures).
     pub fn on_configure(
         &mut self,
         root: ContextId,
@@ -281,8 +295,8 @@ mod tests {
 
     use super::*;
     use crate::Error;
-    use crate::abi::v0_2_1::test_support::{RecordingStream, status};
-    use crate::abi::v0_2_1::test_support::{engine, services, wat_bytes};
+    use crate::abi::v0_2_1::Host;
+    use crate::abi::v0_2_1::test_support::{RecordingStream, engine, services, status, wat_bytes};
     use crate::abi::v0_2_1::types::{Action, MapType, Status};
     use crate::abi::v0_2_1::{Access, ContextProblem, ContextState, Invocation, NoStream};
     use crate::header_map::HeaderMap;
@@ -345,7 +359,7 @@ mod tests {
     fn guest(engine: &Engine, wat: &str) -> Guest {
         let module = Module::new(engine, &wat_bytes(wat)).unwrap();
         Guest::new(
-            &crate::abi::v0_2_1::Host::new(engine).unwrap(),
+            &Host::new(engine).unwrap(),
             &module,
             services(),
             &Limits::default(),
@@ -360,7 +374,7 @@ mod tests {
         ))
         .with_vm_configuration(bytes.to_vec());
         Guest::new(
-            &crate::abi::v0_2_1::Host::new(engine).unwrap(),
+            &Host::new(engine).unwrap(),
             &module,
             services,
             &Limits::default(),

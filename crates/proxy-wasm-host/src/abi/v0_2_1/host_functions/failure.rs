@@ -68,10 +68,17 @@ impl From<Error> for Failure {
             Error::ValueTooLarge { .. } | Error::AllocationFailed { .. } => {
                 Self::Status(Status::InternalFailure)
             }
-            // Every other failure ends the guest call. The error type can gain
-            // a variant, and an unwind poisons the instance, which is the
-            // safe answer for a failure this match does not know.
-            _ => Self::Unwind(error),
+            Error::Trap { .. }
+            | Error::LimitExceeded { .. }
+            | Error::GuestExit { .. }
+            | Error::Poisoned
+            | Error::MissingAllocator
+            | Error::MissingMemory
+            | Error::Compile { .. }
+            | Error::Instantiate { .. }
+            | Error::Config { .. }
+            | Error::MissingExport { .. }
+            | Error::ExportTypeMismatch { .. } => Self::Unwind(error),
         }
     }
 }

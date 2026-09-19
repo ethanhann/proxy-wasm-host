@@ -70,7 +70,18 @@ pub use stream_state::{Access, Invocation, NoStream, StreamState};
 ///
 /// A change of the wasmtime major version is a breaking change of this
 /// crate.
+#[doc(no_inline)]
 pub use wasmtime::{WasmParams, WasmResults};
 
 pub(crate) use context::table::ContextTable;
 pub(crate) use state::{AbiAccess, AbiState};
+
+/// Builds the ABI state of one instance, boxed for the store data to hold.
+///
+/// The runtime keeps this as an opaque value and never reads inside it, so
+/// the ABI layer adds state without a change under `runtime/`.
+/// The runtime decides when an instance gets one, and the ABI layer decides
+/// what it is.
+pub(crate) fn state(services: VmServices) -> Box<dyn std::any::Any + Send> {
+    Box::new(AbiState::new(services))
+}

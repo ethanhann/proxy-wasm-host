@@ -125,8 +125,7 @@ impl Guest {
     /// the module exports no accepted `proxy_abi_version_*` marker.
     /// Returns [`GuestError::Runtime`] with any error of the instantiation,
     /// and with [`Error::ExportTypeMismatch`](crate::Error::ExportTypeMismatch)
-    /// when a callback is exported
-    /// with another type than the ABI gives it.
+    /// when a callback is exported with another type than the ABI gives it.
     pub fn new(
         host: &Host,
         module: &Module,
@@ -138,7 +137,7 @@ impl Guest {
             host.engine(),
             host.linker(),
             module,
-            crate::abi::state(services),
+            crate::abi::v0_2_1::state(services),
             limits,
         )?;
         let callbacks = Callbacks::resolve(&mut instance)?;
@@ -264,15 +263,14 @@ impl Guest {
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::ContextId;
-    use crate::abi::v0_2_1::test_support::RecordingStream;
-    use crate::abi::v0_2_1::test_support::{engine, services, wat_bytes};
+    use crate::abi::v0_2_1::test_support::{RecordingStream, engine, services, wat_bytes};
     use crate::abi::v0_2_1::types::LogLevel;
     use crate::{Engine, Error};
 
     fn guest(engine: &Engine, wat: &str) -> Result<Guest, GuestError> {
         let module = Module::new(engine, &wat_bytes(wat))?;
         Guest::new(
-            &crate::abi::v0_2_1::Host::new(engine).unwrap(),
+            &Host::new(engine).unwrap(),
             &module,
             services(),
             &Limits::default(),
