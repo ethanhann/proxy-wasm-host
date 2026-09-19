@@ -103,11 +103,11 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::abi::v0_2_1::test_support::engine;
     use crate::abi::v0_2_1::test_support::services::{RecordingServices, SharedCall};
     use crate::abi::v0_2_1::test_support::{VM_ID, bare, outcome, shared_hosted, status, write};
     use crate::abi::v0_2_1::{InMemoryStore, SharedServices};
     use crate::runtime::Instance;
-    use crate::runtime::test_support::engine;
 
     const NAME: i32 = 1024;
     const RETURN_ID: i32 = 2000;

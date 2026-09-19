@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::time::Duration;
 
-use crate::Error;
+use crate::abi::v0_2_1::GuestError;
 use crate::abi::v0_2_1::{
     Callback, ContextId, ContextProblem, ContextState, ContextType, PluginConfig,
 };
@@ -38,26 +38,29 @@ impl ContextTable {
         }
     }
 
-    pub(crate) fn create(&mut self, parent: Option<ContextId>) -> Result<ContextId, Error> {
+    pub(crate) fn create(&mut self, parent: Option<ContextId>) -> Result<ContextId, GuestError> {
         let context_type = match parent {
             None => ContextType::Root,
             Some(parent) => match self.context_type(parent) {
                 Some(ContextType::Root) => ContextType::Stream,
                 Some(ContextType::Stream) => {
-                    return Err(Error::Context {
+                    return Err(GuestError::Context {
                         id: parent,
                         problem: ContextProblem::NotRoot,
                     });
                 }
                 None => {
-                    return Err(Error::Context {
+                    return Err(GuestError::Context {
                         id: parent,
                         problem: ContextProblem::Unknown,
                     });
                 }
             },
         };
-        let successor = self.next.checked_add(1).ok_or(Error::ContextIdsExhausted)?;
+        let successor = self
+            .next
+            .checked_add(1)
+            .ok_or(GuestError::ContextIdsExhausted)?;
         let id = ContextId::new(self.next);
         self.next = successor;
         self.entries.insert(
@@ -270,7 +273,7 @@ mod tests {
         assert_eq!(table.root_of(stream), Some(root));
         assert!(matches!(
             result,
-            Err(Error::Context { id, problem: ContextProblem::NotRoot }) if id == stream
+            Err(GuestError::Context { id, problem: ContextProblem::NotRoot }) if id == stream
         ));
     }
 
@@ -285,7 +288,7 @@ mod tests {
         // Assert
         assert!(matches!(
             result,
-            Err(Error::Context { id, problem: ContextProblem::Unknown }) if id.get() == 9
+            Err(GuestError::Context { id, problem: ContextProblem::Unknown }) if id.get() == 9
         ));
     }
 
@@ -299,7 +302,7 @@ mod tests {
 
         // Assert
         assert_eq!(results.0.unwrap().get(), u32::MAX - 1);
-        assert!(matches!(results.1, Err(Error::ContextIdsExhausted)));
+        assert!(matches!(results.1, Err(GuestError::ContextIdsExhausted)));
     }
 
     #[test]

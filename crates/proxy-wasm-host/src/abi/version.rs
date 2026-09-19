@@ -2,8 +2,6 @@
 
 use std::fmt;
 
-use crate::Error;
-
 /// A Proxy-Wasm ABI version that the crate accepts.
 ///
 /// A guest advertises its version with an exported function named
@@ -31,16 +29,27 @@ impl AbiVersion {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::UnsupportedAbi`] with the offered names when no
-    /// accepted version is among them.
-    pub fn detect(exports: &[String]) -> Result<Self, Error> {
+    /// Returns [`UnsupportedAbi`] with the offered names when no accepted
+    /// version is among them.
+    pub fn detect(exports: &[String]) -> Result<Self, UnsupportedAbi> {
         [Self::V0_2_1, Self::V0_2_0]
             .into_iter()
             .find(|version| exports.iter().any(|name| name == version.export_name()))
-            .ok_or_else(|| Error::UnsupportedAbi {
+            .ok_or_else(|| UnsupportedAbi {
                 found: exports.to_vec(),
             })
     }
+}
+
+/// A module advertises no ABI version that the crate accepts.
+///
+/// [`Module::abi_exports`](crate::Module::abi_exports) lists what a module
+/// advertises, and [`AbiVersion::detect`] reads that list.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("no supported proxy_abi_version export, found {found:?}")]
+pub struct UnsupportedAbi {
+    /// The `proxy_abi_version_*` exports the module has.
+    pub found: Vec<String>,
 }
 
 impl fmt::Display for AbiVersion {
@@ -88,7 +97,7 @@ mod tests {
         let result = AbiVersion::detect(&exports);
 
         // Assert
-        assert!(matches!(result, Err(Error::UnsupportedAbi { found }) if found == exports));
+        assert_eq!(result, Err(UnsupportedAbi { found: exports }));
     }
 
     #[test]
@@ -100,7 +109,23 @@ mod tests {
         let result = AbiVersion::detect(&exports);
 
         // Assert
-        assert!(matches!(result, Err(Error::UnsupportedAbi { found }) if found.is_empty()));
+        assert_eq!(result, Err(UnsupportedAbi { found: Vec::new() }));
+    }
+
+    #[test]
+    fn detect_reads_the_markers_a_module_lists() {
+        // Arrange
+        let engine = crate::abi::v0_2_1::test_support::engine();
+        let bytes = crate::abi::v0_2_1::test_support::wat_bytes(
+            r#"(module (func (export "proxy_abi_version_0_2_1")))"#,
+        );
+        let module = crate::Module::new(&engine, &bytes).unwrap();
+
+        // Act
+        let version = AbiVersion::detect(module.abi_exports());
+
+        // Assert
+        assert_eq!(version, Ok(AbiVersion::V0_2_1));
     }
 
     #[test]

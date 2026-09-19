@@ -37,9 +37,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::abi::v0_2_1::test_support::{RecordingSink, engine, instance_with_sink};
     use crate::abi::v0_2_1::test_support::{outcome, status};
     use crate::abi::v0_2_1::types::Status;
-    use crate::runtime::test_support::{RecordingSink, engine, instance_with_sink};
 
     const LOGGER: &str = r#"(module
         (import "env" "proxy_log" (func $log (param i32 i32 i32) (result i32)))

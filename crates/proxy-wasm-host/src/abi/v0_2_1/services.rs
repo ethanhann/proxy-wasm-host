@@ -252,7 +252,7 @@ impl VmServices {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::test_support::RecordingSink;
+    use crate::abi::v0_2_1::test_support::RecordingSink;
 
     fn services() -> VmServices {
         VmServices::new(Arc::new(RecordingSink::default()))

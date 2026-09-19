@@ -7,12 +7,11 @@ mod recovery;
 
 use std::fmt;
 
-use crate::Error;
 use crate::abi::AbiVersion;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::VmServices;
-use crate::abi::v0_2_1::{CallScope, Callback, NoStream, StreamState};
-use crate::runtime::{Engine, Instance, Limits, Module};
+use crate::abi::v0_2_1::{CallScope, Callback, GuestError, Host, NoStream, StreamState};
+use crate::runtime::{Instance, Limits, Module};
 use callbacks::Callbacks;
 
 /// A running guest and the ABI conversation with it.
@@ -42,7 +41,7 @@ use callbacks::Callbacks;
 /// ```
 /// use proxy_wasm_host::abi::v0_2_1::types::{Action, MapType, Status};
 /// use proxy_wasm_host::abi::v0_2_1::{Access, Guest, Invocation, PluginConfig, StreamState};
-/// use proxy_wasm_host::abi::v0_2_1::{LogSink, VmServices};
+/// use proxy_wasm_host::abi::v0_2_1::{GuestError, Host, LogSink, VmServices};
 /// use proxy_wasm_host::{Engine, HeaderMap, Limits, Module, VecHeaderMap};
 ///
 /// struct Stderr;
@@ -64,7 +63,7 @@ use callbacks::Callbacks;
 ///     }
 /// }
 ///
-/// # fn main() -> Result<(), proxy_wasm_host::Error> {
+/// # fn main() -> Result<(), GuestError> {
 /// let wat = r#"(module
 ///     (memory (export "memory") 1)
 ///     (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
@@ -72,7 +71,8 @@ use callbacks::Callbacks;
 /// let engine = Engine::new()?;
 /// let module = Module::new(&engine, &wat::parse_str(wat).unwrap())?;
 /// let services = VmServices::new(std::sync::Arc::new(Stderr));
-/// let mut guest = Guest::new(&engine, &module, services, &Limits::default())?;
+/// let host = Host::new(&engine)?;
+/// let mut guest = Guest::new(&host, &module, services, &Limits::default())?;
 ///
 /// let mut root_scope = guest.enter_root();
 /// let root = root_scope.on_context_create(None)?;
@@ -121,18 +121,26 @@ impl Guest {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::UnsupportedAbi`] before any instantiation when the
-    /// module exports no accepted `proxy_abi_version_*` marker, any error
-    /// the instance returns, and [`Error::ExportTypeMismatch`] when a
-    /// callback is exported with another type than the ABI gives it.
+    /// Returns [`GuestError::UnsupportedAbi`] before any instantiation when
+    /// the module exports no accepted `proxy_abi_version_*` marker.
+    /// Returns [`GuestError::Runtime`] with any error of the instantiation,
+    /// and with [`Error::ExportTypeMismatch`](crate::Error::ExportTypeMismatch)
+    /// when a callback is exported
+    /// with another type than the ABI gives it.
     pub fn new(
-        engine: &Engine,
+        host: &Host,
         module: &Module,
         services: VmServices,
         limits: &Limits,
-    ) -> Result<Self, Error> {
-        let abi = module.abi()?;
-        let mut instance = Instance::new(engine, module, crate::abi::state(services), limits)?;
+    ) -> Result<Self, GuestError> {
+        let abi = AbiVersion::detect(module.abi_exports())?;
+        let mut instance = Instance::new(
+            host.engine(),
+            host.linker(),
+            module,
+            crate::abi::state(services),
+            limits,
+        )?;
         let callbacks = Callbacks::resolve(&mut instance)?;
         Ok(Self {
             detached: None,
@@ -170,13 +178,12 @@ impl Guest {
     ///
     /// ```
     /// # use proxy_wasm_host::abi::v0_2_1::types::Action;
-    /// # use proxy_wasm_host::abi::v0_2_1::{ContextId, Guest, StreamState};
-    /// # use proxy_wasm_host::Error;
+    /// # use proxy_wasm_host::abi::v0_2_1::{ContextId, Guest, GuestError, StreamState};
     /// fn headers<H: StreamState>(
     ///     guest: &mut Guest,
     ///     stream: ContextId,
     ///     request: H,
-    /// ) -> (Result<Action, Error>, H) {
+    /// ) -> (Result<Action, GuestError>, H) {
     ///     guest.with(request, |scope| {
     ///         let action = scope.on_request_headers(stream, 0, false)?;
     ///         scope.on_done(stream)?;
@@ -258,12 +265,18 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::ContextId;
     use crate::abi::v0_2_1::test_support::RecordingStream;
+    use crate::abi::v0_2_1::test_support::{engine, services, wat_bytes};
     use crate::abi::v0_2_1::types::LogLevel;
-    use crate::runtime::test_support::{engine, services, wat_bytes};
+    use crate::{Engine, Error};
 
-    fn guest(engine: &Engine, wat: &str) -> Result<Guest, Error> {
+    fn guest(engine: &Engine, wat: &str) -> Result<Guest, GuestError> {
         let module = Module::new(engine, &wat_bytes(wat))?;
-        Guest::new(engine, &module, services(), &Limits::default())
+        Guest::new(
+            &crate::abi::v0_2_1::Host::new(engine).unwrap(),
+            &module,
+            services(),
+            &Limits::default(),
+        )
     }
 
     const MARKED: &str = r#"(module
@@ -298,7 +311,8 @@ mod tests {
         assert_eq!(results.0.unwrap().abi(), AbiVersion::V0_2_1);
         assert!(matches!(
             results.1,
-            Err(Error::UnsupportedAbi { found }) if found == ["proxy_abi_version_0_1_0"]
+            Err(GuestError::UnsupportedAbi(unsupported))
+                if unsupported.found == ["proxy_abi_version_0_1_0"]
         ));
     }
 
@@ -318,7 +332,8 @@ mod tests {
         // Assert
         assert!(matches!(
             result,
-            Err(Error::ExportTypeMismatch { name }) if name == "proxy_on_request_headers"
+            Err(GuestError::Runtime(Error::ExportTypeMismatch { name }))
+                if name == "proxy_on_request_headers"
         ));
     }
 
@@ -389,14 +404,14 @@ mod tests {
         // Act
         let (answer, recording) = guest.with(RecordingStream::new(), |scope| {
             let action = scope.on_request_headers(stream, 0, true)?;
-            Err::<(), Error>(Error::Config {
+            Err::<(), GuestError>(GuestError::from(Error::Config {
                 message: format!("stopping after {action:?}"),
-            })
+            }))
         });
 
         // Assert
         assert!(
-            matches!(&answer, Err(Error::Config { message }) if message == "stopping after Continue")
+            matches!(&answer, Err(GuestError::Runtime(Error::Config { message })) if message == "stopping after Continue")
         );
         assert_eq!(recording.calls().len(), 1);
         assert!(guest.take_stream_any().is_none());

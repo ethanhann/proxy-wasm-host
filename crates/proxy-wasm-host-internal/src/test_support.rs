@@ -1,11 +1,8 @@
-//! Guests and services that the runtime tests share.
+//! Guests and aids that the tests of this crate share.
 
-use std::sync::Arc;
+use wasmtime::Linker;
 
-use crate::Error;
-use crate::abi::services::state_with_sink;
-pub(crate) use crate::abi::services::{RecordingSink, services};
-use crate::runtime::{Engine, EngineConfig, Instance, Limits, Module};
+use crate::{Engine, EngineConfig, Error, HostState, Instance, Limits, Module};
 
 /// One memory page, a stub allocator that returns 1024, and a `_start`.
 pub(crate) const MINIMAL_GUEST: &str = r#"(module
@@ -21,33 +18,31 @@ pub(crate) fn engine() -> Engine {
         .unwrap()
 }
 
+/// A linker that offers no import.
+pub(crate) fn linker(engine: &Engine) -> Linker<HostState> {
+    Linker::new(engine.wasmtime())
+}
+
 /// The binary form of a guest written in the text format.
 pub(crate) fn wat_bytes(wat: &str) -> Vec<u8> {
     wat::parse_str(wat).unwrap()
 }
 
-/// An instance of `wat` with a recording sink and the default limits.
+/// An instance of `wat` with no import, an empty state slot, and the default
+/// limits.
 pub(crate) fn instance(engine: &Engine, wat: &str) -> Result<Instance, Error> {
     let module = Module::new(engine, &wat_bytes(wat))?;
     instance_from(engine, &module)
 }
 
-/// An instance of `module` with a recording sink and the default limits.
+/// An instance of `module` with no import, an empty state slot, and the
+/// default limits.
 pub(crate) fn instance_from(engine: &Engine, module: &Module) -> Result<Instance, Error> {
     Instance::new(
         engine,
+        &linker(engine),
         module,
-        crate::abi::state(services()),
+        Box::new(()),
         &Limits::default(),
     )
-}
-
-/// An instance of `wat` whose sink the test keeps.
-pub(crate) fn instance_with_sink(
-    engine: &Engine,
-    wat: &str,
-    sink: Arc<RecordingSink>,
-) -> Result<Instance, Error> {
-    let module = Module::new(engine, &wat_bytes(wat))?;
-    Instance::new(engine, &module, state_with_sink(sink), &Limits::default())
 }

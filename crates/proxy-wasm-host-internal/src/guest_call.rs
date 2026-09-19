@@ -12,7 +12,7 @@ use wasmtime::{Store, Trap, TypedFunc, WasmBacktrace, WasmParams, WasmResults};
 
 use crate::Error;
 use crate::error::Limit;
-use crate::runtime::{Engine, HostState, Limits};
+use crate::{Engine, HostState, Limits};
 
 /// The budgets that every call refills.
 #[derive(Debug, Clone, Copy)]
@@ -79,7 +79,7 @@ pub(crate) fn fail(state: &mut HostState, error: wasmtime::Error) -> Error {
 /// An [`Error`] a host function returned comes back as itself.
 /// The epoch, fuel, and stack traps become [`Error::LimitExceeded`].
 /// Every other trap becomes [`Error::Trap`] with the reason and the backtrace.
-pub(crate) fn map_guest_error(error: wasmtime::Error) -> Error {
+pub fn map_guest_error(error: wasmtime::Error) -> Error {
     let error = match error.downcast::<Error>() {
         Ok(ours) => return ours,
         Err(other) => other,
@@ -111,8 +111,8 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::runtime::test_support::{MINIMAL_GUEST, engine, instance};
-    use crate::runtime::{EngineConfig, Limits};
+    use crate::test_support::{MINIMAL_GUEST, engine, instance};
+    use crate::{EngineConfig, Limits};
 
     #[test]
     fn budget_rounds_ticks_up_and_never_below_one() {

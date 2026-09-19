@@ -11,7 +11,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use proxy_wasm_host::abi::v0_2_1::types::{Action, LogLevel, MapType, Status};
 use proxy_wasm_host::abi::v0_2_1::{
-    Access, ContextId, Guest, Invocation, LogSink, PluginConfig, StreamState, VmServices,
+    Access, ContextId, Guest, GuestError, Host, Invocation, LogSink, PluginConfig, StreamState,
+    VmServices,
 };
 use proxy_wasm_host::codec::pairs::PairVisitor;
 use proxy_wasm_host::{
@@ -122,7 +123,8 @@ impl Lifecycle {
         let module = Module::new(&engine, bytes).unwrap();
         let sink = Arc::new(Sink::default());
         let services = VmServices::new(sink.clone()).with_vm_configuration(vm_configuration);
-        let guest = Guest::new(&engine, &module, services, &Limits::default()).unwrap();
+        let host = Host::new(&engine).unwrap();
+        let guest = Guest::new(&host, &module, services, &Limits::default()).unwrap();
         Self {
             guest,
             sink,
@@ -133,7 +135,7 @@ impl Lifecycle {
     }
 
     /// Creates the root context, then runs VM start and configure.
-    fn start_root(&mut self) -> Result<(ContextId, bool, bool), Error> {
+    fn start_root(&mut self) -> Result<(ContextId, bool, bool), GuestError> {
         let mut scope = self.guest.enter_root();
         let root = scope.on_context_create(None)?;
         let started = scope.on_vm_start(root)?;
@@ -142,7 +144,7 @@ impl Lifecycle {
         Ok((root, started, configured))
     }
 
-    fn create_stream(&mut self) -> Result<ContextId, Error> {
+    fn create_stream(&mut self) -> Result<ContextId, GuestError> {
         let stream = self.guest.enter_root().on_context_create(self.root)?;
         self.stream = Some(stream);
         Ok(stream)
@@ -158,7 +160,7 @@ impl Lifecycle {
         lifecycle
     }
 
-    fn request_headers<H: StreamState>(&mut self, request: H) -> (Result<Action, Error>, H) {
+    fn request_headers<H: StreamState>(&mut self, request: H) -> (Result<Action, GuestError>, H) {
         let stream = self.stream.unwrap();
         self.guest
             .with(request, |scope| scope.on_request_headers(stream, 0, true))
@@ -166,7 +168,7 @@ impl Lifecycle {
 
     /// Runs done, log, and delete on the stream context with `request` lent
     /// to the guest, and gives the request back.
-    fn finalize<H: StreamState>(&mut self, request: H) -> (Result<bool, Error>, H) {
+    fn finalize<H: StreamState>(&mut self, request: H) -> (Result<bool, GuestError>, H) {
         let stream = self.stream.unwrap();
         self.guest.with(request, |scope| {
             let done = scope.on_done(stream)?;
@@ -287,7 +289,10 @@ fn a_refused_write_ends_the_stream_of_the_rust_sdk_guest() {
     let (action, request) = lifecycle.request_headers(sealed);
 
     // Assert
-    assert!(matches!(action, Err(Error::Trap { .. })));
+    assert!(matches!(
+        action,
+        Err(GuestError::Runtime(Error::Trap { .. }))
+    ));
     assert!(lifecycle.guest.is_poisoned());
     assert_eq!(
         request.headers.0.pairs(),

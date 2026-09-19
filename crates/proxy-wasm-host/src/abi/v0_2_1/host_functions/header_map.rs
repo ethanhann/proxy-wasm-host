@@ -152,9 +152,9 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::AbiAccess;
     use crate::abi::v0_2_1::test_support::{RecordingStream, hosted, outcome, status, write};
+    use crate::abi::v0_2_1::test_support::{engine, instance};
     use crate::abi::v0_2_1::{Callback, ContextId};
     use crate::codec::pairs::encode_pairs;
-    use crate::runtime::test_support::{engine, instance};
     use crate::runtime::{Engine, Instance};
 
     const REQUEST: i32 = MapType::HttpRequestHeaders as i32;

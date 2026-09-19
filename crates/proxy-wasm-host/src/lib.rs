@@ -10,8 +10,8 @@
 //! [`HeaderMap`] and [`Buffer`] traits.
 //! The [`runtime`] module compiles and runs a guest, bounds its resources,
 //! and gives host functions safe access to guest memory.
-//! [`abi::v0_2_1::Guest`] binds an instance to the ABI and drives its
-//! callbacks.
+//! [`abi::v0_2_1::Host`] links the host functions of the ABI on an engine.
+//! [`abi::v0_2_1::Guest`] binds a guest to the ABI and drives its callbacks.
 //!
 //! # The surface
 //!
@@ -20,8 +20,10 @@
 //! [`Limits`].
 //! You lend your own storage through [`Buffer`], [`HeaderMap`], and
 //! [`VecHeaderMap`], and you refuse a write with [`NotAllowed`].
-//! You read a failure through [`Error`], [`Limit`], and [`MemoryError`], and
-//! you ask which ABI a guest speaks with [`AbiVersion`].
+//! You read a failure of the runtime through [`Error`], [`Limit`], and
+//! [`MemoryError`].
+//! You ask which ABI a module speaks with [`AbiVersion`], and
+//! [`abi::UnsupportedAbi`] is the refusal.
 //!
 //! Everything an ABI version defines is named on that version's module, so a
 //! later version can define its own without a rename here.

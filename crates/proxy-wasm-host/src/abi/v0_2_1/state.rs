@@ -13,6 +13,13 @@ use crate::runtime::HostState;
 ///
 /// The store data keeps it as an opaque value, so the layer that owns the
 /// state is the layer that reads it.
+///
+/// The accessors do not fail.
+/// A host function of this version is linked only through the linker of a
+/// `Host`, which only `Guest::new` reads, and `Guest::new` fills the slot of
+/// the instance it builds.
+/// An instance with another value in its slot therefore never runs a host
+/// function that reads the slot.
 pub(crate) trait AbiAccess {
     fn abi(&self) -> &AbiState;
     fn abi_mut(&mut self) -> &mut AbiState;
@@ -162,7 +169,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::RecordingStream;
 
     fn state() -> AbiState {
-        AbiState::new(crate::runtime::test_support::services())
+        AbiState::new(crate::abi::v0_2_1::test_support::services())
     }
 
     #[test]
@@ -214,8 +221,8 @@ mod tests {
     #[test]
     fn a_grant_of_one_state_is_not_a_grant_of_another() {
         // Arrange
-        let mut mine = AbiState::new(crate::runtime::test_support::services());
-        let theirs = AbiState::new(crate::runtime::test_support::services());
+        let mut mine = AbiState::new(crate::abi::v0_2_1::test_support::services());
+        let theirs = AbiState::new(crate::abi::v0_2_1::test_support::services());
         let queue = QueueId::try_from(1u32).unwrap();
 
         // Act
@@ -229,7 +236,7 @@ mod tests {
     #[test]
     fn the_trait_reaches_the_state_the_abi_root_built() {
         // Arrange
-        let services = crate::runtime::test_support::services();
+        let services = crate::abi::v0_2_1::test_support::services();
         let state = HostState::new(crate::abi::state(services));
 
         // Act
@@ -242,7 +249,7 @@ mod tests {
     #[test]
     fn a_write_through_the_trait_is_read_back_through_it() {
         // Arrange
-        let services = crate::runtime::test_support::services();
+        let services = crate::abi::v0_2_1::test_support::services();
         let mut state = HostState::new(crate::abi::state(services));
 
         // Act

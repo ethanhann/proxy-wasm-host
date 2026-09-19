@@ -2,14 +2,14 @@
 
 mod finalize;
 mod prologue;
+mod stream;
 
 use std::any::Any;
 use std::fmt;
 use std::marker::PhantomData;
 
-use crate::Error;
 use crate::abi::v0_2_1::AbiAccess;
-use crate::abi::v0_2_1::types::Action;
+use crate::abi::v0_2_1::GuestError;
 use crate::abi::v0_2_1::{Callback, ContextId, Guest, PluginConfig, StreamState};
 
 /// A group of callbacks that share one stream state.
@@ -23,6 +23,11 @@ use crate::abi::v0_2_1::{Callback, ContextId, Guest, PluginConfig, StreamState};
 /// back until the next [`Guest::enter`].
 /// A [`NoStream`](crate::abi::v0_2_1::NoStream) is the exception, because it
 /// holds nothing to give back.
+///
+/// Every callback returns [`GuestError::Runtime`] for a failure of the
+/// runtime.
+/// The error inside is [`Error::Poisoned`](crate::Error::Poisoned) after an
+/// earlier failure, or the error of the guest call, which poisons the guest.
 ///
 /// A panic in your [`StreamState`] unwinds through the guest, and the
 /// callback that was running never returns.
@@ -105,10 +110,14 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Poisoned`], [`Error::Context`] when the parent is
-    /// unknown or not a root context, [`Error::GuestRejected`],
-    /// [`Error::ContextIdsExhausted`], and the errors of a guest call.
-    pub fn on_context_create(&mut self, parent: Option<ContextId>) -> Result<ContextId, Error> {
+    /// Returns [`GuestError::Context`] when the parent is unknown or not a
+    /// root context, [`GuestError::GuestRejected`], and
+    /// [`GuestError::ContextIdsExhausted`], and the runtime errors of every
+    /// callback.
+    pub fn on_context_create(
+        &mut self,
+        parent: Option<ContextId>,
+    ) -> Result<ContextId, GuestError> {
         self.guest.require_live()?;
         match parent {
             Some(parent) => {
@@ -146,11 +155,13 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Poisoned`], [`Error::Context`] when `root` is unknown
-    /// or a stream context, [`Error::GuestRejected`],
-    /// [`Error::ValueTooLarge`] for a configuration above `i32::MAX` bytes,
-    /// [`Error::UnexpectedReturn`], and the errors of a guest call.
-    pub fn on_vm_start(&mut self, root: ContextId) -> Result<bool, Error> {
+    /// Returns [`GuestError::Context`] when `root` is unknown or a stream
+    /// context, [`GuestError::GuestRejected`], and
+    /// [`GuestError::UnexpectedReturn`].
+    /// Returns [`Error::ValueTooLarge`](crate::Error::ValueTooLarge) for a
+    /// configuration above `i32::MAX` bytes, and the runtime errors of every
+    /// callback.
+    pub fn on_vm_start(&mut self, root: ContextId) -> Result<bool, GuestError> {
         self.guest.require_live()?;
         prologue::require_root(self.guest, root)?;
         prologue::accepted(self.guest, root)?;
@@ -197,7 +208,11 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     /// # Errors
     ///
     /// The same as [`CallScope::on_vm_start`].
-    pub fn on_configure(&mut self, root: ContextId, plugin: PluginConfig) -> Result<bool, Error> {
+    pub fn on_configure(
+        &mut self,
+        root: ContextId,
+        plugin: PluginConfig,
+    ) -> Result<bool, GuestError> {
         self.guest.require_live()?;
         prologue::require_root(self.guest, root)?;
         prologue::accepted(self.guest, root)?;
@@ -227,32 +242,6 @@ impl<'a, H: StreamState> CallScope<'a, H> {
                 .reject(root);
         }
         Ok(accepted)
-    }
-
-    /// Calls `proxy_on_request_headers` on a stream context.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Poisoned`], [`Error::Context`] for an unknown
-    /// context or a root context, [`Error::GuestRejected`],
-    /// [`Error::ValueTooLarge`] for a count above `i32::MAX`,
-    /// [`Error::UnexpectedReturn`], and the errors of a guest call.
-    pub fn on_request_headers(
-        &mut self,
-        context: ContextId,
-        num_headers: u32,
-        end_of_stream: bool,
-    ) -> Result<Action, Error> {
-        self.guest.require_live()?;
-        prologue::require_stream(self.guest, context)?;
-        prologue::accepted(self.guest, context)?;
-        let count = prologue::wire_u32(num_headers)?;
-        let callback = Callback::RequestHeaders;
-        let func = self.guest.callbacks().request_headers.clone();
-        let params = (context.wire(), count, i32::from(end_of_stream));
-        let default = i32::from(Action::Continue);
-        let value = prologue::run(self.guest, context, callback, func, params, default)?;
-        Action::try_from(value).map_err(|_| Error::UnexpectedReturn { callback, value })
     }
 
     /// Takes the stream state back.
@@ -291,11 +280,12 @@ mod tests {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     use super::*;
+    use crate::Error;
     use crate::abi::v0_2_1::test_support::{RecordingStream, status};
-    use crate::abi::v0_2_1::types::{MapType, Status};
+    use crate::abi::v0_2_1::test_support::{engine, services, wat_bytes};
+    use crate::abi::v0_2_1::types::{Action, MapType, Status};
     use crate::abi::v0_2_1::{Access, ContextProblem, ContextState, Invocation, NoStream};
     use crate::header_map::HeaderMap;
-    use crate::runtime::test_support::{engine, services, wat_bytes};
     use crate::runtime::{Engine, GuestPtr, Limits, Module};
     use std::time::Duration;
 
@@ -354,16 +344,28 @@ mod tests {
 
     fn guest(engine: &Engine, wat: &str) -> Guest {
         let module = Module::new(engine, &wat_bytes(wat)).unwrap();
-        Guest::new(engine, &module, services(), &Limits::default()).unwrap()
+        Guest::new(
+            &crate::abi::v0_2_1::Host::new(engine).unwrap(),
+            &module,
+            services(),
+            &Limits::default(),
+        )
+        .unwrap()
     }
 
     fn guest_with_vm_configuration(engine: &Engine, wat: &str, bytes: &[u8]) -> Guest {
         let module = Module::new(engine, &wat_bytes(wat)).unwrap();
         let services = crate::abi::v0_2_1::VmServices::new(std::sync::Arc::new(
-            crate::runtime::test_support::RecordingSink::default(),
+            crate::abi::v0_2_1::test_support::RecordingSink::default(),
         ))
         .with_vm_configuration(bytes.to_vec());
-        Guest::new(engine, &module, services, &Limits::default()).unwrap()
+        Guest::new(
+            &crate::abi::v0_2_1::Host::new(engine).unwrap(),
+            &module,
+            services,
+            &Limits::default(),
+        )
+        .unwrap()
     }
 
     fn recorded(guest: &mut Guest, at: u32) -> u32 {
@@ -417,7 +419,10 @@ mod tests {
         let result = guest
             .enter(RecordingStream::new())
             .on_request_headers(stream, 0, true);
-        assert!(matches!(result, Err(Error::Trap { .. })));
+        assert!(matches!(
+            result,
+            Err(GuestError::Runtime(Error::Trap { .. }))
+        ));
         (guest, stream)
     }
 
@@ -542,15 +547,15 @@ mod tests {
         // Assert
         assert!(matches!(
             results.0,
-            Err(Error::Context { id, problem: ContextProblem::NotRoot }) if id == stream
+            Err(GuestError::Context { id, problem: ContextProblem::NotRoot }) if id == stream
         ));
         assert!(matches!(
             results.1,
-            Err(Error::Context { id, problem: ContextProblem::Unknown }) if id.get() == 9
+            Err(GuestError::Context { id, problem: ContextProblem::Unknown }) if id.get() == 9
         ));
         assert!(matches!(
             results.2,
-            Err(Error::Context { id, problem: ContextProblem::NotStream }) if id == root
+            Err(GuestError::Context { id, problem: ContextProblem::NotStream }) if id == root
         ));
     }
 
@@ -567,7 +572,7 @@ mod tests {
         // Assert
         assert!(matches!(
             result,
-            Err(Error::UnexpectedReturn {
+            Err(GuestError::UnexpectedReturn {
                 callback: Callback::Configure,
                 value: 7
             })
@@ -591,7 +596,7 @@ mod tests {
         assert!(!refused);
         assert!(matches!(
             result,
-            Err(Error::GuestRejected { callback: Callback::VmStart, root: r }) if r == root
+            Err(GuestError::GuestRejected { callback: Callback::VmStart, root: r }) if r == root
         ));
         assert_eq!(guest.rejected_by(root), Some(Callback::VmStart));
         assert_eq!(recorded(&mut guest, 0), 1);
@@ -614,7 +619,7 @@ mod tests {
         // Assert
         assert!(matches!(
             results.0,
-            Err(Error::GuestRejected { callback: Callback::Configure, root: r }) if r == root
+            Err(GuestError::GuestRejected { callback: Callback::Configure, root: r }) if r == root
         ));
         assert_eq!(results.1.unwrap(), Action::Pause);
         assert_eq!(scope.guest().rejected_by(root), Some(Callback::Configure));
@@ -682,12 +687,15 @@ mod tests {
         assert_eq!(paused, Action::Pause);
         assert!(matches!(
             results.0,
-            Err(Error::UnexpectedReturn {
+            Err(GuestError::UnexpectedReturn {
                 callback: Callback::RequestHeaders,
                 value: 7
             })
         ));
-        assert!(matches!(results.1, Err(Error::ValueTooLarge { .. })));
+        assert!(matches!(
+            results.1,
+            Err(GuestError::Runtime(Error::ValueTooLarge { .. }))
+        ));
         assert_eq!(recorded(scope.guest_mut(), 32), 0);
     }
 
@@ -704,14 +712,14 @@ mod tests {
         // Assert
         assert!(matches!(
             results.0,
-            Err(Error::Context {
+            Err(GuestError::Context {
                 problem: ContextProblem::NotDone,
                 ..
             })
         ));
         assert!(matches!(
             results.1,
-            Err(Error::Context {
+            Err(GuestError::Context {
                 problem: ContextProblem::NotDone,
                 ..
             })
@@ -771,7 +779,7 @@ mod tests {
         // Assert
         assert!(matches!(
             result,
-            Err(Error::Context { id, problem: ContextProblem::HasChildren }) if id == root
+            Err(GuestError::Context { id, problem: ContextProblem::HasChildren }) if id == root
         ));
     }
 
@@ -915,7 +923,7 @@ mod tests {
         assert!(guest.instance().is_poisoned());
         assert!(matches!(
             guest.enter_root().on_done(stream),
-            Err(Error::Poisoned)
+            Err(GuestError::Runtime(Error::Poisoned))
         ));
     }
 
@@ -936,7 +944,7 @@ mod tests {
         // Assert
         assert!(outcome.is_err());
         assert!(unpoisoned);
-        assert!(matches!(next, Err(Error::Poisoned)));
+        assert!(matches!(next, Err(GuestError::Runtime(Error::Poisoned))));
         let _stream = scope.finish();
         assert!(guest.instance().is_poisoned());
     }
@@ -978,13 +986,34 @@ mod tests {
         );
 
         // Assert
-        assert!(matches!(results.0, Err(Error::Poisoned)));
-        assert!(matches!(results.1, Err(Error::Poisoned)));
-        assert!(matches!(results.2, Err(Error::Poisoned)));
-        assert!(matches!(results.3, Err(Error::Poisoned)));
-        assert!(matches!(results.4, Err(Error::Poisoned)));
-        assert!(matches!(results.5, Err(Error::Poisoned)));
-        assert!(matches!(results.6, Err(Error::Poisoned)));
+        assert!(matches!(
+            results.0,
+            Err(GuestError::Runtime(Error::Poisoned))
+        ));
+        assert!(matches!(
+            results.1,
+            Err(GuestError::Runtime(Error::Poisoned))
+        ));
+        assert!(matches!(
+            results.2,
+            Err(GuestError::Runtime(Error::Poisoned))
+        ));
+        assert!(matches!(
+            results.3,
+            Err(GuestError::Runtime(Error::Poisoned))
+        ));
+        assert!(matches!(
+            results.4,
+            Err(GuestError::Runtime(Error::Poisoned))
+        ));
+        assert!(matches!(
+            results.5,
+            Err(GuestError::Runtime(Error::Poisoned))
+        ));
+        assert!(matches!(
+            results.6,
+            Err(GuestError::Runtime(Error::Poisoned))
+        ));
         assert_eq!(
             scope.guest().context_state(stream),
             Some(ContextState::Active)

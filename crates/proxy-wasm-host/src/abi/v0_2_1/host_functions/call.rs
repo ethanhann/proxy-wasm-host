@@ -91,9 +91,9 @@ pub(super) fn from_embedder<T>(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::Callback;
+    use crate::abi::v0_2_1::test_support::{MINIMAL_GUEST, engine};
     use crate::abi::v0_2_1::test_support::{RecordingStream, bare, hosted, unhosted};
     use crate::abi::v0_2_1::types::MapType;
-    use crate::runtime::test_support::{MINIMAL_GUEST, engine};
 
     #[test]
     fn the_effective_context_is_reported_when_one_is_set() {

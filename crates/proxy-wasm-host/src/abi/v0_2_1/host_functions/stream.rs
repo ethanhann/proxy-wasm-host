@@ -33,13 +33,13 @@ pub(super) fn proxy_close_stream(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::AbiAccess;
+    use crate::abi::v0_2_1::test_support::engine;
     use crate::abi::v0_2_1::test_support::stream::Operation;
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, status, unhosted,
     };
     use crate::abi::v0_2_1::{Callback, NoStream};
     use crate::runtime::Instance;
-    use crate::runtime::test_support::engine;
 
     const GUEST: &str = r#"(module
         (import "env" "proxy_continue_stream" (func $resume (param i32) (result i32)))

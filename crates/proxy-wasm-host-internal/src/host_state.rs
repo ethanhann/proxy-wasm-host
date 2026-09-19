@@ -11,9 +11,9 @@ use wasmtime::{Memory, StoreLimits, TypedFunc};
 /// supplied.
 /// Everything the ABI layer keeps is in one opaque slot, which the ABI layer
 /// fills and only the ABI layer reads inside.
-/// The type is crate private, so nothing outside the crate can clear the
-/// poison flag or replace the cached handles.
-pub(crate) struct HostState {
+/// The layer that binds a guest to an ABI is the caller of this type.
+/// No method clears the poison flag or replaces the cached handles.
+pub struct HostState {
     store_limits: StoreLimits,
     memory: Option<Memory>,
     allocator: Option<TypedFunc<i32, i32>>,
@@ -22,7 +22,13 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    pub(crate) fn new(abi: Box<dyn Any + Send>) -> Self {
+    /// A state with `abi` in its slot, for a test that builds its own store.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new(abi: Box<dyn Any + Send>) -> Self {
+        Self::with_slot(abi)
+    }
+
+    pub(crate) fn with_slot(abi: Box<dyn Any + Send>) -> Self {
         Self {
             store_limits: StoreLimits::default(),
             memory: None,
@@ -32,7 +38,8 @@ impl HostState {
         }
     }
 
-    pub(crate) fn is_poisoned(&self) -> bool {
+    /// Whether an earlier failure unwound a guest call.
+    pub fn is_poisoned(&self) -> bool {
         self.poisoned
     }
 
@@ -60,17 +67,18 @@ impl HostState {
         self.store_limits = limits;
     }
 
-    pub(crate) fn poison(&mut self) {
+    /// Marks the instance as unusable, so every later call is refused.
+    pub fn poison(&mut self) {
         self.poisoned = true;
     }
 
     /// The slot the ABI layer filled, which only that layer reads inside.
-    pub(crate) fn abi_slot(&self) -> &(dyn Any + Send) {
+    pub fn abi_slot(&self) -> &(dyn Any + Send) {
         self.abi.as_ref()
     }
 
     /// The slot the ABI layer filled, which only that layer reads inside.
-    pub(crate) fn abi_slot_mut(&mut self) -> &mut (dyn Any + Send) {
+    pub fn abi_slot_mut(&mut self) -> &mut (dyn Any + Send) {
         self.abi.as_mut()
     }
 }
@@ -82,7 +90,7 @@ mod tests {
     #[test]
     fn poison_is_observable() {
         // Arrange
-        let mut state = HostState::new(crate::abi::state(crate::runtime::test_support::services()));
+        let mut state = HostState::new(Box::new(()));
 
         // Act
         state.poison();
@@ -94,7 +102,7 @@ mod tests {
     #[test]
     fn a_new_state_holds_nothing_and_is_not_poisoned() {
         // Arrange
-        let abi = crate::abi::state(crate::runtime::test_support::services());
+        let abi = Box::new(());
 
         // Act
         let state = HostState::new(abi);

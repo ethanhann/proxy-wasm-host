@@ -5,17 +5,16 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use wasmtime::{Config, Linker};
+use wasmtime::Config;
 
 use crate::Error;
-use crate::runtime::HostState;
 
 const DEFAULT_EPOCH_PERIOD: Duration = Duration::from_millis(10);
 
 /// The settings of an [`Engine`].
 ///
 /// Fuel metering and the wasm stack size are engine properties in wasmtime.
-/// They live here and not in [`crate::runtime::Limits`].
+/// They live here and not in [`crate::Limits`].
 /// The struct is non exhaustive, so build it with [`EngineConfig::new`] and
 /// the `with_*` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +65,7 @@ impl EngineConfig {
         self
     }
 
-    /// Enables fuel metering, so that [`crate::runtime::Limits::with_fuel`]
+    /// Enables fuel metering, so that [`crate::Limits::with_fuel`]
     /// can bound a guest call.
     #[must_use]
     pub fn with_fuel_enabled(mut self, enabled: bool) -> Self {
@@ -82,27 +81,13 @@ impl EngineConfig {
         self
     }
 
-    /// Builds the engine, its linker with the WASI functions and the ABI
-    /// v0.2.1 host functions, and unless disabled its ticker thread.
+    /// Builds the engine and, unless disabled, its ticker thread.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Config`] for a zero epoch period, and
-    /// [`Error::Instantiate`] when wasmtime rejects the configuration or a
-    /// WASI function cannot be registered.
+    /// [`Error::Instantiate`] when wasmtime rejects the configuration.
     pub fn build(self) -> Result<Engine, Error> {
-        self.build_with(crate::abi::v0_2_1::host_functions::register)
-    }
-
-    /// Builds the engine and lets `register` supply every import the linker
-    /// offers.
-    ///
-    /// The registrar supplies the WASI functions as well as the ABI functions,
-    /// so a registrar that adds nothing yields an engine that links neither.
-    pub(crate) fn build_with(
-        self,
-        register: impl FnOnce(&mut Linker<HostState>) -> Result<(), Error>,
-    ) -> Result<Engine, Error> {
         if self.epoch_period.is_zero() {
             return Err(Error::Config {
                 message: "the epoch period must not be zero".to_owned(),
@@ -117,8 +102,6 @@ impl EngineConfig {
         let engine = wasmtime::Engine::new(&config).map_err(|source| Error::Instantiate {
             source: source.into(),
         })?;
-        let mut linker = Linker::new(&engine);
-        register(&mut linker)?;
         let ticks = Arc::new(AtomicU64::new(0));
         let ticker = if self.external_ticks {
             None
@@ -132,7 +115,6 @@ impl EngineConfig {
         Ok(Engine {
             inner: Arc::new(EngineInner {
                 engine,
-                linker,
                 config: self,
                 ticks,
                 ticker,
@@ -141,7 +123,7 @@ impl EngineConfig {
     }
 }
 
-/// A compiler, a linker, and an epoch clock, shared by every module and
+/// A compiler and an epoch clock, shared by every module and
 /// instance of a process.
 ///
 /// A clone is one reference count increment.
@@ -152,7 +134,6 @@ pub struct Engine {
 
 struct EngineInner {
     engine: wasmtime::Engine,
-    linker: Linker<HostState>,
     config: EngineConfig,
     ticks: Arc<AtomicU64>,
     ticker: Option<Ticker>,
@@ -197,12 +178,9 @@ impl Engine {
         self.inner.ticks.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn wasmtime(&self) -> &wasmtime::Engine {
+    /// The wasmtime engine, for a layer that builds a linker on it.
+    pub fn wasmtime(&self) -> &wasmtime::Engine {
         &self.inner.engine
-    }
-
-    pub(crate) fn linker(&self) -> &Linker<HostState> {
-        &self.inner.linker
     }
 }
 
@@ -380,25 +358,5 @@ mod tests {
 
         // Assert
         assert!(started.elapsed() < Duration::from_secs(1));
-    }
-
-    #[test]
-    fn the_linker_defines_the_abi_host_functions() {
-        // Arrange
-        let engine = EngineConfig::new()
-            .with_external_ticks(true)
-            .build()
-            .unwrap();
-        let wat = r#"(module
-            (import "env" "proxy_log" (func (param i32 i32 i32) (result i32)))
-            (import "env" "proxy_call_foreign_function" (func (param i32 i32 i32 i32 i32 i32) (result i32)))
-            (memory (export "memory") 1)
-            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024))"#;
-
-        // Act
-        let result = crate::runtime::test_support::instance(&engine, wat);
-
-        // Assert
-        assert!(result.is_ok());
     }
 }

@@ -576,6 +576,17 @@ name = "proxy-wasm-host"
 version = "0.1.0"
 dependencies = [
  "getrandom",
+ "proxy-wasm-host-internal",
+ "thiserror",
+ "tracing",
+ "wasmtime",
+ "wat",
+]
+
+[[package]]
+name = "proxy-wasm-host-internal"
+version = "0.1.0"
+dependencies = [
  "thiserror",
  "tracing",
  "wasmtime",

@@ -59,9 +59,9 @@ impl Guest {
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::test_support::{RecordingStream, status};
+    use crate::abi::v0_2_1::test_support::{engine, services, wat_bytes};
     use crate::abi::v0_2_1::types::Status;
     use crate::abi::v0_2_1::{ContextId, NoStream};
-    use crate::runtime::test_support::{engine, services, wat_bytes};
     use crate::runtime::{Engine, Limits, Module};
 
     /// A guest that writes a request header in its callback and through an
@@ -86,7 +86,13 @@ mod tests {
 
     fn with_stream(engine: &Engine) -> (Guest, ContextId) {
         let module = Module::new(engine, &wat_bytes(HEADER_WRITER)).unwrap();
-        let mut guest = Guest::new(engine, &module, services(), &Limits::default()).unwrap();
+        let mut guest = Guest::new(
+            &crate::abi::v0_2_1::Host::new(engine).unwrap(),
+            &module,
+            services(),
+            &Limits::default(),
+        )
+        .unwrap();
         let root = guest.enter_root().on_context_create(None).unwrap();
         let stream = guest.enter_root().on_context_create(Some(root)).unwrap();
         (guest, stream)

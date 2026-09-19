@@ -8,15 +8,73 @@ pub(crate) use stream::RecordingStream;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::Error;
 use crate::abi::v0_2_1::AbiAccess;
+use crate::abi::v0_2_1::Host;
 use crate::abi::v0_2_1::LogSink;
 use crate::abi::v0_2_1::VmServices;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::LogLevel;
 use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{Callback, ContextId};
-use crate::runtime::test_support::{instance, wat_bytes};
-use crate::runtime::{Engine, GuestPtr, GuestSlice, Instance, Limits, Module};
+use crate::runtime::{Engine, EngineConfig, GuestPtr, GuestSlice, Instance, Limits, Module};
+
+/// One memory page, a stub allocator that returns 1024, and a `_start`.
+pub(crate) const MINIMAL_GUEST: &str = r#"(module
+    (memory (export "memory") 1)
+    (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+    (func (export "_start")))"#;
+
+/// An engine whose epoch advances only when a test asks.
+pub(crate) fn engine() -> Engine {
+    EngineConfig::new()
+        .with_external_ticks(true)
+        .build()
+        .unwrap()
+}
+
+/// The binary form of a guest written in the text format.
+pub(crate) fn wat_bytes(wat: &str) -> Vec<u8> {
+    wat::parse_str(wat).unwrap()
+}
+
+/// An instance of `module` with the host functions linked, the given
+/// services, and the default limits.
+pub(crate) fn instance_with(
+    engine: &Engine,
+    module: &Module,
+    services: VmServices,
+) -> Result<Instance, Error> {
+    let host = Host::new(engine)?;
+    Instance::new(
+        engine,
+        host.linker(),
+        module,
+        crate::abi::state(services),
+        &Limits::default(),
+    )
+}
+
+/// An instance of `wat` with a recording sink and the default limits.
+pub(crate) fn instance(engine: &Engine, wat: &str) -> Result<Instance, Error> {
+    let module = Module::new(engine, &wat_bytes(wat))?;
+    instance_from(engine, &module)
+}
+
+/// An instance of `module` with a recording sink and the default limits.
+pub(crate) fn instance_from(engine: &Engine, module: &Module) -> Result<Instance, Error> {
+    instance_with(engine, module, services())
+}
+
+/// An instance of `wat` whose sink the test keeps.
+pub(crate) fn instance_with_sink(
+    engine: &Engine,
+    wat: &str,
+    sink: Arc<RecordingSink>,
+) -> Result<Instance, Error> {
+    let module = Module::new(engine, &wat_bytes(wat))?;
+    instance_with(engine, &module, VmServices::new(sink))
+}
 
 /// The status an `i32` from a host function wrapper stands for.
 pub(crate) fn status(value: i32) -> Status {
@@ -76,13 +134,7 @@ pub(crate) fn shared_hosted(
     let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
         .with_vm_id(VM_ID.to_vec())
         .with_shared(shared);
-    let mut instance = Instance::new(
-        engine,
-        &module,
-        crate::abi::state(services),
-        &Limits::default(),
-    )
-    .unwrap();
+    let mut instance = instance_with(engine, &module, services).unwrap();
     let state = instance.state_mut();
     let root = state.abi_mut().contexts_mut().create(None).unwrap();
     state.abi_mut().contexts_mut().set_effective(root);

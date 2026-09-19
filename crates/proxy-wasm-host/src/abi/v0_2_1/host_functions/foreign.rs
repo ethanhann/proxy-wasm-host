@@ -42,11 +42,11 @@ pub(super) fn proxy_call_foreign_function(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::AbiAccess;
+    use crate::abi::v0_2_1::test_support::engine;
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, returned, status, unhosted, write,
     };
     use crate::runtime::Instance;
-    use crate::runtime::test_support::engine;
 
     const NAME: i32 = 1024;
     const ARGUMENTS: i32 = 1100;

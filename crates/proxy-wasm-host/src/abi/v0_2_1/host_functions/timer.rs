@@ -33,8 +33,8 @@ pub(super) fn proxy_set_tick_period_milliseconds(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::v0_2_1::test_support::engine;
     use crate::abi::v0_2_1::test_support::{bare, outcome, status, unhosted};
-    use crate::runtime::test_support::engine;
 
     const GUEST: &str = r#"(module
         (import "env" "proxy_set_tick_period_milliseconds" (func $tick (param i32) (result i32)))

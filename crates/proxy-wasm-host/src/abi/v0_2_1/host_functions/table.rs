@@ -166,11 +166,11 @@ mod tests {
     use wasmtime::ExternType;
 
     use super::*;
+    use crate::abi::v0_2_1::test_support::{engine, instance};
     use crate::abi::v0_2_1::test_support::{import_everything, status};
     use crate::abi::v0_2_1::types::Status;
     use crate::abi::v0_2_1::wasi::WASI_FUNCTIONS;
     use crate::runtime::Module;
-    use crate::runtime::test_support::{engine, instance};
 
     #[test]
     fn the_table_has_39_distinct_proxy_functions_returning_i32() {

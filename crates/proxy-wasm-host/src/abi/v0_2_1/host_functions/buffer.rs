@@ -195,12 +195,12 @@ pub(super) fn proxy_get_buffer_status(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::VmServices;
+    use crate::abi::v0_2_1::test_support::{RecordingSink, engine, wat_bytes};
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, status, unhosted, write,
     };
     use crate::abi::v0_2_1::{Access, PluginConfig};
-    use crate::runtime::test_support::{RecordingSink, engine, wat_bytes};
-    use crate::runtime::{GuestSlice, Instance, Limits, Module};
+    use crate::runtime::{GuestSlice, Instance, Module};
 
     const BODY: i32 = BufferType::HttpRequestBody as i32;
     const VM: i32 = BufferType::VmConfiguration as i32;
@@ -306,13 +306,8 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_configuration(vm.to_vec());
-        let mut instance = Instance::new(
-            &engine,
-            &module,
-            crate::abi::state(services),
-            &Limits::default(),
-        )
-        .unwrap();
+        let mut instance =
+            crate::abi::v0_2_1::test_support::instance_with(&engine, &module, services).unwrap();
         let state = instance.state_mut();
         let root = state.abi_mut().contexts_mut().create(None).unwrap();
         state.abi_mut().contexts_mut().set_plugin(
@@ -437,13 +432,8 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_configuration(b"vm bytes".to_vec());
-        let mut instance = Instance::new(
-            &engine,
-            &module,
-            crate::abi::state(services),
-            &Limits::default(),
-        )
-        .unwrap();
+        let mut instance =
+            crate::abi::v0_2_1::test_support::instance_with(&engine, &module, services).unwrap();
 
         // Act
         let result = get(&mut instance, VM, 0, -1);

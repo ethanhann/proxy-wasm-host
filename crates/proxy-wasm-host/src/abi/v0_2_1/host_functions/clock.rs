@@ -22,11 +22,11 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::abi::v0_2_1::test_support::{RecordingSink, engine, wat_bytes};
     use crate::abi::v0_2_1::test_support::{outcome, status};
     use crate::abi::v0_2_1::types::Status;
     use crate::abi::v0_2_1::{Clock, VmServices};
-    use crate::runtime::test_support::{RecordingSink, engine, wat_bytes};
-    use crate::runtime::{GuestPtr, Instance, Limits, Module};
+    use crate::runtime::{GuestPtr, Instance, Module};
 
     const GUEST: &str = r#"(module
         (import "env" "proxy_get_current_time_nanoseconds" (func $now (param i32) (result i32)))
@@ -51,13 +51,7 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services =
             VmServices::new(Arc::new(RecordingSink::default())).with_clock(Arc::new(Fixed));
-        Instance::new(
-            &engine,
-            &module,
-            crate::abi::state(services),
-            &Limits::default(),
-        )
-        .unwrap()
+        crate::abi::v0_2_1::test_support::instance_with(&engine, &module, services).unwrap()
     }
 
     #[test]

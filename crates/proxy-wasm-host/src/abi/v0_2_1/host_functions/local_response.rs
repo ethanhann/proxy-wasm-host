@@ -59,13 +59,13 @@ pub(super) fn proxy_send_local_response(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::AbiAccess;
+    use crate::abi::v0_2_1::test_support::engine;
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, status, unhosted, write,
     };
     use crate::abi::v0_2_1::{Callback, NoStream};
     use crate::codec::pairs::encode_pairs;
     use crate::runtime::Instance;
-    use crate::runtime::test_support::engine;
 
     const DETAILS: i32 = 1024;
     const BODY: i32 = 1100;

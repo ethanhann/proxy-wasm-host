@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/proxy-wasm-host"]
+members = ["crates/proxy-wasm-host", "crates/proxy-wasm-host-internal"]
 exclude = ["crates/test-guests"]
 
 [workspace.package]
@@ -9,6 +9,12 @@ rust-version = "1.95"
 license = "Apache-2.0"
 repository = "https://github.com/ethanhann/proxy-wasm-host"
 authors = ["Ethan Hann"]
+
+[workspace.dependencies]
+thiserror = "2"
+tracing = "0.1"
+wasmtime = { version = "48.0", default-features = false, features = ["runtime", "cranelift", "std", "addr2line", "demangle"] }
+wat = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -1,12 +1,12 @@
 //! A running guest and the calls into it.
 
-use wasmtime::{Store, StoreLimitsBuilder, TypedFunc, WasmParams, WasmResults};
+use wasmtime::{Linker, Store, StoreLimitsBuilder, TypedFunc, WasmParams, WasmResults};
 
 use crate::Error;
-use crate::runtime::guest_call::{Budget, call_on};
-#[cfg(test)]
-use crate::runtime::memory::{GuestMemory, GuestPtr, GuestSlice, split};
-use crate::runtime::{Engine, HostState, Limits, Module};
+use crate::guest_call::{Budget, call_on};
+#[cfg(any(test, feature = "test-support"))]
+use crate::memory::{GuestMemory, split};
+use crate::{Engine, HostState, Limits, Module};
 
 const MEMORY_EXPORT: &str = "memory";
 
@@ -20,7 +20,7 @@ const MEMORY_EXPORT: &str = "memory";
 /// Every later call then returns [`Error::Poisoned`], and a new instance
 /// from the same module is the recovery.
 /// Dropping the instance releases the guest memory.
-pub(crate) struct Instance {
+pub struct Instance {
     store: Store<HostState>,
     inner: wasmtime::Instance,
     module: Module,
@@ -40,11 +40,15 @@ impl Instance {
     /// # Errors
     ///
     /// Returns [`Error::Config`] when `limits` asks for fuel on an engine
-    /// without it, [`Error::Instantiate`] when an import is missing,
-    /// [`Error::MissingMemory`] and [`Error::MissingAllocator`] for the two
-    /// required exports, and the mapped error when a start function fails.
-    pub(crate) fn new(
+    /// without it.
+    /// Returns [`Error::Instantiate`] when `linker` lacks an import of the
+    /// module, and when `linker` or `module` belongs to another engine.
+    /// Returns [`Error::MissingMemory`] and [`Error::MissingAllocator`] for
+    /// the two required exports, and the mapped error when a start function
+    /// fails.
+    pub fn new(
         engine: &Engine,
+        linker: &Linker<HostState>,
         module: &Module,
         abi: Box<dyn std::any::Any + Send>,
         limits: &Limits,
@@ -55,7 +59,7 @@ impl Instance {
             });
         }
         let budget = Budget::new(limits, engine);
-        let mut store = Store::new(engine.wasmtime(), HostState::new(abi));
+        let mut store = Store::new(engine.wasmtime(), HostState::with_slot(abi));
         budget.refill(&mut store)?;
         let mut builder = StoreLimitsBuilder::new();
         if let Some(bytes) = limits.memory_bytes() {
@@ -66,9 +70,8 @@ impl Instance {
             |state: &mut HostState| -> &mut dyn wasmtime::ResourceLimiter { state.store_limits() },
         );
 
-        let inner = engine
-            .linker()
-            .instantiate(&mut store, module.wasmtime())
+        let inner = linker
+            .instantiate(&mut store, module.compiled())
             .map_err(|source| Error::Instantiate {
                 source: source.into(),
             })?;
@@ -105,25 +108,33 @@ impl Instance {
     }
 
     /// Whether an earlier failure unwound a guest call.
-    pub(crate) fn is_poisoned(&self) -> bool {
+    pub fn is_poisoned(&self) -> bool {
         self.store.data().is_poisoned()
     }
 
-    pub(crate) fn state(&self) -> &HostState {
+    /// The store data.
+    pub fn state(&self) -> &HostState {
         self.store.data()
     }
 
-    pub(crate) fn state_mut(&mut self) -> &mut HostState {
+    /// The store data, for a change.
+    pub fn state_mut(&mut self) -> &mut HostState {
         self.store.data_mut()
     }
 
-    #[cfg(test)]
-    pub(crate) fn store_mut(&mut self) -> &mut Store<HostState> {
+    /// The store, for a test that runs a host function body with no guest
+    /// call.
+    ///
+    /// A call through the store does not refill the budget and does not
+    /// poison the instance on failure, so production code uses
+    /// [`Instance::call`].
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn store_mut(&mut self) -> &mut Store<HostState> {
         &mut self.store
     }
 
     /// Whether the module exports `name`.
-    pub(crate) fn has_export(&self, name: &str) -> bool {
+    pub fn has_export(&self, name: &str) -> bool {
         self.module.has_export(name)
     }
 
@@ -142,8 +153,8 @@ impl Instance {
     /// Returns [`Error::Poisoned`] after an earlier failure, and
     /// [`Error::MissingMemory`] when the cached memory handle is absent, which
     /// cannot happen after a successful construction.
-    #[cfg(test)]
-    pub(crate) fn memory(&mut self) -> Result<GuestMemory<'_>, Error> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn memory(&mut self) -> Result<GuestMemory<'_>, Error> {
         self.ensure_live()?;
         split(&mut self.store).map(|(memory, _)| memory)
     }
@@ -156,7 +167,7 @@ impl Instance {
     /// [`Error::MissingExport`] when there is no such export,
     /// [`Error::ExportTypeMismatch`] when it is not a function of that type,
     /// and the mapped error when the call fails, which poisons the instance.
-    pub(crate) fn call<P: WasmParams, R: WasmResults>(
+    pub fn call<P: WasmParams, R: WasmResults>(
         &mut self,
         name: &str,
         params: P,
@@ -171,7 +182,13 @@ impl Instance {
 
     /// The exported function `name`, or `None` when the module has no such
     /// export.
-    pub(crate) fn typed_func<P: WasmParams, R: WasmResults>(
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Poisoned`] after an earlier failure, and
+    /// [`Error::ExportTypeMismatch`] when the export is not a function of
+    /// that type.
+    pub fn typed_func<P: WasmParams, R: WasmResults>(
         &mut self,
         name: &str,
     ) -> Result<Option<TypedFunc<P, R>>, Error> {
@@ -194,7 +211,12 @@ impl Instance {
 
     /// Refills the budget and calls `func`, which must belong to this
     /// instance.
-    pub(crate) fn call_typed<P: WasmParams, R: WasmResults>(
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Poisoned`] after an earlier failure, and the mapped
+    /// error when the call fails, which poisons the instance.
+    pub fn call_typed<P: WasmParams, R: WasmResults>(
         &mut self,
         func: &TypedFunc<P, R>,
         params: P,
@@ -208,11 +230,10 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::EngineConfig;
     use crate::error::Limit;
-    use crate::runtime::EngineConfig;
-    use crate::runtime::test_support::{
-        MINIMAL_GUEST, engine, instance, instance_from, services, wat_bytes,
-    };
+    use crate::memory::{GuestPtr, GuestSlice};
+    use crate::test_support::{MINIMAL_GUEST, engine, instance, instance_from, linker, wat_bytes};
 
     /// A guest whose loop ends on its own, so a test cannot hang when a limit
     /// is not enforced.
@@ -225,6 +246,13 @@ mod tests {
                 (local.set $i (i32.add (local.get $i) (i32.const 1)))
                 (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))
             (local.get $i)))"#;
+
+    /// A guest with a data segment, which wasmtime writes during
+    /// instantiation under the epoch deadline of the store.
+    const WITH_DATA: &str = r#"(module
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+        (data (i32.const 100) "kv"))"#;
 
     /// A bounded guest that moves the epoch itself, so the deadline can pass
     /// during a call with no second thread.
@@ -249,7 +277,7 @@ mod tests {
         let module = Module::new(engine, &wat_bytes(wat)).unwrap();
         let limits = Limits::new().with_fuel(u64::from(u32::MAX));
         let mut instance =
-            Instance::new(engine, &module, crate::abi::state(services()), &limits).unwrap();
+            Instance::new(engine, &linker(engine), &module, Box::new(()), &limits).unwrap();
         let before = instance.store_mut().get_fuel().unwrap();
         instance.call::<(), i32>("burn", ()).unwrap();
         before - instance.store_mut().get_fuel().unwrap()
@@ -270,24 +298,18 @@ mod tests {
             .unwrap()
     }
 
-    /// An engine whose guests can move the epoch through an `env.tick` import.
+    /// A linker whose guests can move the epoch through an `env.tick` import.
     ///
     /// The guest moves the clock itself, so a deadline can pass during a call
     /// with no second thread and no sleep.
-    fn ticking_engine() -> Engine {
-        EngineConfig::new()
-            .with_external_ticks(true)
-            .build_with(|linker| {
-                linker
-                    .func_wrap("env", "tick", |caller: wasmtime::Caller<'_, HostState>| {
-                        caller.engine().increment_epoch();
-                    })
-                    .map_err(|source| Error::Config {
-                        message: format!("the tick import could not be registered: {source}"),
-                    })?;
-                Ok(())
+    fn ticking_linker(engine: &Engine) -> Linker<HostState> {
+        let mut linker = linker(engine);
+        linker
+            .func_wrap("env", "tick", |caller: wasmtime::Caller<'_, HostState>| {
+                caller.engine().increment_epoch();
             })
-            .unwrap()
+            .unwrap();
+        linker
     }
 
     fn assert_send<T: Send>() {}
@@ -328,11 +350,11 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_wasi_import_does_not_instantiate() {
+    fn an_import_the_linker_lacks_does_not_instantiate() {
         // Arrange
         let engine = engine();
         let wat = r#"(module
-            (import "wasi_snapshot_preview1" "fd_read" (func (param i32 i32 i32 i32) (result i32)))
+            (import "env" "absent" (func (param i32) (result i32)))
             (memory (export "memory") 1)
             (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 0))"#;
 
@@ -341,6 +363,55 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Err(Error::Instantiate { .. })));
+    }
+
+    #[test]
+    fn a_linker_of_another_engine_does_not_instantiate() {
+        // Arrange
+        let (engine, other) = (engine(), engine());
+        let module = Module::new(&engine, &wat_bytes(MINIMAL_GUEST)).unwrap();
+        let foreign = linker(&other);
+
+        // Act
+        let result = Instance::new(&engine, &foreign, &module, Box::new(()), &Limits::default());
+
+        // Assert
+        assert!(matches!(result, Err(Error::Instantiate { .. })));
+    }
+
+    #[test]
+    fn the_constructor_sets_the_fuel_before_any_call() {
+        // Arrange
+        let engine = metered_engine();
+        let quiet = r#"(module
+            (memory (export "memory") 1)
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024))"#;
+        let module = Module::new(&engine, &wat_bytes(quiet)).unwrap();
+        let limits = Limits::new().with_fuel(12_345);
+
+        // Act
+        let mut instance =
+            Instance::new(&engine, &linker(&engine), &module, Box::new(()), &limits).unwrap();
+
+        // Assert
+        assert_eq!(instance.store_mut().get_fuel().ok(), Some(12_345));
+    }
+
+    #[test]
+    fn the_constructor_sets_the_epoch_deadline_before_instantiation() {
+        // Arrange
+        let engine = engine();
+        let module = Module::new(&engine, &wat_bytes(WITH_DATA)).unwrap();
+
+        // Act
+        let result = instance_from(&engine, &module);
+
+        // Assert
+        assert!(
+            result.is_ok(),
+            "a store with no deadline stops the instantiation at once: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -489,11 +560,19 @@ mod tests {
         // Arrange
         let engine = engine();
         let wat = r#"(module
-            (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+            (import "env" "exit" (func $exit (param i32)))
             (memory (export "memory") 1)
             (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
             (func (export "leave") (call $exit (i32.const 7))))"#;
-        let mut instance = instance(&engine, wat).unwrap();
+        let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
+        let mut linker = linker(&engine);
+        linker
+            .func_wrap("env", "exit", |code: i32| -> wasmtime::Result<()> {
+                Err(Error::GuestExit { code }.into())
+            })
+            .unwrap();
+        let mut instance =
+            Instance::new(&engine, &linker, &module, Box::new(()), &Limits::default()).unwrap();
 
         // Act
         let result = instance.call::<(), ()>("leave", ());
@@ -506,11 +585,11 @@ mod tests {
     #[test]
     fn a_guest_that_outlives_its_epoch_deadline_is_stopped() {
         // Arrange
-        let engine = ticking_engine();
+        let engine = engine();
         let module = Module::new(&engine, &wat_bytes(TICKING)).unwrap();
         let limits = Limits::new().with_cpu_time(Duration::from_millis(10));
-        let mut instance =
-            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
+        let linker = ticking_linker(&engine);
+        let mut instance = Instance::new(&engine, &linker, &module, Box::new(()), &limits).unwrap();
 
         // Act
         let result = instance.call::<(), i32>("burn", ());
@@ -535,7 +614,7 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(MINIMAL_GUEST)).unwrap();
         let limits = Limits::new().with_cpu_time(Duration::from_millis(10));
         let mut instance =
-            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
+            Instance::new(&engine, &linker(&engine), &module, Box::new(()), &limits).unwrap();
         for _ in 0..5 {
             engine.increment_epoch();
         }
@@ -560,7 +639,7 @@ mod tests {
             engine.increment_epoch();
         }
         let mut fresh =
-            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
+            Instance::new(&engine, &linker(&engine), &module, Box::new(()), &limits).unwrap();
 
         // Act
         let result = fresh.call::<(i32,), i32>("proxy_on_memory_allocate", (1,));
@@ -576,7 +655,7 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(BOUNDED)).unwrap();
         let limits = Limits::new().with_fuel(burn_cost(&engine, BOUNDED) / 4);
         let mut instance =
-            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
+            Instance::new(&engine, &linker(&engine), &module, Box::new(()), &limits).unwrap();
 
         // Act
         let result = instance.call::<(), i32>("burn", ());
@@ -595,7 +674,7 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(BOUNDED)).unwrap();
         let limits = Limits::new().with_fuel(one_call_of(&engine, BOUNDED));
         let mut instance =
-            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
+            Instance::new(&engine, &linker(&engine), &module, Box::new(()), &limits).unwrap();
         instance.call::<(), i32>("burn", ()).unwrap();
 
         // Act
@@ -616,7 +695,7 @@ mod tests {
         let limits = Limits::new().with_fuel(1);
 
         // Act
-        let result = Instance::new(&engine, &module, crate::abi::state(services()), &limits);
+        let result = Instance::new(&engine, &linker(&engine), &module, Box::new(()), &limits);
 
         // Assert
         assert!(matches!(result, Err(Error::Config { .. })));
@@ -656,7 +735,7 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
         let limits = Limits::new().with_memory_bytes(65_536);
         let mut instance =
-            Instance::new(&engine, &module, crate::abi::state(services()), &limits).unwrap();
+            Instance::new(&engine, &linker(&engine), &module, Box::new(()), &limits).unwrap();
 
         // Act
         let grown = instance.call::<(), i32>("grow", ());

@@ -9,9 +9,9 @@
 use wasmtime::AsContextMut;
 
 use crate::Error;
-use crate::runtime::HostState;
-use crate::runtime::guest_call::fail;
-use crate::runtime::memory::{GuestPtr, GuestSlice, split};
+use crate::HostState;
+use crate::guest_call::fail;
+use crate::memory::{GuestPtr, GuestSlice, split};
 
 /// Asks the guest allocator for `size` bytes.
 ///
@@ -63,7 +63,15 @@ pub(crate) fn write_to_guest(
 ///
 /// Both return pointers are checked before the allocator runs, so a bad
 /// pointer costs the guest no allocation.
-pub(crate) fn write_return(
+///
+/// # Errors
+///
+/// Returns [`Error::Memory`] for a return pointer or an allocation outside
+/// memory, [`Error::ValueTooLarge`] for a value above `i32::MAX` bytes,
+/// [`Error::AllocationFailed`] for a null allocation, [`Error::Poisoned`]
+/// after an earlier failure, and the mapped error when the allocator fails,
+/// which poisons the state.
+pub fn write_return(
     ctx: &mut impl AsContextMut<Data = HostState>,
     bytes: &[u8],
     return_data: GuestPtr,
@@ -85,9 +93,9 @@ pub(crate) fn write_return(
 mod tests {
     use super::*;
     use crate::error::{Limit, MemoryError};
-    use crate::runtime::guest_call::Budget;
-    use crate::runtime::test_support::{engine, instance, services, wat_bytes};
-    use crate::runtime::{Engine, EngineConfig, Instance, Limits, Module};
+    use crate::guest_call::Budget;
+    use crate::test_support::{engine, instance, linker, wat_bytes};
+    use crate::{Engine, EngineConfig, Instance, Limits, Module};
 
     const FIXED: &str = r#"(module
         (memory (export "memory") 1)
@@ -391,42 +399,41 @@ mod tests {
             call $take
             (call $ticks (local.get $n))))"#;
 
-    /// An engine whose guests can ask the host for an allocation through
-    /// `env.take` and can move the epoch through `env.tick`.
+    /// An engine that meters fuel and moves its epoch only when asked.
     fn mid_call_engine() -> Engine {
         EngineConfig::new()
             .with_external_ticks(true)
             .with_fuel_enabled(true)
-            .build_with(|linker| {
-                linker
-                    .func_wrap(
-                        "env",
-                        "take",
-                        |mut caller: wasmtime::Caller<'_, HostState>| -> wasmtime::Result<()> {
-                            allocate(&mut caller, 16)?;
-                            Ok(())
-                        },
-                    )
-                    .and_then(|linker| {
-                        linker.func_wrap(
-                            "env",
-                            "tick",
-                            |caller: wasmtime::Caller<'_, HostState>| {
-                                caller.engine().increment_epoch();
-                            },
-                        )
-                    })
-                    .map_err(|source| Error::Config {
-                        message: format!("the test imports could not be registered: {source}"),
-                    })?;
-                Ok(())
-            })
+            .build()
             .unwrap()
+    }
+
+    /// A linker whose guests can ask the host for an allocation through
+    /// `env.take` and can move the epoch through `env.tick`.
+    fn mid_call_linker(engine: &Engine) -> wasmtime::Linker<HostState> {
+        let mut linker = linker(engine);
+        linker
+            .func_wrap(
+                "env",
+                "take",
+                |mut caller: wasmtime::Caller<'_, HostState>| -> wasmtime::Result<()> {
+                    allocate(&mut caller, 16)?;
+                    Ok(())
+                },
+            )
+            .unwrap();
+        linker
+            .func_wrap("env", "tick", |caller: wasmtime::Caller<'_, HostState>| {
+                caller.engine().increment_epoch();
+            })
+            .unwrap();
+        linker
     }
 
     fn mid_call_instance(engine: &Engine, limits: &Limits) -> Instance {
         let module = Module::new(engine, &wat_bytes(ALLOCATES_MID_CALL)).unwrap();
-        Instance::new(engine, &module, crate::abi::state(services()), limits).unwrap()
+        let linker = mid_call_linker(engine);
+        Instance::new(engine, &linker, &module, Box::new(()), limits).unwrap()
     }
 
     /// The fuel one call of `fuel_once` costs on this engine, measured so a

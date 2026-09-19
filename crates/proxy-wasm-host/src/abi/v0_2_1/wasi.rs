@@ -255,11 +255,11 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::abi::v0_2_1::{Clock, VmServices};
-    use crate::runtime::test_support::{
+    use crate::abi::v0_2_1::test_support::{
         RecordingSink, engine, instance, instance_with_sink, wat_bytes,
     };
-    use crate::runtime::{Instance, Limits, Module};
+    use crate::abi::v0_2_1::{Clock, VmServices};
+    use crate::runtime::Module;
 
     const HEADER: &str = r#"
         (memory (export "memory") 1)
@@ -413,13 +413,8 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(&wat)).unwrap();
         let services =
             VmServices::new(Arc::new(RecordingSink::default())).with_clock(Arc::new(FixedClock));
-        let mut instance = Instance::new(
-            &engine,
-            &module,
-            crate::abi::state(services),
-            &Limits::default(),
-        )
-        .unwrap();
+        let mut instance =
+            crate::abi::v0_2_1::test_support::instance_with(&engine, &module, services).unwrap();
 
         // Act
         let results = [
@@ -498,13 +493,8 @@ mod tests {
         ];
         let services =
             VmServices::new(Arc::new(RecordingSink::default())).with_environment(variables);
-        let mut instance = Instance::new(
-            &engine,
-            &module,
-            crate::abi::state(services),
-            &Limits::default(),
-        )
-        .unwrap();
+        let mut instance =
+            crate::abi::v0_2_1::test_support::instance_with(&engine, &module, services).unwrap();
         assert!(std::env::var_os("PATH").is_some(), "the process has a PATH");
 
         // Act
@@ -597,8 +587,9 @@ mod tests {
     #[test]
     fn every_listed_wasi_name_is_registered() {
         // Arrange
-        let engine = crate::runtime::test_support::engine();
-        let services = crate::runtime::test_support::services();
+        let engine = crate::abi::v0_2_1::test_support::engine();
+        let host = crate::abi::v0_2_1::Host::new(&engine).unwrap();
+        let services = crate::abi::v0_2_1::test_support::services();
         let mut store = wasmtime::Store::new(
             engine.wasmtime(),
             HostState::new(crate::abi::state(services)),
@@ -607,7 +598,7 @@ mod tests {
         // Act
         let defined: Vec<bool> = WASI_FUNCTIONS
             .iter()
-            .map(|name| engine.linker().get(&mut store, MODULE, name).is_ok())
+            .map(|name| host.linker().get(&mut store, MODULE, name).is_ok())
             .collect();
 
         // Assert
@@ -615,43 +606,21 @@ mod tests {
         assert!(defined.iter().all(|defined| *defined));
     }
 
-    /// A guest that imports one WASI function, which resolves only when the
-    /// registrar supplied it.
+    /// A guest that imports one WASI function.
     const WASI_IMPORTER: &str = r#"(module
         (import "wasi_snapshot_preview1" "proc_exit" (func (param i32)))
         (memory (export "memory") 1)
         (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024))"#;
 
     #[test]
-    fn the_default_build_links_the_wasi_functions() {
+    fn a_host_links_the_wasi_functions() {
         // Arrange
-        let engine = crate::runtime::test_support::engine();
+        let engine = crate::abi::v0_2_1::test_support::engine();
 
         // Act
-        let built = crate::runtime::test_support::instance(&engine, WASI_IMPORTER);
+        let built = crate::abi::v0_2_1::test_support::instance(&engine, WASI_IMPORTER);
 
         // Assert
-        assert!(
-            built.is_ok(),
-            "the default registrar supplies the wasi functions"
-        );
-    }
-
-    #[test]
-    fn a_registrar_that_adds_nothing_links_no_wasi_function() {
-        // Arrange
-        let engine = crate::runtime::EngineConfig::new()
-            .with_external_ticks(true)
-            .build_with(|_| Ok(()))
-            .unwrap();
-
-        // Act
-        let built = crate::runtime::test_support::instance(&engine, WASI_IMPORTER);
-
-        // Assert
-        assert!(
-            built.is_err(),
-            "the wasi functions come from the registrar, so one that adds nothing leaves them unresolved"
-        );
+        assert!(built.is_ok(), "{:?}", built.err());
     }
 }

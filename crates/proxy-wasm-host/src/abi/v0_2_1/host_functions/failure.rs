@@ -68,22 +68,10 @@ impl From<Error> for Failure {
             Error::ValueTooLarge { .. } | Error::AllocationFailed { .. } => {
                 Self::Status(Status::InternalFailure)
             }
-            Error::Trap { .. }
-            | Error::LimitExceeded { .. }
-            | Error::GuestExit { .. }
-            | Error::Poisoned
-            | Error::MissingAllocator
-            | Error::MissingMemory
-            | Error::Compile { .. }
-            | Error::Instantiate { .. }
-            | Error::Config { .. }
-            | Error::UnsupportedAbi { .. }
-            | Error::MissingExport { .. }
-            | Error::ExportTypeMismatch { .. }
-            | Error::GuestRejected { .. }
-            | Error::Context { .. }
-            | Error::ContextIdsExhausted
-            | Error::UnexpectedReturn { .. } => Self::Unwind(error),
+            // Every other failure ends the guest call. The error type can gain
+            // a variant, and an unwind poisons the instance, which is the
+            // safe answer for a failure this match does not know.
+            _ => Self::Unwind(error),
         }
     }
 }
@@ -116,6 +104,61 @@ pub(crate) fn complete(
 mod tests {
     use super::*;
     use crate::runtime::map_guest_error;
+
+    /// What the conversion answers, without the payload.
+    fn answer(error: Error) -> Option<Status> {
+        match Failure::from(error) {
+            Failure::Status(status) => Some(status),
+            Failure::Unwind(_) => None,
+        }
+    }
+
+    #[test]
+    fn every_runtime_error_maps_to_a_status_or_an_unwind() {
+        // Arrange
+        let source = || -> Box<dyn std::error::Error + Send + Sync> { "refused".into() };
+        let errors = [
+            Error::Memory(MemoryError::NegativePointer { ptr: -1 }),
+            Error::ValueTooLarge { size: 1 },
+            Error::AllocationFailed { size: 1 },
+            Error::Compile { source: source() },
+            Error::Instantiate { source: source() },
+            Error::Config {
+                message: String::new(),
+            },
+            Error::MissingMemory,
+            Error::MissingAllocator,
+            Error::MissingExport {
+                name: String::new(),
+            },
+            Error::ExportTypeMismatch {
+                name: String::new(),
+            },
+            Error::Trap {
+                message: String::new(),
+                backtrace: None,
+            },
+            Error::LimitExceeded {
+                limit: crate::Limit::Fuel,
+            },
+            Error::GuestExit { code: 0 },
+            Error::Poisoned,
+        ];
+
+        // Act
+        let answers: Vec<Option<Status>> = errors.into_iter().map(answer).collect();
+
+        // Assert
+        assert_eq!(
+            answers[..3],
+            [
+                Some(Status::InvalidMemoryAccess),
+                Some(Status::InternalFailure),
+                Some(Status::InternalFailure)
+            ]
+        );
+        assert_eq!(answers[3..], [None; 11]);
+    }
 
     #[test]
     fn complete_maps_ok_a_status_and_an_unwind() {

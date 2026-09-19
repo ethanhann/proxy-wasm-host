@@ -75,7 +75,7 @@ impl Guest {
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::Callback;
-    use crate::runtime::test_support::{engine, services, wat_bytes};
+    use crate::abi::v0_2_1::test_support::{engine, services, wat_bytes};
     use crate::runtime::{Engine, Limits, Module};
 
     /// A guest with one export of its own, and a counter of the contexts the
@@ -94,7 +94,13 @@ mod tests {
 
     fn guest(engine: &Engine) -> Guest {
         let module = Module::new(engine, &wat_bytes(ADDER)).unwrap();
-        Guest::new(engine, &module, services(), &Limits::default()).unwrap()
+        Guest::new(
+            &crate::abi::v0_2_1::Host::new(engine).unwrap(),
+            &module,
+            services(),
+            &Limits::default(),
+        )
+        .unwrap()
     }
 
     fn refused_name(result: Result<(), Error>) -> Option<String> {
@@ -210,7 +216,13 @@ mod tests {
             (func (export "proxy_abi_version_0_2_1"))
             (func (export "crash") unreachable))"#;
         let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
-        let mut guest = Guest::new(&engine, &module, services(), &Limits::default()).unwrap();
+        let mut guest = Guest::new(
+            &crate::abi::v0_2_1::Host::new(&engine).unwrap(),
+            &module,
+            services(),
+            &Limits::default(),
+        )
+        .unwrap();
         let before = guest.is_poisoned();
 
         // Act

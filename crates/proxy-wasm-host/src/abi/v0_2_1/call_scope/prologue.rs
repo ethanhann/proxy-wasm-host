@@ -4,36 +4,37 @@ use wasmtime::{TypedFunc, WasmParams, WasmResults};
 
 use crate::Error;
 use crate::abi::v0_2_1::AbiAccess;
+use crate::abi::v0_2_1::GuestError;
 use crate::abi::v0_2_1::{Callback, ContextId, ContextProblem, ContextState, ContextType, Guest};
 
-fn problem(context: ContextId, problem: ContextProblem) -> Error {
-    Error::Context {
+fn problem(context: ContextId, problem: ContextProblem) -> GuestError {
+    GuestError::Context {
         id: context,
         problem,
     }
 }
 
-pub(super) fn require(guest: &Guest, context: ContextId) -> Result<ContextType, Error> {
+pub(super) fn require(guest: &Guest, context: ContextId) -> Result<ContextType, GuestError> {
     guest
         .context_type(context)
         .ok_or_else(|| problem(context, ContextProblem::Unknown))
 }
 
-pub(super) fn require_root(guest: &Guest, context: ContextId) -> Result<(), Error> {
+pub(super) fn require_root(guest: &Guest, context: ContextId) -> Result<(), GuestError> {
     match require(guest, context)? {
         ContextType::Root => Ok(()),
         ContextType::Stream => Err(problem(context, ContextProblem::NotRoot)),
     }
 }
 
-pub(super) fn require_stream(guest: &Guest, context: ContextId) -> Result<(), Error> {
+pub(super) fn require_stream(guest: &Guest, context: ContextId) -> Result<(), GuestError> {
     match require(guest, context)? {
         ContextType::Stream => Ok(()),
         ContextType::Root => Err(problem(context, ContextProblem::NotStream)),
     }
 }
 
-pub(super) fn require_done(guest: &Guest, context: ContextId) -> Result<(), Error> {
+pub(super) fn require_done(guest: &Guest, context: ContextId) -> Result<(), GuestError> {
     require(guest, context)?;
     match guest.context_state(context) {
         Some(ContextState::Done) => Ok(()),
@@ -41,7 +42,7 @@ pub(super) fn require_done(guest: &Guest, context: ContextId) -> Result<(), Erro
     }
 }
 
-pub(super) fn require_deletable(guest: &Guest, context: ContextId) -> Result<(), Error> {
+pub(super) fn require_deletable(guest: &Guest, context: ContextId) -> Result<(), GuestError> {
     require_done(guest, context)?;
     if guest
         .instance()
@@ -55,24 +56,24 @@ pub(super) fn require_deletable(guest: &Guest, context: ContextId) -> Result<(),
     Ok(())
 }
 
-pub(super) fn accepted(guest: &Guest, context: ContextId) -> Result<(), Error> {
+pub(super) fn accepted(guest: &Guest, context: ContextId) -> Result<(), GuestError> {
     let contexts = guest.instance().state().abi().contexts();
     match contexts.rejection_of(context) {
         None => Ok(()),
-        Some(callback @ Callback::VmStart) => Err(Error::GuestRejected {
+        Some(callback @ Callback::VmStart) => Err(GuestError::GuestRejected {
             callback,
             root: contexts.vm_rejected().unwrap_or(context),
         }),
-        Some(callback) => Err(Error::GuestRejected {
+        Some(callback) => Err(GuestError::GuestRejected {
             callback,
             root: contexts.root_of(context).unwrap_or(context),
         }),
     }
 }
 
-pub(super) fn vm_accepted(guest: &Guest) -> Result<(), Error> {
+pub(super) fn vm_accepted(guest: &Guest) -> Result<(), GuestError> {
     match guest.instance().state().abi().contexts().vm_rejected() {
-        Some(root) => Err(Error::GuestRejected {
+        Some(root) => Err(GuestError::GuestRejected {
             callback: Callback::VmStart,
             root,
         }),
@@ -91,11 +92,11 @@ pub(super) fn wire_size(len: usize) -> Result<i32, Error> {
     i32::try_from(len).map_err(|_| Error::ValueTooLarge { size: len })
 }
 
-pub(super) fn boolean(callback: Callback, value: i32) -> Result<bool, Error> {
+pub(super) fn boolean(callback: Callback, value: i32) -> Result<bool, GuestError> {
     match value {
         0 => Ok(false),
         1 => Ok(true),
-        value => Err(Error::UnexpectedReturn { callback, value }),
+        value => Err(GuestError::UnexpectedReturn { callback, value }),
     }
 }
 

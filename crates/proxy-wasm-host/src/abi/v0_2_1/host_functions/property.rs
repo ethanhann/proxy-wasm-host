@@ -120,12 +120,12 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::PluginConfig;
     use crate::abi::v0_2_1::VmServices;
+    use crate::abi::v0_2_1::test_support::{RecordingSink, engine, wat_bytes};
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, bare, hosted, outcome, returned, status, unhosted, write,
     };
     use crate::codec::path::encode_path;
-    use crate::runtime::test_support::{RecordingSink, engine, wat_bytes};
-    use crate::runtime::{Instance, Limits, Module};
+    use crate::runtime::{Instance, Module};
 
     const PATH: i32 = 1024;
     const VALUE: i32 = 1200;
@@ -169,13 +169,8 @@ mod tests {
         let module = Module::new(engine, &wat_bytes(GUEST)).unwrap();
         let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_id(b"vm-1".to_vec());
-        let mut instance = Instance::new(
-            engine,
-            &module,
-            crate::abi::state(services),
-            &Limits::default(),
-        )
-        .unwrap();
+        let mut instance =
+            crate::abi::v0_2_1::test_support::instance_with(engine, &module, services).unwrap();
         let state = instance.state_mut();
         let root = state.abi_mut().contexts_mut().create(None).unwrap();
         state.abi_mut().contexts_mut().set_plugin(
@@ -223,13 +218,8 @@ mod tests {
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
         let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
             .with_vm_id(b"vm-1".to_vec());
-        let mut instance = Instance::new(
-            &engine,
-            &module,
-            crate::abi::state(services),
-            &Limits::default(),
-        )
-        .unwrap();
+        let mut instance =
+            crate::abi::v0_2_1::test_support::instance_with(&engine, &module, services).unwrap();
 
         // Act
         let result = get(&mut instance, &[b"plugin_vm_id"]);

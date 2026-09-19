@@ -86,6 +86,7 @@ impl From<DecodeError> for Status {
     }
 }
 
+/// A guest sees every rejected address or range as one status.
 impl From<MemoryError> for Status {
     fn from(_: MemoryError) -> Self {
         Self::InvalidMemoryAccess

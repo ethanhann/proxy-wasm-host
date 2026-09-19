@@ -1,7 +1,7 @@
 //! The callbacks that end a context.
 
-use crate::Error;
 use crate::abi::v0_2_1::AbiAccess;
+use crate::abi::v0_2_1::GuestError;
 use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
 use crate::abi::v0_2_1::{Callback, ContextId, ContextState, NoStream, StreamState};
 
@@ -14,9 +14,10 @@ impl<H: StreamState> CallScope<'_, H> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Poisoned`], [`Error::Context`] for an unknown
-    /// context, [`Error::UnexpectedReturn`], and the errors of a guest call.
-    pub fn on_done(&mut self, context: ContextId) -> Result<bool, Error> {
+    /// Returns [`GuestError::Context`] for an unknown context and
+    /// [`GuestError::UnexpectedReturn`], and the runtime errors of
+    /// every callback.
+    pub fn on_done(&mut self, context: ContextId) -> Result<bool, GuestError> {
         self.guest.require_live()?;
         prologue::require(self.guest, context)?;
         let func = self.guest.callbacks().done.clone();
@@ -40,23 +41,25 @@ impl<H: StreamState> CallScope<'_, H> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Poisoned`], [`Error::Context`] for an unknown
-    /// context or one that is not done, and the errors of a guest call.
-    pub fn on_log(&mut self, context: ContextId) -> Result<(), Error> {
+    /// Returns [`GuestError::Context`] for an unknown context or one that is
+    /// not done, and the runtime errors of
+    /// every callback.
+    pub fn on_log(&mut self, context: ContextId) -> Result<(), GuestError> {
         self.guest.require_live()?;
         prologue::require_done(self.guest, context)?;
         let func = self.guest.callbacks().log.clone();
-        prologue::run(self.guest, context, Callback::Log, func, context.wire(), ())
+        prologue::run(self.guest, context, Callback::Log, func, context.wire(), ())?;
+        Ok(())
     }
 
     /// Calls `proxy_on_delete` on a done context and forgets the context.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Poisoned`], [`Error::Context`] for an unknown
-    /// context, one that is not done, or a root context that still has
-    /// stream contexts, and the errors of a guest call.
-    pub fn on_delete(&mut self, context: ContextId) -> Result<(), Error> {
+    /// Returns [`GuestError::Context`] for an unknown context, one that is
+    /// not done, or a root context that still has stream contexts, and the runtime errors of
+    /// every callback.
+    pub fn on_delete(&mut self, context: ContextId) -> Result<(), GuestError> {
         self.guest.require_live()?;
         prologue::require_deletable(self.guest, context)?;
         let func = self.guest.callbacks().delete.clone();

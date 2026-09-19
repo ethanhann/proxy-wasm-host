@@ -3,9 +3,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use crate::Engine;
 use crate::Error;
-use crate::abi::AbiVersion;
-use crate::runtime::Engine;
 
 const ABI_PREFIX: &str = "proxy_abi_version_";
 
@@ -14,8 +13,8 @@ const ABI_PREFIX: &str = "proxy_abi_version_";
 /// The module and its export names are reference counted, so a clone is two
 /// reference count increments.
 /// Compiling does not check the ABI version.
-/// Call [`Module::abi`] when you load a guest, so a guest with an unsupported
-/// version is rejected by name.
+/// The layer that binds a guest to an ABI reads [`Module::abi_exports`] and
+/// rejects an unsupported version by name.
 #[derive(Clone)]
 pub struct Module {
     inner: wasmtime::Module,
@@ -53,16 +52,6 @@ impl Module {
         })
     }
 
-    /// The newest ABI version the module advertises.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::UnsupportedAbi`] with the advertised names when none
-    /// is accepted.
-    pub fn abi(&self) -> Result<AbiVersion, Error> {
-        AbiVersion::detect(&self.exports.abi)
-    }
-
     /// Whether the module exports `name`.
     pub fn has_export(&self, name: &str) -> bool {
         self.exports.names.contains(name)
@@ -73,7 +62,13 @@ impl Module {
         &self.exports.abi
     }
 
-    pub(crate) fn wasmtime(&self) -> &wasmtime::Module {
+    /// The wasmtime module, for a test that reads its imports.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn wasmtime(&self) -> &wasmtime::Module {
+        self.compiled()
+    }
+
+    pub(crate) fn compiled(&self) -> &wasmtime::Module {
         &self.inner
     }
 }
@@ -81,37 +76,28 @@ impl Module {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::test_support::{engine, wat_bytes};
+    use crate::test_support::{engine, wat_bytes};
 
     #[test]
-    fn abi_reports_the_advertised_version() {
+    fn abi_exports_lists_the_version_markers_in_name_order() {
         // Arrange
         let engine = engine();
-        let module = Module::new(
-            &engine,
-            &wat_bytes(r#"(module (func (export "proxy_abi_version_0_2_1")))"#),
-        )
-        .unwrap();
+        let wat = r#"(module
+            (func (export "proxy_abi_version_0_2_1"))
+            (func (export "other"))
+            (func (export "proxy_abi_version_0_2_0")))"#;
 
         // Act
-        let version = module.abi();
+        let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
 
         // Assert
-        assert!(matches!(version, Ok(AbiVersion::V0_2_1)));
-        assert_eq!(module.abi_exports(), ["proxy_abi_version_0_2_1".to_owned()]);
-    }
-
-    #[test]
-    fn abi_rejects_a_module_without_a_version_export() {
-        // Arrange
-        let engine = engine();
-        let module = Module::new(&engine, &wat_bytes("(module)")).unwrap();
-
-        // Act
-        let version = module.abi();
-
-        // Assert
-        assert!(matches!(version, Err(Error::UnsupportedAbi { found }) if found.is_empty()));
+        assert_eq!(
+            module.abi_exports(),
+            [
+                "proxy_abi_version_0_2_0".to_owned(),
+                "proxy_abi_version_0_2_1".to_owned()
+            ]
+        );
     }
 
     #[test]
