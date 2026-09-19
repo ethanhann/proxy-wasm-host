@@ -17,6 +17,9 @@ target/
 
 # Artifacts
 dist/
+
+# Test guest Wasm fixtures (built by `just build-guests`)
+crates/proxy-wasm-host/tests/fixtures/*.wasm
 /config/
 /plugins/
 profile.json.gz

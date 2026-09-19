@@ -26,7 +26,12 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/test-guests
       - uses: extractions/setup-just@v4
+      - run: just build-guests
       - run: just check
 
   quality:
@@ -52,16 +57,3 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets --locked
-
-  fixtures:
-    name: fixtures
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-            crates/test-guests
-      - uses: extractions/setup-just@v4
-      - run: just build-guests
