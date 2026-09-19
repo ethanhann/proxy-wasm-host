@@ -47,15 +47,6 @@ use values::{CalloutStatus, ForeignCall, LocalResponse};
 /// Every default body reports itself through `tracing` at the warn level,
 /// so a method you forgot reaches your log before it reaches a guest.
 pub trait StreamState: Any + Send {
-    /// Whether this value serves no resource at all.
-    ///
-    /// The crate skips keeping such a value when a scope drops, because
-    /// nothing can be read back from it.
-    #[doc(hidden)]
-    fn serves_nothing(&self) -> bool {
-        false
-    }
-
     // `Any` lets the scope give your own value back without a downcast of
     // your own, and it requires `Self: 'static`, which wasmtime requires of
     // store data.

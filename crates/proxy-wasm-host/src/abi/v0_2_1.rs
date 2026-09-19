@@ -6,6 +6,25 @@
 //! [`Guest`] binds an instance to this ABI and drives its callbacks through
 //! a [`CallScope`].
 //! You lend a request to a scope as a [`StreamState`].
+//!
+//! # The surface
+//!
+//! You run a guest with [`Guest`], [`CallScope`], and [`PluginConfig`], and
+//! [`Callback`] names the callback a report is about.
+//! You serve a request by implementing [`StreamState`], whose methods receive
+//! an [`Invocation`] and an [`Access`] and exchange [`HeaderPairs`],
+//! [`LocalResponse`], [`ForeignCall`], and [`CalloutStatus`] values.
+//! [`NoStream`] is the stream state of a root context.
+//! You follow a context with [`ContextId`], [`ContextType`], and
+//! [`ContextState`], and you read a refusal through [`ContextProblem`] and
+//! [`InvalidContextId`].
+//! You give a guest its log, its clock, and its configuration through
+//! [`VmServices`], [`LogSink`], [`Clock`], and [`SystemClock`].
+//! You share data, queues, and metrics between guests by implementing
+//! [`SharedServices`] or by using [`InMemoryStore`] with
+//! [`InMemoryStoreLimits`], and the values involved are [`SharedValue`],
+//! [`QueueId`], [`MetricId`], [`InvalidQueueId`], and [`InvalidMetricId`].
+//! The enumerations the ABI defines are under [`types`].
 
 pub mod types;
 

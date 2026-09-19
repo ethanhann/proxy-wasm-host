@@ -10,7 +10,7 @@ use crate::abi::v0_2_1::{InMemoryStore, SharedServices};
 ///
 /// The WASI `fd_write` function and the `proxy_log` host function both call
 /// this.
-/// One sink usually serves a whole process, so the runtime holds it in an
+/// One sink usually serves a whole process, so [`VmServices`] holds it in an
 /// `Arc` and calls it through a shared reference.
 pub trait LogSink: Send + Sync {
     /// Records one message at one level.

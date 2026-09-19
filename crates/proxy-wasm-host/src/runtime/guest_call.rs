@@ -1,9 +1,12 @@
 //! The shared path for every call into the guest.
 //!
-//! A call refills the CPU and fuel budgets, runs, and on failure poisons the
-//! store data, maps the wasmtime error, and logs the failure once.
-//! The allocator path and the callback path both use it, so a guest re-entry
-//! has one failure path.
+//! A call from the host refills the CPU and fuel budgets, runs, and on
+//! failure poisons the store data, maps the wasmtime error, and logs the
+//! failure once.
+//! The allocator runs while a call is already in the guest, so it spends the
+//! budget of that call and refills nothing.
+//! It shares [`fail`] with this path, so a guest re-entry has one failure
+//! path.
 
 use wasmtime::{Store, Trap, TypedFunc, WasmBacktrace, WasmParams, WasmResults};
 

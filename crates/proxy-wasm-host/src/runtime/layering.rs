@@ -109,6 +109,18 @@ mod tests {
     }
 
     #[test]
+    fn the_list_allows_the_engine_and_this_check_only() {
+        // Arrange
+        let expected = ["runtime/engine.rs", "runtime/layering.rs"];
+
+        // Act
+        let files: Vec<&str> = ALLOWED.iter().map(|allowed| allowed.file).collect();
+
+        // Assert
+        assert_eq!(files, expected);
+    }
+
+    #[test]
     fn the_runtime_names_the_version_only_where_the_list_allows() {
         // Arrange
         let sources = read_runtime_sources();

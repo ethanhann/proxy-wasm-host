@@ -12,10 +12,13 @@ const MEMORY_EXPORT: &str = "memory";
 
 /// One instantiated guest with its store.
 ///
-/// Every call into the guest refills the CPU and fuel budgets first.
+/// Every call from the host into the guest refills the CPU and fuel budgets
+/// first.
+/// An allocation that a host function asks for runs inside such a call and
+/// spends the budget of that call.
 /// Any error that unwinds a guest call poisons the instance.
-/// Every later call then returns [`Error::Poisoned`], and you create a new
-/// instance from the same module to recover.
+/// Every later call then returns [`Error::Poisoned`], and a new instance
+/// from the same module is the recovery.
 /// Dropping the instance releases the guest memory.
 pub(crate) struct Instance {
     store: Store<HostState>,

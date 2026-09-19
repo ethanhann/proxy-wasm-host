@@ -445,6 +445,11 @@ mod tests {
         let engine = mid_call_engine();
         let cost = fuel_once_cost(&engine);
         let limits = Limits::new().with_fuel(cost + cost / 2);
+        let mut control = mid_call_instance(&engine, &limits);
+        assert!(
+            matches!(control.call::<(), i32>("fuel_once", ()), Ok(1000)),
+            "the budget must cover one loop, or the second loop proves nothing"
+        );
         let mut instance = mid_call_instance(&engine, &limits);
 
         // Act

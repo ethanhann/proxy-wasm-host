@@ -18,7 +18,11 @@ use crate::abi::v0_2_1::{Callback, ContextId, Guest, PluginConfig, StreamState};
 /// and [`CallScope::finish`] gives the stream state back.
 /// Between callbacks you reach the stream state through [`CallScope::stream`]
 /// and [`CallScope::stream_mut`].
-/// Dropping the scope without `finish` drops the stream state.
+/// A scope that drops without `finish` leaves the stream state on the guest,
+/// where no host function can reach it, and [`Guest::take_stream`] gives it
+/// back until the next [`Guest::enter`].
+/// A [`NoStream`](crate::abi::v0_2_1::NoStream) is the exception, because it
+/// holds nothing to give back.
 ///
 /// A panic in your [`StreamState`] unwinds through the guest, and the
 /// callback that was running never returns.
@@ -105,7 +109,7 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     /// unknown or not a root context, [`Error::GuestRejected`],
     /// [`Error::ContextIdsExhausted`], and the errors of a guest call.
     pub fn on_context_create(&mut self, parent: Option<ContextId>) -> Result<ContextId, Error> {
-        prologue::live(self.guest)?;
+        self.guest.require_live()?;
         match parent {
             Some(parent) => {
                 prologue::require_root(self.guest, parent)?;
@@ -147,7 +151,7 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     /// [`Error::ValueTooLarge`] for a configuration above `i32::MAX` bytes,
     /// [`Error::UnexpectedReturn`], and the errors of a guest call.
     pub fn on_vm_start(&mut self, root: ContextId) -> Result<bool, Error> {
-        prologue::live(self.guest)?;
+        self.guest.require_live()?;
         prologue::require_root(self.guest, root)?;
         prologue::accepted(self.guest, root)?;
         let length = self
@@ -194,7 +198,7 @@ impl<'a, H: StreamState> CallScope<'a, H> {
     ///
     /// The same as [`CallScope::on_vm_start`].
     pub fn on_configure(&mut self, root: ContextId, plugin: PluginConfig) -> Result<bool, Error> {
-        prologue::live(self.guest)?;
+        self.guest.require_live()?;
         prologue::require_root(self.guest, root)?;
         prologue::accepted(self.guest, root)?;
         let size = prologue::wire_size(plugin.configuration().len())?;
@@ -239,7 +243,7 @@ impl<'a, H: StreamState> CallScope<'a, H> {
         num_headers: u32,
         end_of_stream: bool,
     ) -> Result<Action, Error> {
-        prologue::live(self.guest)?;
+        self.guest.require_live()?;
         prologue::require_stream(self.guest, context)?;
         prologue::accepted(self.guest, context)?;
         let count = prologue::wire_u32(num_headers)?;
@@ -1123,68 +1127,5 @@ mod tests {
         // Assert
         assert!(second.calls().is_empty());
         assert!(!guest.instance().is_poisoned());
-    }
-    #[test]
-    fn a_body_that_returns_early_still_yields_the_stream_state() {
-        // Arrange
-        let engine = engine();
-        let (mut guest, _, stream) = with_stream(&engine, HEADER_WRITER);
-
-        // Act
-        let (answer, recording) = guest.with(RecordingStream::new(), |scope| {
-            let action = scope.on_request_headers(stream, 0, true)?;
-            Err::<(), Error>(Error::Config {
-                message: format!("stopping after {action:?}"),
-            })
-        });
-
-        // Assert
-        assert!(answer.is_err());
-        assert_eq!(recording.calls().len(), 1);
-    }
-
-    #[test]
-    fn a_dropped_scope_leaves_the_stream_state_recoverable() {
-        // Arrange
-        let engine = engine();
-        let (mut guest, _, stream) = with_stream(&engine, HEADER_WRITER);
-        let mut scope = guest.enter(RecordingStream::new());
-        scope.on_request_headers(stream, 0, true).unwrap();
-        drop(scope);
-
-        // Act
-        let recovered = guest.take_stream::<RecordingStream>();
-
-        // Assert
-        assert_eq!(recovered.map(|s| s.calls().len()), Some(1));
-    }
-
-    #[test]
-    fn a_take_that_names_the_wrong_type_leaves_the_value() {
-        // Arrange
-        let engine = engine();
-        let (mut guest, _, _) = with_stream(&engine, HEADER_WRITER);
-        drop(guest.enter(RecordingStream::new()));
-
-        // Act
-        let refused = guest.take_stream::<NoStream>();
-
-        // Assert
-        assert!(refused.is_none());
-        assert!(guest.take_stream::<RecordingStream>().is_some());
-    }
-
-    #[test]
-    fn a_root_scope_that_drops_detaches_nothing() {
-        // Arrange
-        let engine = engine();
-        let (mut guest, _) = with_root(&engine, HEADER_WRITER);
-        drop(guest.enter_root());
-
-        // Act
-        let detached = guest.take_stream_any();
-
-        // Assert
-        assert!(detached.is_none());
     }
 }

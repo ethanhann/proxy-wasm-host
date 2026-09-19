@@ -4,8 +4,8 @@
 //! store.
 //! The ABI layer supplies the services a guest needs, and
 //! [`Limits`] bound the CPU time, the fuel, and the memory of each instance.
-//! Host functions read and write guest memory through `GuestPtr`,
-//! `GuestSlice`, and `GuestMemory`, so every access is bounds checked.
+//! Host functions read and write guest memory through checked pointer and
+//! slice types, so every access is bounds checked.
 
 mod alloc;
 mod engine;

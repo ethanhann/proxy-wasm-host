@@ -1,20 +1,17 @@
 //! A running guest bound to ABI v0.2.1.
 
 mod callbacks;
-
+mod contexts;
 mod exports;
 mod recovery;
 
 use std::fmt;
-use std::time::Duration;
 
 use crate::Error;
 use crate::abi::AbiVersion;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::VmServices;
-use crate::abi::v0_2_1::{
-    CallScope, Callback, ContextId, ContextState, ContextType, NoStream, PluginConfig, StreamState,
-};
+use crate::abi::v0_2_1::{CallScope, Callback, NoStream, StreamState};
 use crate::runtime::{Engine, Instance, Limits, Module};
 use callbacks::Callbacks;
 
@@ -29,6 +26,15 @@ use callbacks::Callbacks;
 /// The stream state you give to [`Guest::enter`] is owned for the duration of
 /// the scope and must be `'static`, so move your request state in and take it
 /// back with [`CallScope::finish`].
+/// [`Guest::with`] does both for you, and it gives the request back when
+/// your code returns early.
+///
+/// A `Guest` is `Send` and is not `Sync`, so one thread drives it at a time
+/// and you may move it between threads.
+/// A trap, a spent limit, or a panic in your stream state poisons the guest,
+/// and [`Guest::is_poisoned`] then reports `true`.
+/// To recover, build a new `Guest` from the same [`Module`], which keeps the
+/// compiled code.
 ///
 /// For example, a guest with no callbacks runs the whole lifecycle with the
 /// default answers:
@@ -151,12 +157,33 @@ impl Guest {
 
     /// Runs a group of callbacks and gives the stream state back.
     ///
-    /// The body may return early through the question mark operator, and the
-    /// value still comes back, which [`Guest::enter`] does not promise.
+    /// Sometimes a callback fails in the middle of a group, and you want the
+    /// request back with the error.
+    /// With [`Guest::enter`], a question mark between `enter` and
+    /// [`CallScope::finish`] returns from your function before `finish` runs,
+    /// and the request stays on the guest until you call
+    /// [`Guest::take_stream`].
+    /// With this method, a question mark returns from the closure only, and
+    /// the tuple has both the answer of the closure and the request.
     ///
-    /// A body written as `guest.with(request, |scope| { ... })` may use the
-    /// question mark operator on any callback, and the tuple it returns
-    /// carries both the body's answer and the request.
+    /// For example, `request` comes back when `on_request_headers` fails:
+    ///
+    /// ```
+    /// # use proxy_wasm_host::abi::v0_2_1::types::Action;
+    /// # use proxy_wasm_host::abi::v0_2_1::{ContextId, Guest, StreamState};
+    /// # use proxy_wasm_host::Error;
+    /// fn headers<H: StreamState>(
+    ///     guest: &mut Guest,
+    ///     stream: ContextId,
+    ///     request: H,
+    /// ) -> (Result<Action, Error>, H) {
+    ///     guest.with(request, |scope| {
+    ///         let action = scope.on_request_headers(stream, 0, false)?;
+    ///         scope.on_done(stream)?;
+    ///         Ok(action)
+    ///     })
+    /// }
+    /// ```
     pub fn with<H: StreamState, R>(
         &mut self,
         stream: H,
@@ -189,63 +216,6 @@ impl Guest {
         self.callbacks.exports(callback)
     }
 
-    /// The callback that refused `context`, if one did.
-    ///
-    /// `VmStart` means the whole instance is refused.
-    /// `Configure` means the root context of `context` is refused, with
-    /// every stream context under it.
-    pub fn rejected_by(&self, context: ContextId) -> Option<Callback> {
-        self.instance.state().abi().contexts().rejection_of(context)
-    }
-
-    /// How far `context` is through its finalization, or `None` for a
-    /// context this guest does not hold.
-    ///
-    /// A move from `Pending` to `Done` without a callback of yours means
-    /// the guest called `proxy_done`.
-    pub fn context_state(&self, context: ContextId) -> Option<ContextState> {
-        self.instance.state().abi().contexts().state(context)
-    }
-
-    /// Whether `context` is a root context or a stream context.
-    pub fn context_type(&self, context: ContextId) -> Option<ContextType> {
-        self.instance.state().abi().contexts().context_type(context)
-    }
-
-    /// The root context of a stream context, or `None` for a root context
-    /// and for a context this guest does not hold.
-    pub fn context_parent(&self, context: ContextId) -> Option<ContextId> {
-        self.instance.state().abi().contexts().parent(context)
-    }
-
-    /// The plugin of the root context of `context`.
-    ///
-    /// [`CallScope::on_configure`] records it, so this is `None` until that
-    /// callback has run on the root.
-    pub fn plugin(&self, context: ContextId) -> Option<&PluginConfig> {
-        self.instance.state().abi().contexts().plugin(context)
-    }
-
-    /// The tick period the guest asked for on `root`.
-    ///
-    /// A guest sets it with `proxy_set_tick_period_milliseconds`, and a
-    /// period of zero clears it.
-    /// A guest can only reach the root it is serving, so a period it sets in
-    /// any callback lands on that root.
-    /// The crate records the value and runs no timer, so read it after the
-    /// callbacks of a root and drive `proxy_on_tick` from your own timer.
-    pub fn tick_period(&self, root: ContextId) -> Option<Duration> {
-        self.instance.state().abi().contexts().tick_period(root)
-    }
-
-    /// The context the guest's host functions act on.
-    ///
-    /// Every callback sets it to its own context, and the guest can change
-    /// it with `proxy_set_effective_context`.
-    pub fn effective_context(&self) -> Option<ContextId> {
-        self.instance.state().abi().contexts().effective()
-    }
-
     /// Lends `stream` to the guest for a group of callbacks.
     ///
     /// The guest owns the value until [`CallScope::finish`] returns it or
@@ -253,8 +223,13 @@ impl Guest {
     /// requires that of store data.
     /// Move your request state in and take it back out rather than lending a
     /// borrow.
+    /// For the callbacks of a root context, which have no request,
+    /// [`Guest::enter_root`] enters with [`NoStream`].
     /// The value replaces any stream state a forgotten scope left installed.
+    /// A value that a dropped scope left for [`Guest::take_stream`] is dropped
+    /// here, so take it back before you enter again.
     pub fn enter<H: StreamState>(&mut self, stream: H) -> CallScope<'_, H> {
+        self.discard_detached();
         self.instance
             .state_mut()
             .abi_mut()
@@ -281,12 +256,20 @@ impl Guest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::v0_2_1::ContextId;
+    use crate::abi::v0_2_1::test_support::RecordingStream;
+    use crate::abi::v0_2_1::types::LogLevel;
     use crate::runtime::test_support::{engine, services, wat_bytes};
 
     fn guest(engine: &Engine, wat: &str) -> Result<Guest, Error> {
         let module = Module::new(engine, &wat_bytes(wat))?;
         Guest::new(engine, &module, services(), &Limits::default())
     }
+
+    const MARKED: &str = r#"(module
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+        (func (export "proxy_abi_version_0_2_1")))"#;
 
     fn assert_send<T: Send>() {}
 
@@ -369,5 +352,54 @@ mod tests {
             format!("{guest:?}"),
             "Guest { abi: V0_2_1, effective_context: None, poisoned: false, .. }"
         );
+    }
+
+    #[test]
+    fn a_change_through_services_mut_is_read_back_through_services() {
+        // Arrange
+        let engine = engine();
+        let mut guest = guest(&engine, MARKED).unwrap();
+        let before = guest.services().log_level();
+
+        // Act
+        guest.services_mut().set_log_level(LogLevel::Critical);
+
+        // Assert
+        assert_ne!(before, LogLevel::Critical);
+        assert_eq!(guest.services().log_level(), LogLevel::Critical);
+    }
+
+    #[test]
+    fn a_body_that_returns_early_still_yields_the_stream_state() {
+        // Arrange
+        let engine = engine();
+        let wat = r#"(module
+            (import "env" "proxy_replace_header_map_value" (func $replace (param i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 4096)
+            (func (export "proxy_abi_version_0_2_1"))
+            (func (export "proxy_on_request_headers") (param i32 i32 i32) (result i32)
+                (drop (call $replace (i32.const 0) (i32.const 100) (i32.const 1) (i32.const 101) (i32.const 1)))
+                i32.const 0)
+            (data (i32.const 100) "kv"))"#;
+        let mut guest = guest(&engine, wat).unwrap();
+        let root = guest.enter_root().on_context_create(None).unwrap();
+        let stream = guest.enter_root().on_context_create(Some(root)).unwrap();
+
+        // Act
+        let (answer, recording) = guest.with(RecordingStream::new(), |scope| {
+            let action = scope.on_request_headers(stream, 0, true)?;
+            Err::<(), Error>(Error::Config {
+                message: format!("stopping after {action:?}"),
+            })
+        });
+
+        // Assert
+        assert!(
+            matches!(&answer, Err(Error::Config { message }) if message == "stopping after Continue")
+        );
+        assert_eq!(recording.calls().len(), 1);
+        assert!(guest.take_stream_any().is_none());
+        assert!(!guest.is_poisoned());
     }
 }

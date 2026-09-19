@@ -159,21 +159,21 @@ impl Lifecycle {
     }
 
     fn request_headers<H: StreamState>(&mut self, request: H) -> (Result<Action, Error>, H) {
-        let mut scope = self.guest.enter(request);
-        let action = scope.on_request_headers(self.stream.unwrap(), 0, true);
-        (action, scope.finish())
+        let stream = self.stream.unwrap();
+        self.guest
+            .with(request, |scope| scope.on_request_headers(stream, 0, true))
     }
 
     /// Runs done, log, and delete on the stream context with `request` lent
     /// to the guest, and gives the request back.
     fn finalize<H: StreamState>(&mut self, request: H) -> (Result<bool, Error>, H) {
         let stream = self.stream.unwrap();
-        let mut scope = self.guest.enter(request);
-        let done = scope
-            .on_done(stream)
-            .and_then(|done| scope.on_log(stream).map(|()| done))
-            .and_then(|done| scope.on_delete(stream).map(|()| done));
-        (done, scope.finish())
+        self.guest.with(request, |scope| {
+            let done = scope.on_done(stream)?;
+            scope.on_log(stream)?;
+            scope.on_delete(stream)?;
+            Ok(done)
+        })
     }
 
     fn logs(&self) -> Vec<(LogLevel, String)> {

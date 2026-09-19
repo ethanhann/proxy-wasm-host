@@ -275,6 +275,49 @@ mod tests {
     }
 
     #[test]
+    fn a_grant_does_not_survive_a_replacement_of_the_shared_services() {
+        // Arrange
+        // Both stores hand out small numbers from their own counter, so the
+        // identifier this guest was granted names a metric of another VM
+        // inside the replacement.
+        let engine = engine();
+        let first: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let second: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let other = crate::abi::v0_2_1::Invocation::new(
+            crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
+        );
+        let theirs = second
+            .define_metric(other, b"other-vm", MetricType::Gauge, b"secret")
+            .unwrap();
+        second.record_metric(other, theirs, 4242).unwrap();
+        let (mut instance, _) = shared_hosted(&engine, GUEST, Arc::clone(&first));
+        let granted = counter(&mut instance);
+        assert_eq!(
+            granted,
+            theirs.get().cast_signed(),
+            "both stores start their counter at one"
+        );
+        let replacement = instance
+            .state()
+            .abi()
+            .services()
+            .clone()
+            .with_shared(Arc::clone(&second));
+        *instance.state_mut().abi_mut().services_mut() = replacement;
+
+        // Act
+        let found = status(
+            instance
+                .call::<(i32, i32), i32>("get", (granted, RETURN_VALUE))
+                .unwrap(),
+        );
+
+        // Assert
+        assert_eq!(found, Status::NotFound);
+        assert_eq!(second.get_metric(other, theirs), Ok(4242));
+    }
+
+    #[test]
     fn a_metric_that_is_not_there_is_not_found() {
         // Arrange
         let engine = engine();

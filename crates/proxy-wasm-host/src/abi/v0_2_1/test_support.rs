@@ -157,27 +157,6 @@ pub(crate) fn import_everything() -> String {
     wat
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::abi::v0_2_1::host_functions::table::HOST_FUNCTIONS;
-
-    #[test]
-    fn the_generated_guest_imports_one_function_per_table_row() {
-        // Arrange
-        let expected = HOST_FUNCTIONS.len();
-
-        // Act
-        let wat = import_everything();
-
-        // Assert
-        assert_eq!(wat.matches("(import \"env\"").count(), expected);
-        for function in HOST_FUNCTIONS {
-            assert!(wat.contains(function.name), "{} is missing", function.name);
-        }
-    }
-}
-
 /// A log sink that records every message.
 #[derive(Default)]
 pub(crate) struct RecordingSink {
@@ -206,4 +185,25 @@ impl LogSink for RecordingSink {
 /// Services with a fresh recording sink.
 pub(crate) fn services() -> VmServices {
     VmServices::new(Arc::new(RecordingSink::default()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::abi::v0_2_1::host_functions::table::HOST_FUNCTIONS;
+
+    #[test]
+    fn the_generated_guest_imports_one_function_per_table_row() {
+        // Arrange
+        let expected = HOST_FUNCTIONS.len();
+
+        // Act
+        let wat = import_everything();
+
+        // Assert
+        assert_eq!(wat.matches("(import \"env\"").count(), expected);
+        for function in HOST_FUNCTIONS {
+            assert!(wat.contains(function.name), "{} is missing", function.name);
+        }
+    }
 }

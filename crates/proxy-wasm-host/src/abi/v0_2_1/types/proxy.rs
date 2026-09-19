@@ -150,6 +150,26 @@ abi_enum! {
     }
 }
 
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The match names every variant, so a new one stops the build rather
+        // than printing a name the ABI does not use.
+        let name = match self {
+            Status::Ok => "OK",
+            Status::NotFound => "NOT_FOUND",
+            Status::BadArgument => "BAD_ARGUMENT",
+            Status::SerializationFailure => "SERIALIZATION_FAILURE",
+            Status::ParseFailure => "PARSE_FAILURE",
+            Status::InvalidMemoryAccess => "INVALID_MEMORY_ACCESS",
+            Status::Empty => "EMPTY",
+            Status::CasMismatch => "CAS_MISMATCH",
+            Status::InternalFailure => "INTERNAL_FAILURE",
+            Status::Unimplemented => "UNIMPLEMENTED",
+        };
+        f.write_str(name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::{covers, expected, round_trip, unknown};
@@ -404,33 +424,6 @@ mod tests {
         // Assert
         assert_eq!(results, unknown("MetricType", &values));
     }
-}
-
-impl std::fmt::Display for Status {
-    /// The ABI's own name for the status.
-    ///
-    /// The match names every variant, so a version that adds one stops the
-    /// build rather than printing something the ABI does not use.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name = match self {
-            Status::Ok => "OK",
-            Status::NotFound => "NOT_FOUND",
-            Status::BadArgument => "BAD_ARGUMENT",
-            Status::SerializationFailure => "SERIALIZATION_FAILURE",
-            Status::ParseFailure => "PARSE_FAILURE",
-            Status::InvalidMemoryAccess => "INVALID_MEMORY_ACCESS",
-            Status::Empty => "EMPTY",
-            Status::CasMismatch => "CAS_MISMATCH",
-            Status::InternalFailure => "INTERNAL_FAILURE",
-            Status::Unimplemented => "UNIMPLEMENTED",
-        };
-        f.write_str(name)
-    }
-}
-
-#[cfg(test)]
-mod display_tests {
-    use super::*;
 
     #[test]
     fn every_status_prints_the_name_the_abi_uses() {

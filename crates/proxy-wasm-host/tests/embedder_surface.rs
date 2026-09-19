@@ -26,17 +26,157 @@ use proxy_wasm_host::abi::v0_2_1::{
 // What the codec names in a signature an embedder writes.
 use proxy_wasm_host::codec::pairs::{EncodeError, PairVisitor, Pairs};
 
-/// Every name above is reachable, which the imports prove at compile time.
+// The rest of the public surface, which an embedder names less often.
+use proxy_wasm_host::abi::v0_2_1::types::{
+    PeerType, UnknownValue, WasiClockId, WasiErrno, WasiFdId,
+};
+use proxy_wasm_host::codec::pairs::{
+    COUNT_SIZE, DecodeError, Field, PairSource, decode_pairs, encode_pairs, encode_visited,
+    encoded_size, pair_encoded_size, total_size,
+};
+use proxy_wasm_host::codec::path::{decode_path, encode_path};
+
+/// Every `pub use` statement of `source`, on one line each.
+///
+/// An import above proves that a name exists.
+/// It cannot prove that a name is absent, so the statements that export the
+/// surface are compared as text.
+fn exports_of(source: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut open: Option<String> = None;
+    for line in source.lines() {
+        if open.is_none() && line.starts_with("pub use ") {
+            open = Some(String::new());
+        }
+        if let Some(statement) = open.as_mut() {
+            statement.push_str(line.trim());
+            if line.trim_end().ends_with(';') {
+                statements.extend(open.take());
+            } else {
+                statement.push(' ');
+            }
+        }
+    }
+    statements
+}
+
+fn source(path: &str) -> String {
+    std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
+}
+
 #[test]
-fn the_surface_is_reachable_at_its_paths() {
+fn the_crate_root_exports_only_names_that_no_abi_version_owns() {
     // Arrange
-    let version = AbiVersion::V0_2_1;
+    let source = source("src/lib.rs");
 
     // Act
-    let named = format!("{version:?}");
+    let exports = exports_of(&source);
 
     // Assert
-    assert!(!named.is_empty());
+    assert_eq!(
+        exports,
+        [
+            "pub use abi::AbiVersion;",
+            "pub use buffer::Buffer;",
+            "pub use error::{Error, Limit, MemoryError};",
+            "pub use header_map::{HeaderMap, VecHeaderMap};",
+            "pub use runtime::{Engine, EngineConfig, Limits, Module};",
+        ]
+    );
+}
+
+#[test]
+fn the_versioned_module_exports_the_names_listed_here() {
+    // Arrange
+    let sources = [
+        source("src/abi/v0_2_1.rs"),
+        source("src/abi/v0_2_1/types.rs"),
+    ];
+
+    // Act
+    let exports: Vec<String> = sources.iter().flat_map(|s| exports_of(s)).collect();
+
+    // Assert
+    assert_eq!(
+        exports,
+        [
+            "pub use call_scope::CallScope;",
+            "pub use callback::Callback;",
+            "pub use context::{ContextId, ContextProblem, ContextState, ContextType, InvalidContextId};",
+            "pub use guest::Guest;",
+            "pub use plugin_config::PluginConfig;",
+            "pub use services::{Clock, LogSink, SystemClock, VmServices};",
+            "pub use shared_services::{ InMemoryStore, InMemoryStoreLimits, InvalidMetricId, InvalidQueueId, MetricId, QueueId, SharedServices, SharedValue, };",
+            "pub use stream_state::values::{CalloutStatus, ForeignCall, HeaderPairs, LocalResponse};",
+            "pub use stream_state::{Access, Invocation, NoStream, StreamState};",
+            "pub use proxy::{Action, BufferType, LogLevel, MapType, MetricType, PeerType, Status, StreamType};",
+            "pub use wasi::{WasiClockId, WasiErrno, WasiFdId};",
+        ]
+    );
+}
+
+/// A request that serves its headers and nothing else.
+struct Request {
+    headers: VecHeaderMap,
+}
+
+impl StreamState for Request {
+    fn header_map(
+        &mut self,
+        _: Invocation,
+        _: Access,
+        map: MapType,
+    ) -> Result<&mut dyn HeaderMap, Status> {
+        match map {
+            MapType::HttpRequestHeaders => Ok(&mut self.headers),
+            _ => Err(Status::NotFound),
+        }
+    }
+}
+
+struct Discard;
+
+impl LogSink for Discard {
+    fn log(&self, _: LogLevel, _: &[u8]) {}
+}
+
+#[test]
+fn the_smallest_embedder_runs_a_stream_with_the_names_above() {
+    // Arrange
+    let wat = r#"(module
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+        (func (export "proxy_abi_version_0_2_1")))"#;
+    let engine = Engine::new().unwrap();
+    let module = Module::new(&engine, &wat::parse_str(wat).unwrap()).unwrap();
+    let services = VmServices::new(std::sync::Arc::new(Discard));
+    let mut guest = Guest::new(&engine, &module, services, &Limits::default()).unwrap();
+    let mut root_scope = guest.enter_root();
+    let root = root_scope.on_context_create(None).unwrap();
+    let started = root_scope.on_vm_start(root).unwrap();
+    let configured = root_scope.on_configure(root, PluginConfig::new()).unwrap();
+    let stream = root_scope.on_context_create(Some(root)).unwrap();
+    drop(root_scope);
+    let request = Request {
+        headers: VecHeaderMap::default(),
+    };
+
+    // Act
+    let (answer, request) = guest.with(request, |scope| {
+        let action = scope.on_request_headers(stream, 0, true)?;
+        let done = scope.on_done(stream)?;
+        scope.on_log(stream)?;
+        scope.on_delete(stream)?;
+        Ok::<_, Error>((action, done))
+    });
+
+    // Assert
+    assert!(matches!(answer, Ok((Action::Continue, true))));
+    assert!(started && configured);
+    assert!(request.headers.is_empty());
+    assert_eq!(guest.context_state(stream), None);
+    assert_eq!(guest.abi(), AbiVersion::V0_2_1);
+    assert!(!guest.is_poisoned());
 }
 
 /// The status prints the name the ABI uses, which an embedder logs.

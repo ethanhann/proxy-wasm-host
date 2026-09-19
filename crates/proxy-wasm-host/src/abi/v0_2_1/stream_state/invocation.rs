@@ -31,7 +31,7 @@ pub struct Invocation {
 }
 
 impl Invocation {
-    /// A call on `context` from `callback`.
+    /// A call on `context` with no callback running.
     pub fn new(context: ContextId) -> Self {
         Self {
             context,
@@ -51,8 +51,35 @@ impl Invocation {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct NoStream;
 
-impl StreamState for NoStream {
-    fn serves_nothing(&self) -> bool {
-        true
+impl StreamState for NoStream {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_invocation_has_the_context_and_no_callback() {
+        // Arrange
+        let context = ContextId::try_from(3).unwrap();
+
+        // Act
+        let invocation = Invocation::new(context);
+
+        // Assert
+        assert_eq!(invocation.context, context);
+        assert_eq!(invocation.callback, None);
+    }
+
+    #[test]
+    fn with_callback_adds_the_callback_and_keeps_the_context() {
+        // Arrange
+        let context = ContextId::try_from(3).unwrap();
+
+        // Act
+        let invocation = Invocation::new(context).with_callback(Callback::Done);
+
+        // Assert
+        assert_eq!(invocation.context, context);
+        assert_eq!(invocation.callback, Some(Callback::Done));
     }
 }

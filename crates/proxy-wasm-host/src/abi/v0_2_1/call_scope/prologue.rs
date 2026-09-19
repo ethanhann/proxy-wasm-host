@@ -6,20 +6,6 @@ use crate::Error;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::{Callback, ContextId, ContextProblem, ContextState, ContextType, Guest};
 
-/// Refuses a poisoned instance, and poisons an instance whose last callback
-/// did not return, which is what a caught panic leaves behind.
-pub(super) fn live(guest: &mut Guest) -> Result<(), Error> {
-    let state = guest.instance_mut().state_mut();
-    if state.abi().current_callback().is_some() {
-        state.poison();
-    }
-    if state.is_poisoned() {
-        Err(Error::Poisoned)
-    } else {
-        Ok(())
-    }
-}
-
 fn problem(context: ContextId, problem: ContextProblem) -> Error {
     Error::Context {
         id: context,

@@ -77,7 +77,6 @@ impl HostState {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     #[test]
