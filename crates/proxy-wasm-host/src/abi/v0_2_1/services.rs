@@ -3,8 +3,11 @@
 use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::abi::v0_2_1::callout_service::NoCallouts;
 use crate::abi::v0_2_1::types::LogLevel;
-use crate::abi::v0_2_1::{InMemoryStore, SharedServices};
+use crate::abi::v0_2_1::{Callouts, InMemoryStore, SharedServices};
+
+const DEFAULT_MAX_OPEN_CALLOUTS: usize = 1024;
 
 /// Where guest log output goes.
 ///
@@ -83,6 +86,8 @@ pub struct VmServices {
     vm_id: Vec<u8>,
     vm_configuration: Vec<u8>,
     shared: Arc<dyn SharedServices>,
+    callouts: Arc<dyn Callouts>,
+    max_open_callouts: usize,
 }
 
 impl std::fmt::Debug for VmServices {
@@ -118,6 +123,8 @@ impl VmServices {
             vm_id: Vec::new(),
             vm_configuration: Vec::new(),
             shared: Arc::new(InMemoryStore::new()),
+            callouts: Arc::new(NoCallouts),
+            max_open_callouts: DEFAULT_MAX_OPEN_CALLOUTS,
         }
     }
 
@@ -196,6 +203,47 @@ impl VmServices {
     pub fn with_shared(mut self, shared: Arc<dyn SharedServices>) -> Self {
         self.shared = shared;
         self
+    }
+
+    /// Sets the service that receives the callouts of the guest.
+    ///
+    /// The default refuses every callout, so a guest that calls
+    /// `proxy_http_call` gets `INTERNAL_FAILURE`.
+    #[must_use]
+    pub fn with_callouts(mut self, callouts: Arc<dyn Callouts>) -> Self {
+        self.callouts = callouts;
+        self
+    }
+
+    /// Sets how many callouts the guest may have open at one time.
+    ///
+    /// The default is 1024.
+    /// A guest at the maximum gets `INTERNAL_FAILURE` for a new callout.
+    /// The crate reports that refusal through `tracing` at the warn level.
+    /// The crate reads the value at each new callout.
+    /// A value below the number of open callouts keeps them and refuses a
+    /// new one.
+    #[must_use]
+    pub fn with_max_open_callouts(mut self, maximum: usize) -> Self {
+        self.max_open_callouts = maximum;
+        self
+    }
+
+    /// The service that receives the callouts of the guest.
+    ///
+    /// The `Arc` is returned rather than the value behind it, because you
+    /// clone it to build a second instance with the same service.
+    /// The trait is not downcastable, so keep your own `Arc` if you want
+    /// your concrete type back.
+    /// A call you make on the service yourself opens no callout, because
+    /// only `proxy_http_call` enters one in the record of the guest.
+    pub fn callouts(&self) -> &Arc<dyn Callouts> {
+        &self.callouts
+    }
+
+    /// How many callouts the guest may have open at one time.
+    pub fn max_open_callouts(&self) -> usize {
+        self.max_open_callouts
     }
 
     /// The shared data, the shared queues, and the metrics.

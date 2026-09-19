@@ -1,5 +1,6 @@
 //! The scope in which callbacks run.
 
+mod delivery;
 mod finalize;
 mod prologue;
 mod stream;

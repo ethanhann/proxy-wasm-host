@@ -1,11 +1,16 @@
 //! The shared services of one process, held in memory.
 
 mod limits;
+mod observer;
 
 pub use limits::InMemoryStoreLimits;
+pub use observer::QueueEnqueued;
+
+use observer::Observer;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::abi::v0_2_1::Invocation;
@@ -18,6 +23,7 @@ type Key = (Vec<u8>, Vec<u8>);
 #[derive(Debug, Default)]
 struct Queues {
     by_name: BTreeMap<Key, QueueId>,
+    owners: BTreeMap<QueueId, Key>,
     items: BTreeMap<QueueId, VecDeque<Vec<u8>>>,
     next: u32,
 }
@@ -67,6 +73,8 @@ pub struct InMemoryStore {
     queues: Mutex<Queues>,
     metrics: Mutex<Metrics>,
     limits: InMemoryStoreLimits,
+    observer: Option<Observer>,
+    warned_no_observer: AtomicBool,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -150,13 +158,20 @@ impl SharedServices for InMemoryStore {
         vm_id: &[u8],
         name: &[u8],
     ) -> Result<QueueId, Status> {
+        if self.observer.is_none() && !self.warned_no_observer.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "a guest registered a queue on a store with no enqueue observer, \
+                 so no guest hears of an item"
+            );
+        }
         let mut queues = lock(&self.queues);
         let key = (vm_id.to_vec(), name.to_vec());
         if let Some(id) = queues.by_name.get(&key) {
             return Ok(*id);
         }
         let id = QueueId::from_non_zero(next_id(&mut queues.next).ok_or(Status::InternalFailure)?);
-        queues.by_name.insert(key, id);
+        queues.by_name.insert(key.clone(), id);
+        queues.owners.insert(id, key);
         queues.items.insert(id, VecDeque::new());
         Ok(id)
     }
@@ -184,12 +199,22 @@ impl SharedServices for InMemoryStore {
             return Err(Status::InternalFailure);
         }
         let depth = self.limits.queue_items();
-        let mut queues = lock(&self.queues);
-        let items = queues.items.get_mut(&queue).ok_or(Status::NotFound)?;
-        if items.len() >= depth {
-            return Err(Status::InternalFailure);
+        let owner = {
+            let mut queues = lock(&self.queues);
+            let items = queues.items.get_mut(&queue).ok_or(Status::NotFound)?;
+            if items.len() >= depth {
+                return Err(Status::InternalFailure);
+            }
+            items.push_back(value.to_vec());
+            queues.owners.get(&queue).cloned()
+        };
+        if let (Some(observer), Some((vm_id, name))) = (&self.observer, owner) {
+            (observer.0)(QueueEnqueued {
+                vm_id: &vm_id,
+                name: &name,
+                queue,
+            });
         }
-        items.push_back(value.to_vec());
         Ok(())
     }
 

@@ -36,8 +36,6 @@ pub(crate) struct RecordingStream {
     buffer_calls: Vec<(Invocation, Access, BufferType)>,
     operations: Vec<(Invocation, Operation)>,
     operation_refusal: Option<Status>,
-    callout: Option<(u32, Vec<u8>)>,
-    callout_calls: Vec<Invocation>,
     local_response: Option<(Invocation, LocalResponse<'static>)>,
     ranges: Ranges,
     properties: HashMap<Path, Vec<u8>>,
@@ -60,8 +58,6 @@ impl RecordingStream {
             buffer_calls: Vec::new(),
             operations: Vec::new(),
             operation_refusal: None,
-            callout: None,
-            callout_calls: Vec::new(),
             local_response: None,
             ranges: Ranges::default(),
             properties: HashMap::new(),
@@ -139,11 +135,6 @@ impl RecordingStream {
         &self.foreign_calls
     }
 
-    pub(crate) fn with_callout_status(mut self, code: u32, message: &[u8]) -> Self {
-        self.callout = Some((code, message.to_vec()));
-        self
-    }
-
     /// Makes every method report success for something it never touched.
     pub(crate) fn refusing_with_ok(mut self) -> Self {
         self.refuse_with_ok = true;
@@ -209,10 +200,6 @@ impl RecordingStream {
 
     pub(crate) fn operations(&self) -> &[(Invocation, Operation)] {
         &self.operations
-    }
-
-    pub(crate) fn callout_calls(&self) -> &[Invocation] {
-        &self.callout_calls
     }
 
     pub(crate) fn local_response(&self) -> Option<&(Invocation, LocalResponse<'static>)> {

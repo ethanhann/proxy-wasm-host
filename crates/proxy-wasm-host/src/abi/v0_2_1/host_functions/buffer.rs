@@ -10,6 +10,7 @@ use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::Access;
+use crate::abi::v0_2_1::callout::Delivery;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::Served;
 use crate::abi::v0_2_1::host_functions::call::{context, from_embedder, with_stream};
@@ -20,14 +21,14 @@ use crate::{Buffer, NotAllowed};
 
 /// Where the bytes of one buffer come from.
 enum Source<'a> {
-    Configuration(&'a [u8]),
+    Crate(&'a [u8]),
     Stream(&'a mut dyn Buffer),
 }
 
 impl Source<'_> {
     fn len(&self) -> usize {
         match self {
-            Self::Configuration(bytes) => bytes.len(),
+            Self::Crate(bytes) => bytes.len(),
             Self::Stream(buffer) => buffer.len(),
         }
     }
@@ -37,7 +38,7 @@ impl Source<'_> {
     fn copy_range(&self, start: usize, size: usize) -> Vec<u8> {
         let range = clamp_range(self.len(), start, size);
         match self {
-            Self::Configuration(bytes) => bytes[range].to_vec(),
+            Self::Crate(bytes) => bytes[range].to_vec(),
             Self::Stream(buffer) => {
                 let mut bytes = Vec::with_capacity(range.len());
                 buffer.copy_range_into(range.start, range.len(), &mut bytes);
@@ -66,39 +67,48 @@ fn as_usize(value: i32) -> usize {
 
 /// A buffer the crate answers from what the embedder supplied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Configuration {
-    Vm,
-    Plugin,
+enum CrateBuffer {
+    VmConfiguration,
+    PluginConfiguration,
+    HttpCallResponseBody,
 }
 
 /// Whether the crate serves this buffer itself.
 ///
 /// The configuration buffers come from what the embedder supplied before the
-/// call, so no implementation sees them.
+/// call.
+/// The body of an HTTP call response comes from the response the embedder
+/// delivered for the running callback.
+/// No implementation of the embedder sees a request for one of them.
 ///
 /// See [`Served`] for the rule.
-fn served(buffer_type: BufferType) -> Served<Configuration> {
+fn served(buffer_type: BufferType) -> Served<CrateBuffer> {
     match buffer_type {
-        BufferType::VmConfiguration => Served::Crate(Configuration::Vm),
-        BufferType::PluginConfiguration => Served::Crate(Configuration::Plugin),
+        BufferType::VmConfiguration => Served::Crate(CrateBuffer::VmConfiguration),
+        BufferType::PluginConfiguration => Served::Crate(CrateBuffer::PluginConfiguration),
+        BufferType::HttpCallResponseBody => Served::Crate(CrateBuffer::HttpCallResponseBody),
         _ => Served::Embedder,
     }
 }
 
 fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<'_>, Failure> {
     match served(buffer_type) {
-        Served::Crate(Configuration::Vm) => Ok(Source::Configuration(
-            state.abi().services().vm_configuration(),
-        )),
-        Served::Crate(Configuration::Plugin) => {
+        Served::Crate(CrateBuffer::VmConfiguration) => {
+            Ok(Source::Crate(state.abi().services().vm_configuration()))
+        }
+        Served::Crate(CrateBuffer::PluginConfiguration) => {
             let root = context(state, Status::NotFound)?;
             let plugin = state
                 .abi()
                 .contexts()
                 .plugin(root)
                 .ok_or(Status::NotFound)?;
-            Ok(Source::Configuration(plugin.configuration()))
+            Ok(Source::Crate(plugin.configuration()))
         }
+        Served::Crate(CrateBuffer::HttpCallResponseBody) => match state.abi().delivery() {
+            Some(Delivery::HttpCallResponse(response)) => Ok(Source::Crate(&response.body)),
+            None => Err(Status::NotFound.into()),
+        },
         Served::Embedder => {
             let (call, stream) = with_stream(state, Status::NotFound)?;
             let buffer = from_embedder("buffer", stream.buffer(call, Access::Read, buffer_type))?;
@@ -193,13 +203,15 @@ pub(super) fn proxy_get_buffer_status(
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::*;
     use crate::abi::v0_2_1::VmServices;
     use crate::abi::v0_2_1::test_support::{
         RecordingSink, RecordingStream, bare, engine, hosted, instance_with, outcome, status,
         unhosted, wat_bytes, write,
     };
-    use crate::abi::v0_2_1::{Access, PluginConfig};
+    use crate::abi::v0_2_1::{Access, CalloutId, HttpCallResponse, PluginConfig};
     use crate::runtime::{GuestSlice, Instance, Module};
 
     const BODY: i32 = BufferType::HttpRequestBody as i32;
@@ -820,15 +832,110 @@ mod tests {
         assert_eq!(result, Status::NotFound);
     }
 
+    const DELIVERED_BODY: i32 = BufferType::HttpCallResponseBody as i32;
+
+    /// An instance with a recording stream, in a delivery of a response with
+    /// `body` when one is given.
+    fn delivering(body: Option<&'static [u8]>) -> Instance {
+        let (mut instance, _) = hosted(&engine(), GUEST, RecordingStream::new());
+        let delivery = body.map(|body| {
+            let header = vec![(
+                Cow::Borrowed(b":status".as_slice()),
+                Cow::Borrowed(b"200".as_slice()),
+            )];
+            let response = HttpCallResponse::received(header).with_body(Cow::Borrowed(body));
+            Delivery::http_call_response(CalloutId::try_from(1_u32).unwrap(), response)
+        });
+        instance.state_mut().abi_mut().set_delivery(delivery);
+        instance
+    }
+
+    fn asked(instance: &mut Instance) -> usize {
+        RecordingStream::take(instance.state_mut()).calls().len()
+    }
+
     #[test]
-    fn the_predicate_names_the_two_configurations_and_sends_the_rest_to_the_embedder() {
+    fn the_body_of_a_delivered_response_is_sliced_as_every_buffer_is() {
+        // Arrange
+        let mut instance = delivering(Some(b"hello"));
+        let ranges = [(0, i32::MAX), (1, 3), (5, 1)];
+
+        // Act
+        let answers = ranges.map(|(start, max_size)| {
+            (
+                get(&mut instance, DELIVERED_BODY, start, max_size),
+                returned(&mut instance),
+            )
+        });
+
+        // Assert
+        assert_eq!(
+            answers,
+            [
+                (Status::Ok, b"hello".to_vec()),
+                (Status::Ok, b"ell".to_vec()),
+                (Status::Ok, Vec::new()),
+            ]
+        );
+        assert_eq!(asked(&mut instance), 0, "the stream state was not asked");
+    }
+
+    #[test]
+    fn a_delivered_body_refuses_a_start_past_its_end_and_every_write() {
+        // Arrange
+        let mut instance = delivering(Some(b"hello"));
+
+        // Act
+        let answers = [
+            get(&mut instance, DELIVERED_BODY, 6, 1),
+            set(&mut instance, DELIVERED_BODY, 0, 0, b"new "),
+        ];
+
+        // Assert
+        assert_eq!(answers, [Status::BadArgument, Status::NotFound]);
+        assert_eq!(asked(&mut instance), 0, "the stream state was not asked");
+    }
+
+    #[test]
+    fn the_status_of_a_delivered_body_is_its_length() {
+        // Arrange
+        let mut instance = delivering(Some(b"hello"));
+        seed(&mut instance, &[2008, 2012]);
+
+        // Act
+        let result = buffer_status(&mut instance, DELIVERED_BODY);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(status_slots(&mut instance), (5, 0));
+    }
+
+    #[test]
+    fn the_body_of_a_response_is_not_found_outside_a_delivery() {
+        // Arrange
+        let mut instance = delivering(None);
+
+        // Act
+        let answers = [
+            get(&mut instance, DELIVERED_BODY, 0, i32::MAX),
+            set(&mut instance, DELIVERED_BODY, 0, 0, b"new "),
+            buffer_status(&mut instance, DELIVERED_BODY),
+        ];
+
+        // Assert
+        assert_eq!(answers, [Status::NotFound; 3]);
+        assert_eq!(asked(&mut instance), 0, "the stream state was not asked");
+    }
+
+    #[test]
+    fn the_predicate_names_the_three_crate_buffers_and_sends_the_rest_to_the_embedder() {
         // Arrange
         let asked = [
             BufferType::VmConfiguration,
             BufferType::PluginConfiguration,
+            BufferType::HttpCallResponseBody,
             BufferType::HttpRequestBody,
             BufferType::HttpResponseBody,
-            BufferType::HttpCallResponseBody,
         ];
 
         // Act
@@ -838,9 +945,9 @@ mod tests {
         assert_eq!(
             answers,
             [
-                Served::Crate(Configuration::Vm),
-                Served::Crate(Configuration::Plugin),
-                Served::Embedder,
+                Served::Crate(CrateBuffer::VmConfiguration),
+                Served::Crate(CrateBuffer::PluginConfiguration),
+                Served::Crate(CrateBuffer::HttpCallResponseBody),
                 Served::Embedder,
                 Served::Embedder,
             ]

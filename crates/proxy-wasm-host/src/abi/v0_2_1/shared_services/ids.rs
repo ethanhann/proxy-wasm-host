@@ -3,6 +3,8 @@
 use std::fmt;
 use std::num::NonZeroU32;
 
+use crate::abi::v0_2_1::ContextId;
+
 macro_rules! shared_id {
     ($name:ident, $invalid:ident, $what:literal, $message:literal) => {
         #[doc = concat!("The identifier of one ", $what, ".")]
@@ -70,6 +72,23 @@ shared_id!(
     "metric",
     "{value} is not a valid metric identifier"
 );
+
+/// Why a queue callback was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum QueueProblem {
+    /// No context of this root registered the queue, and this is the root you
+    /// named.
+    NotRegisteredBy(ContextId),
+}
+
+impl fmt::Display for QueueProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotRegisteredBy(root) => write!(f, "was not registered by context {root}"),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

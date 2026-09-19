@@ -13,16 +13,21 @@ use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::SharedServices;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::Status;
-use crate::abi::v0_2_1::{Callback, ContextId, Invocation, StreamState};
+use crate::abi::v0_2_1::{ContextId, Invocation, StreamState};
 use crate::runtime::HostState;
 
-/// The call an embedder is told about, from a context and whatever callback
-/// is running.
-pub(super) fn invocation(context: ContextId, callback: Option<Callback>) -> Invocation {
-    match callback {
-        Some(callback) => Invocation::new(context).with_callback(callback),
-        None => Invocation::new(context),
+/// The call an embedder is told about, from a context, whatever callback is
+/// running, and the callout that callback delivers.
+pub(super) fn invocation(state: &HostState, context: ContextId) -> Invocation {
+    let abi = state.abi();
+    let mut call = Invocation::new(context);
+    if let Some(callback) = abi.current_callback() {
+        call = call.with_callback(callback);
     }
+    if let Some(delivery) = abi.delivery() {
+        call = call.with_callout(delivery.callout());
+    }
+    call
 }
 
 /// The effective context, refused when the guest rejected its root or the
@@ -41,7 +46,7 @@ pub(super) fn with_stream(
     absent: Status,
 ) -> Result<(Invocation, &mut dyn StreamState), Failure> {
     let context = context(state, absent)?;
-    let call = invocation(context, state.abi().current_callback());
+    let call = invocation(state, context);
     let stream = state.abi_mut().stream_state().ok_or(absent)?;
     Ok((call, stream))
 }
@@ -52,8 +57,7 @@ pub(super) fn with_stream(
 /// identifier means one thing inside one store and something else inside
 /// another.
 pub(super) fn settle(state: &mut HostState) {
-    let shared = std::sync::Arc::clone(state.abi().services().shared());
-    state.abi_mut().settle_grants(&shared);
+    state.abi_mut().settle();
 }
 
 /// The call to report and the shared services to ask.
@@ -67,7 +71,7 @@ pub(super) fn with_shared(
     let shared = Arc::clone(state.abi().services().shared());
     state.abi_mut().settle_grants(&shared);
     let context = context(state, absent)?;
-    let call = invocation(context, state.abi().current_callback());
+    let call = invocation(state, context);
     Ok((call, shared))
 }
 
@@ -90,11 +94,12 @@ pub(super) fn from_embedder<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::v0_2_1::Callback;
+    use crate::abi::v0_2_1::callout::Delivery;
     use crate::abi::v0_2_1::test_support::{
         MINIMAL_GUEST, RecordingStream, bare, engine, hosted, unhosted,
     };
     use crate::abi::v0_2_1::types::MapType;
+    use crate::abi::v0_2_1::{Callback, CalloutId, HttpCallResponse};
 
     #[test]
     fn the_effective_context_is_reported_when_one_is_set() {
@@ -235,5 +240,21 @@ mod tests {
             found.err(),
             Some(Failure::Status(Status::NotFound))
         ));
+    }
+
+    #[test]
+    fn a_call_in_a_delivery_names_the_callout() {
+        // Arrange
+        let engine = engine();
+        let (mut instance, _) = hosted(&engine, MINIMAL_GUEST, RecordingStream::new());
+        let callout = CalloutId::try_from(7_u32).unwrap();
+        let delivery = Delivery::http_call_response(callout, HttpCallResponse::failed());
+        instance.state_mut().abi_mut().set_delivery(Some(delivery));
+
+        // Act
+        let call = with_stream(instance.state_mut(), Status::NotFound).map(|(call, _)| call);
+
+        // Assert
+        assert_eq!(call.ok().and_then(|call| call.callout), Some(callout));
     }
 }

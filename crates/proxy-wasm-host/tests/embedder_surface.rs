@@ -18,10 +18,12 @@ use proxy_wasm_host::abi::v0_2_1::types::{
     Action, BufferType, LogLevel, MapType, MetricType, Status, StreamType,
 };
 use proxy_wasm_host::abi::v0_2_1::{
-    Access, CallScope, Callback, CalloutStatus, Clock, ContextId, ContextProblem, ContextState,
-    ContextType, ForeignCall, Guest, GuestError, HeaderPairs, Host, InMemoryStore,
-    InMemoryStoreLimits, InvalidContextId, InvalidMetricId, InvalidQueueId, Invocation,
-    LocalResponse, LogSink, MetricId, NoStream, PluginConfig, QueueId, SharedServices, SharedValue,
+    Access, CallScope, Callback, CalloutId, CalloutKind, CalloutProblem, Callouts, Changes, Clock,
+    ContextId, ContextProblem, ContextState, ContextType, ForeignCall, Guest, GuestError,
+    HeaderPairs, Host, HttpCall, HttpCallRefusal, HttpCallResponse, InMemoryStore,
+    InMemoryStoreLimits, InvalidCalloutId, InvalidContextId, InvalidMetricId, InvalidQueueId,
+    Invocation, LocalResponse, LogSink, MetricId, NoStream, OpenCallout, PluginConfig,
+    QueueEnqueued, QueueId, QueueProblem, QueueRegistration, SharedServices, SharedValue,
     StreamState, SystemClock, VmServices, WasmParams, WasmResults,
 };
 // What the codec names in a signature an embedder writes.
@@ -115,14 +117,17 @@ fn the_versioned_module_exports_the_names_listed_here() {
         [
             "pub use call_scope::CallScope;",
             "pub use callback::Callback;",
+            "pub use callout::{CalloutId, CalloutKind, CalloutProblem, InvalidCalloutId, OpenCallout};",
+            "pub use callout_service::{Callouts, HttpCall, HttpCallRefusal, HttpCallResponse};",
+            "pub use changes::{Changes, QueueRegistration};",
             "pub use context::{ContextId, ContextProblem, ContextState, ContextType, InvalidContextId};",
             "pub use guest::Guest;",
             "pub use guest_error::GuestError;",
             "pub use host::Host;",
             "pub use plugin_config::PluginConfig;",
             "pub use services::{Clock, LogSink, SystemClock, VmServices};",
-            "pub use shared_services::{ InMemoryStore, InMemoryStoreLimits, InvalidMetricId, InvalidQueueId, MetricId, QueueId, SharedServices, SharedValue, };",
-            "pub use stream_state::values::{CalloutStatus, ForeignCall, HeaderPairs, LocalResponse};",
+            "pub use shared_services::{ InMemoryStore, InMemoryStoreLimits, InvalidMetricId, InvalidQueueId, MetricId, QueueEnqueued, QueueId, QueueProblem, SharedServices, SharedValue, };",
+            "pub use stream_state::values::{ForeignCall, HeaderPairs, LocalResponse};",
             "pub use stream_state::{Access, Invocation, NoStream, StreamState};",
             "pub use wasmtime::{WasmParams, WasmResults};",
             "pub use proxy::{Action, BufferType, LogLevel, MapType, MetricType, PeerType, Status, StreamType};",

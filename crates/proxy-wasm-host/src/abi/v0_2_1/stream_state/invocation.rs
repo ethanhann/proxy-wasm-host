@@ -1,6 +1,6 @@
 //! What the guest is doing when it calls a host function.
 
-use crate::abi::v0_2_1::{Callback, ContextId, StreamState};
+use crate::abi::v0_2_1::{Callback, CalloutId, ContextId, StreamState};
 
 /// Whether a host function reads or writes the value it asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,6 +28,9 @@ pub struct Invocation {
     /// The callback that is running, or `None` when the guest called from
     /// its start sequence or from a raw call.
     pub callback: Option<Callback>,
+    /// The callout whose result the running callback delivers, or `None`
+    /// outside a delivery.
+    pub callout: Option<CalloutId>,
 }
 
 impl Invocation {
@@ -36,6 +39,7 @@ impl Invocation {
         Self {
             context,
             callback: None,
+            callout: None,
         }
     }
 
@@ -45,9 +49,20 @@ impl Invocation {
         self.callback = Some(callback);
         self
     }
+
+    /// The callout whose result the callback delivers.
+    #[must_use]
+    pub fn with_callout(mut self, callout: CalloutId) -> Self {
+        self.callout = Some(callout);
+        self
+    }
 }
 
 /// A stream state that serves nothing, for the callbacks of a root context.
+///
+/// A callout that a root context makes needs no stream state, because the
+/// [`Callouts`](crate::abi::v0_2_1::Callouts) service of the guest receives
+/// it.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct NoStream;
 

@@ -1,6 +1,8 @@
 //! Test doubles that the ABI layer's tests share.
 
+pub(crate) mod callouts;
 pub(crate) mod doubles;
+pub(crate) mod events;
 pub(crate) mod services;
 pub(crate) mod stream;
 

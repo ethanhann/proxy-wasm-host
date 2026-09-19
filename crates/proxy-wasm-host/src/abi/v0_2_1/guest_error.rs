@@ -2,13 +2,15 @@
 
 use crate::Error;
 use crate::abi::UnsupportedAbi;
-use crate::abi::v0_2_1::{Callback, ContextId, ContextProblem};
+use crate::abi::v0_2_1::{
+    Callback, CalloutId, CalloutProblem, ContextId, ContextProblem, QueueId, QueueProblem,
+};
 
 /// Why [`Guest::new`](crate::abi::v0_2_1::Guest::new) or a callback of a
 /// [`CallScope`](crate::abi::v0_2_1::CallScope) failed.
 ///
-/// The first five variants are refusals that this ABI version defines, and
-/// the guest is still usable after each of them.
+/// Every variant but the last is a refusal that this ABI version defines,
+/// and the guest is still usable after each of them.
 /// [`GuestError::Runtime`] holds every failure of the runtime.
 /// Some of those poison the guest and some do not, so after any error ask
 /// [`Guest::is_poisoned`](crate::abi::v0_2_1::Guest::is_poisoned) before you
@@ -64,6 +66,23 @@ pub enum GuestError {
         callback: Callback,
         /// The value it returned.
         value: i32,
+    },
+    /// A delivery named a callout that is not open, or not the context that
+    /// made it.
+    #[error("callout {id} {problem}")]
+    Callout {
+        /// The callout you named.
+        id: CalloutId,
+        /// What is wrong with it.
+        problem: CalloutProblem,
+    },
+    /// A queue callback named a root that did not register the queue.
+    #[error("queue {id} {problem}")]
+    Queue {
+        /// The queue you named.
+        id: QueueId,
+        /// What is wrong with it.
+        problem: QueueProblem,
     },
     /// The runtime failed.
     #[error(transparent)]

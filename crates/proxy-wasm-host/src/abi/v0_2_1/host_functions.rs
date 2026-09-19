@@ -2,8 +2,9 @@
 //!
 //! Every one of the 39 functions is registered for every guest, because a
 //! guest built with an SDK imports most of them whether or not it calls them.
-//! The functions this crate serves have bodies, and the rest are stubs
-//! that answer `UNIMPLEMENTED`.
+//! Every function has a body.
+//! The five gRPC callout functions refuse, because the crate delivers no gRPC
+//! callback.
 
 mod buffer;
 mod call;
@@ -12,6 +13,7 @@ mod clock;
 mod context;
 mod failure;
 mod foreign;
+mod grpc;
 mod header_map;
 mod local_response;
 mod log;
@@ -24,6 +26,6 @@ mod stream;
 pub(crate) mod table;
 mod timer;
 
-pub(crate) use failure::{Failure, complete, stub};
+pub(crate) use failure::{Failure, complete};
 pub(super) use served::Served;
 pub(crate) use table::register;

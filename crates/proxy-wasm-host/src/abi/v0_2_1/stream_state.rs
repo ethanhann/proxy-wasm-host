@@ -10,7 +10,7 @@ use crate::abi::v0_2_1::types::{BufferType, MapType, Status, StreamType};
 use crate::abi::v0_2_1::unserved::unserved;
 use crate::header_map::HeaderMap;
 pub use invocation::{Access, Invocation, NoStream};
-use values::{CalloutStatus, ForeignCall, LocalResponse};
+use values::{ForeignCall, LocalResponse};
 
 /// The state of one stream, lent to a guest for a group of callbacks.
 ///
@@ -35,7 +35,6 @@ use values::{CalloutStatus, ForeignCall, LocalResponse};
 /// | [`buffer`](StreamState::buffer) | [`Status::NotFound`] | [`Status::NotFound`] |
 /// | [`continue_stream`](StreamState::continue_stream) | [`Status::Unimplemented`] | none |
 /// | [`close_stream`](StreamState::close_stream) | [`Status::Unimplemented`] | none |
-/// | [`callout_status`](StreamState::callout_status) | [`Status::Unimplemented`] | none |
 /// | [`send_local_response`](StreamState::send_local_response) | [`Status::Unimplemented`] | none |
 /// | [`property`](StreamState::property) | [`Status::NotFound`] | none |
 /// | [`set_property`](StreamState::set_property) | [`Status::NotFound`] | none |
@@ -65,6 +64,11 @@ pub trait StreamState: Any + Send {
     /// then you should return `Err(Status::NotFound)`.
     /// The default body reports [`Status::BadArgument`], the status for a
     /// map that is not available.
+    ///
+    /// The crate never asks for [`MapType::HttpCallResponseHeaders`] or
+    /// [`MapType::HttpCallResponseTrailers`].
+    /// It serves them from the response you gave to
+    /// [`CallScope::on_http_call_response`](crate::abi::v0_2_1::CallScope::on_http_call_response).
     ///
     /// For example, a stream that serves the request headers only during
     /// `proxy_on_request_headers` and read only during `proxy_on_log`:
@@ -115,15 +119,14 @@ pub trait StreamState: Any + Send {
     /// paused from it.
     /// `DownstreamData` and `UpstreamData` are read and written in the data
     /// callbacks.
-    /// `HttpCallResponseBody` is read in `proxy_on_http_call_response`, and
-    /// `GrpcCallMessage` in `proxy_on_grpc_receive`.
+    /// `GrpcCallMessage` is read in `proxy_on_grpc_receive`.
     /// `ForeignFunctionArguments` is read in `proxy_on_foreign_function`.
     /// The crate does not enforce those rules, and you can apply them by
     /// matching on `call.callback` and `access`.
     ///
-    /// The crate never asks you for `VmConfiguration` or
-    /// `PluginConfiguration`, because it serves both itself from the values
-    /// you gave it.
+    /// The crate never asks you for `VmConfiguration`, `PluginConfiguration`,
+    /// or `HttpCallResponseBody`, because it serves them itself from the
+    /// values you gave it.
     /// The crate clamps `start` and the length against
     /// [`Buffer::len`](crate::Buffer::len) before it calls your buffer, so a
     /// range you receive is inside it.
@@ -179,26 +182,6 @@ pub trait StreamState: Any + Send {
     fn close_stream(&mut self, call: Invocation, stream: StreamType) -> Result<(), Status> {
         unserved("close_stream");
         let _ = (call, stream);
-        Err(Status::Unimplemented)
-    }
-
-    /// The status of the callout the guest is handling.
-    ///
-    /// The guest asks in `proxy_on_http_call_response` and in
-    /// `proxy_on_grpc_close`, so `call.callback` names which callout it
-    /// means.
-    /// One context can have several callouts in flight, and the contract
-    /// that delivers a callout and names it here arrives with the callout
-    /// functions.
-    /// The default body reports [`Status::Unimplemented`].
-    ///
-    /// # Errors
-    ///
-    /// The status you return goes to the guest unchanged, except that
-    /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
-    fn callout_status(&mut self, call: Invocation) -> Result<CalloutStatus<'_>, Status> {
-        unserved("callout_status");
-        let _ = call;
         Err(Status::Unimplemented)
     }
 
@@ -348,13 +331,12 @@ mod tests {
         assert_eq!(results, (Some(Status::NotFound), Some(Status::NotFound)));
     }
 
-    fn unimplemented_answers(stream: &mut dyn StreamState) -> [Option<Status>; 4] {
+    fn unimplemented_answers(stream: &mut dyn StreamState) -> [Option<Status>; 3] {
         [
             stream
                 .continue_stream(call(), StreamType::HttpRequest)
                 .err(),
             stream.close_stream(call(), StreamType::HttpRequest).err(),
-            stream.callout_status(call()).err(),
             stream
                 .send_local_response(call(), LocalResponse::new(200))
                 .err(),
@@ -388,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn the_other_four_defaults_report_unimplemented() {
+    fn the_other_three_defaults_report_unimplemented() {
         // Arrange
         let mut empty = Empty;
         let mut none = NoStream;
@@ -400,6 +382,6 @@ mod tests {
         ];
 
         // Assert
-        assert_eq!(results, [[Some(Status::Unimplemented); 4]; 2]);
+        assert_eq!(results, [[Some(Status::Unimplemented); 3]; 2]);
     }
 }

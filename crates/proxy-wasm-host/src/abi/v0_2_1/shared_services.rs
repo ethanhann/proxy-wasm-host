@@ -9,8 +9,8 @@ use crate::abi::v0_2_1::Invocation;
 use crate::abi::v0_2_1::types::{MetricType, Status};
 use crate::abi::v0_2_1::unserved::unserved;
 
-pub use ids::{InvalidMetricId, InvalidQueueId, MetricId, QueueId};
-pub use store::{InMemoryStore, InMemoryStoreLimits};
+pub use ids::{InvalidMetricId, InvalidQueueId, MetricId, QueueId, QueueProblem};
+pub use store::{InMemoryStore, InMemoryStoreLimits, QueueEnqueued};
 
 /// One value of the shared data, with the number that guards a write to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,7 +113,11 @@ pub trait SharedServices: Send + Sync {
     /// Opens a queue under a name, and creates it when it is new.
     ///
     /// A guest is told about an item on a queue through `proxy_on_queue_ready`,
-    /// which arrives with the rest of the callbacks.
+    /// which you deliver with
+    /// [`CallScope::on_queue_ready`](crate::abi::v0_2_1::CallScope::on_queue_ready)
+    /// when your store got an item.
+    /// [`InMemoryStore::with_enqueue_observer`] is how the crate's store tells
+    /// you.
     ///
     /// # Errors
     ///

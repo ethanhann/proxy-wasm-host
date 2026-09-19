@@ -8,21 +8,74 @@ use std::borrow::Cow;
 
 use wasmtime::AsContextMut;
 
+use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::Access;
-use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::callout::Delivery;
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_stream};
+use crate::abi::v0_2_1::host_functions::{Failure, Served};
 use crate::abi::v0_2_1::types::{MapType, Status};
 use crate::codec::pairs::decode_pairs;
 use crate::header_map::HeaderMap;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
+
+/// A map the crate answers from the response the embedder delivered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseMap {
+    HttpCallResponseHeaders,
+    HttpCallResponseTrailers,
+}
+
+/// Whether the crate serves this map itself.
+///
+/// The two maps of an HTTP call response come from the response the embedder
+/// delivered for the running callback, so no implementation sees them.
+///
+/// See [`Served`] for the rule.
+fn served(map_type: MapType) -> Served<ResponseMap> {
+    match map_type {
+        MapType::HttpCallResponseHeaders => Served::Crate(ResponseMap::HttpCallResponseHeaders),
+        MapType::HttpCallResponseTrailers => Served::Crate(ResponseMap::HttpCallResponseTrailers),
+        _ => Served::Embedder,
+    }
+}
+
+/// The map of the delivered response, which a guest may read and may not
+/// change.
+///
+/// `BAD_ARGUMENT` is the status of this family for a map that is not
+/// available, which covers a read outside a delivery and every write.
+fn delivered(
+    state: &mut HostState,
+    which: ResponseMap,
+    access: Access,
+) -> Result<&mut dyn HeaderMap, Failure> {
+    let delivery = match access {
+        Access::Read => state.abi_mut().delivery_mut(),
+        Access::Write => None,
+    };
+    match (delivery, which) {
+        (Some(Delivery::HttpCallResponse(response)), ResponseMap::HttpCallResponseHeaders) => {
+            Ok(&mut response.headers)
+        }
+        (Some(Delivery::HttpCallResponse(response)), ResponseMap::HttpCallResponseTrailers) => {
+            Ok(&mut response.trailers)
+        }
+        (None, _) => Err(Status::BadArgument.into()),
+    }
+}
 
 fn map(
     state: &mut HostState,
     map_type: MapType,
     access: Access,
 ) -> Result<&mut dyn HeaderMap, Failure> {
-    let (call, stream) = with_stream(state, Status::BadArgument)?;
-    from_embedder("header_map", stream.header_map(call, access, map_type))
+    match served(map_type) {
+        Served::Crate(which) => delivered(state, which, access),
+        Served::Embedder => {
+            let (call, stream) = with_stream(state, Status::BadArgument)?;
+            from_embedder("header_map", stream.header_map(call, access, map_type))
+        }
+    }
 }
 
 pub(super) fn proxy_get_header_map_size(
@@ -154,7 +207,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, engine, hosted, instance, outcome, status, write,
     };
-    use crate::abi::v0_2_1::{Callback, ContextId};
+    use crate::abi::v0_2_1::{Callback, CalloutId, ContextId, HttpCallResponse};
     use crate::codec::pairs::encode_pairs;
     use crate::runtime::{Engine, Instance};
 
@@ -801,5 +854,150 @@ mod tests {
                 .calls()
                 .is_empty()
         );
+    }
+
+    const DELIVERED_HEADERS: i32 = MapType::HttpCallResponseHeaders as i32;
+    const DELIVERED_TRAILERS: i32 = MapType::HttpCallResponseTrailers as i32;
+
+    /// An instance in a delivery of a response with one header and one
+    /// trailer.
+    fn delivering() -> (Engine, Instance) {
+        let (engine, mut instance, _) = setup(RecordingStream::new());
+        let pair = |key: &'static [u8], value: &'static [u8]| {
+            vec![(Cow::Borrowed(key), Cow::Borrowed(value))]
+        };
+        let response = HttpCallResponse::received(pair(b":status", b"200"))
+            .with_trailers(pair(b"grpc-status", b"0"));
+        let callout = CalloutId::try_from(1_u32).unwrap();
+        instance
+            .state_mut()
+            .abi_mut()
+            .set_delivery(Some(Delivery::http_call_response(callout, response)));
+        (engine, instance)
+    }
+
+    fn asked(instance: &mut Instance) -> usize {
+        let stream = instance
+            .state_mut()
+            .abi_mut()
+            .stream_state_as::<RecordingStream>()
+            .unwrap();
+        stream.calls().len()
+    }
+
+    #[test]
+    fn every_function_is_a_bad_argument_for_a_response_map_outside_a_delivery() {
+        // Arrange
+        let (_engine, mut instance, _) = setup(RecordingStream::new());
+        write(&mut instance, KEY, b"k");
+        write(&mut instance, VALUE, b"v");
+
+        // Act
+        let answers =
+            [DELIVERED_HEADERS, DELIVERED_TRAILERS].map(|map| drive_all(&mut instance, map));
+
+        // Assert
+        assert_eq!(answers[0], [Status::BadArgument; 7]);
+        assert_eq!(answers[1], [Status::BadArgument; 7]);
+        assert_eq!(asked(&mut instance), 0, "the stream state was not asked");
+    }
+
+    #[test]
+    fn a_delivered_map_refuses_every_write() {
+        // Arrange
+        let (_engine, mut instance) = delivering();
+        let (key, key_len) = write(&mut instance, KEY, b"k");
+        let (value, value_len) = write(&mut instance, VALUE, b"v");
+
+        // Act
+        let answers = [
+            instance
+                .call::<(i32, i32, i32), i32>("set_pairs", (DELIVERED_HEADERS, KEY, 0))
+                .map(status),
+            instance
+                .call::<(i32, i32, i32, i32, i32), i32>(
+                    "add",
+                    (DELIVERED_HEADERS, key, key_len, value, value_len),
+                )
+                .map(status),
+            instance
+                .call::<(i32, i32, i32, i32, i32), i32>(
+                    "replace",
+                    (DELIVERED_TRAILERS, key, key_len, value, value_len),
+                )
+                .map(status),
+            instance
+                .call::<(i32, i32, i32), i32>("remove", (DELIVERED_TRAILERS, key, key_len))
+                .map(status),
+        ];
+
+        // Assert
+        for answer in answers {
+            assert_eq!(answer.unwrap(), Status::BadArgument);
+        }
+        assert_eq!(asked(&mut instance), 0, "the stream state was not asked");
+    }
+
+    #[test]
+    fn the_trailers_of_a_delivered_response_answer_their_size_and_pairs() {
+        // Arrange
+        let (_engine, mut instance) = delivering();
+        let expected = encode_pairs(&[(b"grpc-status".as_slice(), b"0".as_slice())]).unwrap();
+
+        // Act
+        let answers = [
+            instance
+                .call::<(i32, i32), i32>("size", (DELIVERED_TRAILERS, KEY))
+                .map(status),
+            instance
+                .call::<(i32, i32, i32), i32>(
+                    "pairs",
+                    (DELIVERED_TRAILERS, RETURN_DATA, RETURN_SIZE),
+                )
+                .map(status),
+        ];
+
+        // Assert
+        for answer in answers {
+            assert_eq!(answer.unwrap(), Status::Ok);
+        }
+        let reported = read(&mut instance, KEY.cast_unsigned(), 4);
+        assert_eq!(
+            reported,
+            u32::try_from(expected.len()).unwrap().to_le_bytes()
+        );
+        let (data, size) = return_slots(&mut instance);
+        assert_eq!(read(&mut instance, data, size), expected);
+        assert_eq!(asked(&mut instance), 0, "the stream state was not asked");
+    }
+
+    #[test]
+    fn a_value_of_a_delivered_map_is_found_or_not_found() {
+        // Arrange
+        let (_engine, mut instance) = delivering();
+        let (status_key, status_len) = write(&mut instance, KEY, b":status");
+        let (trailer_key, trailer_len) = write(&mut instance, KEY + 16, b"grpc-status");
+        let get = |instance: &mut Instance, map, key, len| {
+            instance
+                .call::<(i32, i32, i32, i32, i32), i32>(
+                    "get",
+                    (map, key, len, RETURN_DATA, RETURN_SIZE),
+                )
+                .map(status)
+        };
+
+        // Act
+        let answers = [
+            get(&mut instance, DELIVERED_TRAILERS, status_key, status_len),
+            get(&mut instance, DELIVERED_TRAILERS, trailer_key, trailer_len),
+            get(&mut instance, DELIVERED_HEADERS, status_key, status_len),
+        ];
+
+        // Assert
+        let answers = answers.map(Result::unwrap);
+        assert_eq!(answers, [Status::NotFound, Status::Ok, Status::Ok]);
+        let (data, size) = return_slots(&mut instance);
+        assert_eq!(read(&mut instance, data, size), b"200");
+        assert_eq!(asked(&mut instance), 0, "the stream state was not asked");
     }
 }

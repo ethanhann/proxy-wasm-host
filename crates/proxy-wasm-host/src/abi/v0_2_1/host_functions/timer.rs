@@ -24,6 +24,9 @@ pub(super) fn proxy_set_tick_period_milliseconds(
         .contexts_mut()
         .set_tick_period(effective, period)
     {
+        if let Some(root) = state.abi().contexts().root_of(effective) {
+            state.abi_mut().note_tick_period(root, period);
+        }
         Ok(())
     } else {
         Err(Status::BadArgument.into())

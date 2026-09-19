@@ -34,6 +34,9 @@ pub(super) fn proxy_register_shared_queue(
         shared.register_shared_queue(call, vm_id, name),
     )?;
     state.abi_mut().grant_queue(queue);
+    if let Some(root) = state.abi().contexts().root_of(call.context) {
+        state.abi_mut().register_queue(queue, root, name);
+    }
     let (mut memory, _) = split(ctx)?;
     memory.write_u32(return_queue_id, queue.get())?;
     Ok(())

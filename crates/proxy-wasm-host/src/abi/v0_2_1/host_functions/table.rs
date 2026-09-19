@@ -5,8 +5,8 @@ use wasmtime::{Caller, Linker};
 
 use crate::Error;
 use crate::abi::v0_2_1::host_functions::{
-    buffer, callout, clock, complete, context, foreign, header_map, local_response, log, metric,
-    property, shared_data, shared_queue, stream, stub, timer,
+    buffer, callout, clock, complete, context, foreign, grpc, header_map, local_response, log,
+    metric, property, shared_data, shared_queue, stream, timer,
 };
 use crate::runtime::HostState;
 
@@ -17,8 +17,6 @@ pub(crate) struct HostFunction {
     pub(crate) name: &'static str,
     pub(crate) params: &'static [WasmType],
     pub(crate) results: &'static [WasmType],
-    /// Whether the row answers `UNIMPLEMENTED` rather than running a body.
-    pub(crate) stub: bool,
 }
 
 /// A wasm value type a host function parameter can have.
@@ -45,17 +43,6 @@ macro_rules! wasm_type {
 }
 
 macro_rules! host_function {
-    ($linker:ident, $name:ident, ( $( $param:ident : $ty:ident ),* ), [stub]) => {
-        $linker
-            .func_wrap(
-                "env",
-                stringify!($name),
-                |_: Caller<'_, HostState> $(, _: wasm_type!($ty))*| -> Result<i32, wasmtime::Error> {
-                    Ok(stub(stringify!($name)))
-                },
-            )
-            .map_err(instantiate)?;
-    };
     ($linker:ident, $name:ident, ( $( $param:ident : $ty:ident ),* ), [$body:path]) => {
         $linker
             .func_wrap(
@@ -72,21 +59,8 @@ macro_rules! host_function {
 /// Defines the table and the registration from one entry per function.
 ///
 /// An entry names the function, its parameters with their `WasmType`
-/// variants, and in brackets either the path of the body that serves it or
-/// the word `stub`.
-/// The brackets let `host_function!` receive the implementation as one token
-/// tree, and its `[stub]` rule must stay before its path rule, because
-/// `stub` is also a valid path.
-#[cfg(test)]
-macro_rules! is_stub {
-    ([stub]) => {
-        true
-    };
-    ([$body:path]) => {
-        false
-    };
-}
-
+/// variants, and in brackets the path of the body that serves it.
+/// The brackets let `host_function!` receive the path as one token tree.
 macro_rules! host_functions {
     ( $( $name:ident ( $( $param:ident : $ty:ident ),* ) = $imp:tt ; )* ) => {
         /// Every host function, in the order of the ABI document.
@@ -97,7 +71,6 @@ macro_rules! host_functions {
                     name: stringify!($name),
                     params: &[ $( WasmType::$ty ),* ],
                     results: &[WasmType::I32],
-                    stub: is_stub!($imp),
                 },
             )*
         ];
@@ -138,12 +111,12 @@ host_functions! {
     proxy_close_stream(stream_type: I32) = [stream::proxy_close_stream];
     proxy_get_status(return_status_code: I32, return_status_message_data: I32, return_status_message_size: I32) = [callout::proxy_get_status];
     proxy_send_local_response(status_code: I32, status_code_details_data: I32, status_code_details_size: I32, body_data: I32, body_size: I32, serialized_headers_data: I32, serialized_headers_size: I32, grpc_status: I32) = [local_response::proxy_send_local_response];
-    proxy_http_call(upstream_name_data: I32, upstream_name_size: I32, serialized_headers_data: I32, serialized_headers_size: I32, body_data: I32, body_size: I32, serialized_trailers_data: I32, serialized_trailers_size: I32, timeout: I32, return_call_id: I32) = [stub];
-    proxy_grpc_call(upstream_name_data: I32, upstream_name_size: I32, service_name_data: I32, service_name_size: I32, method_name_data: I32, method_name_size: I32, serialized_initial_metadata_data: I32, serialized_initial_metadata_size: I32, message_data: I32, message_size: I32, timeout: I32, return_call_id: I32) = [stub];
-    proxy_grpc_stream(upstream_name_data: I32, upstream_name_size: I32, service_name_data: I32, service_name_size: I32, method_name_data: I32, method_name_size: I32, serialized_initial_metadata_data: I32, serialized_initial_metadata_size: I32, return_stream_id: I32) = [stub];
-    proxy_grpc_send(stream_id: I32, message_data: I32, message_size: I32, end_stream: I32) = [stub];
-    proxy_grpc_cancel(call_or_stream_id: I32) = [stub];
-    proxy_grpc_close(call_or_stream_id: I32) = [stub];
+    proxy_http_call(upstream_name_data: I32, upstream_name_size: I32, serialized_headers_data: I32, serialized_headers_size: I32, body_data: I32, body_size: I32, serialized_trailers_data: I32, serialized_trailers_size: I32, timeout: I32, return_call_id: I32) = [callout::proxy_http_call];
+    proxy_grpc_call(upstream_name_data: I32, upstream_name_size: I32, service_name_data: I32, service_name_size: I32, method_name_data: I32, method_name_size: I32, serialized_initial_metadata_data: I32, serialized_initial_metadata_size: I32, message_data: I32, message_size: I32, timeout: I32, return_call_id: I32) = [grpc::proxy_grpc_call];
+    proxy_grpc_stream(upstream_name_data: I32, upstream_name_size: I32, service_name_data: I32, service_name_size: I32, method_name_data: I32, method_name_size: I32, serialized_initial_metadata_data: I32, serialized_initial_metadata_size: I32, return_stream_id: I32) = [grpc::proxy_grpc_stream];
+    proxy_grpc_send(stream_id: I32, message_data: I32, message_size: I32, end_stream: I32) = [grpc::proxy_grpc_send];
+    proxy_grpc_cancel(call_or_stream_id: I32) = [grpc::proxy_grpc_cancel];
+    proxy_grpc_close(call_or_stream_id: I32) = [grpc::proxy_grpc_close];
     proxy_set_shared_data(key_data: I32, key_size: I32, value_data: I32, value_size: I32, cas: I32) = [shared_data::proxy_set_shared_data];
     proxy_get_shared_data(key_data: I32, key_size: I32, return_value_data: I32, return_value_size: I32, return_cas: I32) = [shared_data::proxy_get_shared_data];
     proxy_register_shared_queue(name_data: I32, name_size: I32, return_queue_id: I32) = [shared_queue::proxy_register_shared_queue];
@@ -191,32 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn the_rows_with_no_body_are_the_six_callout_functions() {
-        // Arrange
-        let table = HOST_FUNCTIONS;
-
-        // Act
-        let stubs: Vec<&str> = table
-            .iter()
-            .filter(|function| function.stub)
-            .map(|function| function.name)
-            .collect();
-
-        // Assert
-        assert_eq!(
-            stubs,
-            vec![
-                "proxy_http_call",
-                "proxy_grpc_call",
-                "proxy_grpc_stream",
-                "proxy_grpc_send",
-                "proxy_grpc_cancel",
-                "proxy_grpc_close",
-            ]
-        );
-    }
-
-    #[test]
     fn a_guest_that_imports_every_function_instantiates() {
         // Arrange
         let engine = engine();
@@ -230,26 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stub_answers_unimplemented() {
-        // Arrange
-        let engine = engine();
-        let wat = r#"(module
-            (import "env" "proxy_grpc_cancel" (func $f (param i32) (result i32)))
-            (memory (export "memory") 1)
-            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
-            (func (export "call") (result i32) i32.const 1 call $f))"#;
-        let mut instance = instance(&engine, wat).unwrap();
-
-        // Act
-        let result = instance.call::<(), i32>("call", ()).map(status);
-
-        // Assert
-        assert_eq!(result.unwrap(), Status::Unimplemented);
-        assert!(!instance.is_poisoned());
-    }
-
-    #[test]
-    fn a_row_with_a_body_no_longer_answers_unimplemented() {
+    fn a_row_runs_the_body_it_names() {
         // Arrange
         let engine = engine();
         let wat = r#"(module

@@ -248,6 +248,9 @@ impl Guest {
     /// [`NoStream`] serves nothing, so a root context that reads a property
     /// or calls a foreign function reports the unavailable status of that
     /// family to the guest.
+    /// A callout from a root works in this scope, because your
+    /// [`Callouts`](crate::abi::v0_2_1::Callouts) service receives it and no
+    /// stream state is asked.
     /// If your root does either, enter the scope with a value of your own
     /// through [`Guest::enter`] instead of this shortcut.
     pub fn enter_root(&mut self) -> CallScope<'_, NoStream> {

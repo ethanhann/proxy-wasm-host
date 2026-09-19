@@ -83,15 +83,6 @@ impl From<Error> for Failure {
     }
 }
 
-/// Answers a host function this crate does not serve yet.
-///
-/// A guest built with the Rust SDK aborts on this status, so the log line is
-/// the embedder's warning.
-pub(crate) fn stub(name: &'static str) -> i32 {
-    tracing::debug!(function = name, "unimplemented host function called");
-    i32::from(Status::Unimplemented)
-}
-
 /// Turns a body's result into what wasmtime returns to the guest.
 pub(crate) fn complete(
     name: &'static str,
@@ -187,18 +178,6 @@ mod tests {
         assert!(matches!(completed[1], Ok(1)));
         let unwound = completed.into_iter().nth(2).unwrap().unwrap_err();
         assert!(matches!(map_guest_error(unwound), Error::Poisoned));
-    }
-
-    #[test]
-    fn a_stub_answers_unimplemented() {
-        // Arrange
-        let name = "proxy_get_log_level";
-
-        // Act
-        let answer = stub(name);
-
-        // Assert
-        assert_eq!(answer, i32::from(Status::Unimplemented));
     }
 
     #[test]

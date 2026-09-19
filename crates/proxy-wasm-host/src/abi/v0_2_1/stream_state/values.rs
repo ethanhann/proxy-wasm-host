@@ -31,36 +31,6 @@ impl<'a> ForeignCall<'a> {
     }
 }
 
-/// The status of the callout the guest is handling.
-///
-/// The guest asks for it in `proxy_on_http_call_response` and in
-/// `proxy_on_grpc_close`, and the value describes the call that callback
-/// delivers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct CalloutStatus<'a> {
-    /// The status code of the HTTP call or the gRPC call.
-    pub code: u32,
-    /// The status message, which may be empty.
-    pub message: Cow<'a, [u8]>,
-}
-
-impl<'a> CalloutStatus<'a> {
-    /// A status with `code` and `message`.
-    pub fn new(code: u32, message: Cow<'a, [u8]>) -> Self {
-        Self { code, message }
-    }
-
-    /// The same status with no borrow left in it.
-    #[must_use]
-    pub fn into_owned(self) -> CalloutStatus<'static> {
-        CalloutStatus {
-            code: self.code,
-            message: Cow::Owned(self.message.into_owned()),
-        }
-    }
-}
-
 /// The response a guest asks the proxy to send in place of the upstream one.
 ///
 /// The crate hands you a value that borrows guest memory for the duration of
@@ -170,36 +140,6 @@ mod tests {
                 Cow::Borrowed(b"v".as_slice()),
             )])
             .with_grpc_status(7)
-    }
-
-    #[test]
-    fn a_callout_status_reads_back_its_values() {
-        // Arrange
-        let message = b"unavailable".to_vec();
-
-        // Act
-        let status = CalloutStatus::new(503, Cow::Borrowed(&message));
-
-        // Assert
-        assert_eq!(status.code, 503);
-        assert_eq!(status.message.as_ref(), b"unavailable");
-    }
-
-    #[test]
-    fn a_callout_status_outlives_the_borrow_it_was_built_from() {
-        // Arrange
-        let message = b"unavailable".to_vec();
-        let borrowed = CalloutStatus::new(503, Cow::Borrowed(&message));
-
-        // Act
-        let owned = borrowed.into_owned();
-
-        // Assert
-        drop(message);
-        assert_eq!(
-            owned,
-            CalloutStatus::new(503, Cow::Owned(b"unavailable".to_vec()))
-        );
     }
 
     #[test]

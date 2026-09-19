@@ -18,12 +18,18 @@ pub enum Callback {
     Configure,
     /// `proxy_on_request_headers`.
     RequestHeaders,
+    /// `proxy_on_http_call_response`.
+    HttpCallResponse,
     /// `proxy_on_done`.
     Done,
     /// `proxy_on_log`.
     Log,
     /// `proxy_on_delete`.
     Delete,
+    /// `proxy_on_tick`.
+    Tick,
+    /// `proxy_on_queue_ready`.
+    QueueReady,
 }
 
 impl Callback {
@@ -34,21 +40,28 @@ impl Callback {
             Self::VmStart => "proxy_on_vm_start",
             Self::Configure => "proxy_on_configure",
             Self::RequestHeaders => "proxy_on_request_headers",
+            Self::HttpCallResponse => "proxy_on_http_call_response",
             Self::Done => "proxy_on_done",
             Self::Log => "proxy_on_log",
             Self::Delete => "proxy_on_delete",
+            Self::Tick => "proxy_on_tick",
+            Self::QueueReady => "proxy_on_queue_ready",
         }
     }
 
-    /// Every callback this crate drives, in lifecycle order.
+    /// Every callback this crate drives, with the callbacks of a stream in
+    /// lifecycle order and the two that a root gets at any time last.
     pub const ALL: &[Self] = &[
         Self::ContextCreate,
         Self::VmStart,
         Self::Configure,
         Self::RequestHeaders,
+        Self::HttpCallResponse,
         Self::Done,
         Self::Log,
         Self::Delete,
+        Self::Tick,
+        Self::QueueReady,
     ];
 }
 
@@ -68,14 +81,17 @@ mod tests {
             Callback::VmStart => 1,
             Callback::Configure => 2,
             Callback::RequestHeaders => 3,
-            Callback::Done => 4,
-            Callback::Log => 5,
-            Callback::Delete => 6,
+            Callback::HttpCallResponse => 4,
+            Callback::Done => 5,
+            Callback::Log => 6,
+            Callback::Delete => 7,
+            Callback::Tick => 8,
+            Callback::QueueReady => 9,
         }
     }
 
     #[test]
-    fn every_callback_is_listed_once_in_lifecycle_order() {
+    fn every_callback_is_listed_once_in_the_documented_order() {
         // Arrange
         let callbacks = Callback::ALL;
 
@@ -86,7 +102,7 @@ mod tests {
             .collect();
 
         // Assert
-        assert_eq!(positions, (0..7).collect::<Vec<usize>>());
+        assert_eq!(positions, (0..10).collect::<Vec<usize>>());
         assert_eq!(Callback::Delete.to_string(), "proxy_on_delete");
         assert!(
             callbacks

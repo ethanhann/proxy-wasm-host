@@ -2,8 +2,9 @@
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::GuestError;
+use crate::abi::v0_2_1::call_scope::delivery::{drop_open_callouts, fail_open_callouts};
 use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
-use crate::abi::v0_2_1::{Callback, ContextId, ContextState, NoStream, StreamState};
+use crate::abi::v0_2_1::{Callback, CalloutId, ContextId, ContextState, NoStream, StreamState};
 
 impl<H: StreamState> CallScope<'_, H> {
     /// Calls `proxy_on_done`.
@@ -54,14 +55,36 @@ impl<H: StreamState> CallScope<'_, H> {
 
     /// Calls `proxy_on_delete` on a done context and forgets the context.
     ///
+    /// A callout that the context still has open ends here, and the answer
+    /// holds the identifier of each one, so that you can end your own record
+    /// of the request you sent for it.
+    /// The crate delivers a failure for each one through
+    /// `proxy_on_http_call_response`, in identifier order, so that the guest
+    /// drops its own record of the callout.
+    /// For a stream context the failures come after `proxy_on_delete`, where
+    /// a guest SDK finds no context and runs none of your plugin's code.
+    /// For a root context they come before it.
+    /// A callout that a root makes from one of those failures gets no
+    /// delivery, and the crate removes it with the root.
+    /// If you want the guest to handle the end of a callout while its stream
+    /// is alive, deliver [`HttpCallResponse::failed`](crate::abi::v0_2_1::HttpCallResponse::failed)
+    /// before you call this.
+    ///
     /// # Errors
     ///
     /// Returns [`GuestError::Context`] for an unknown context, one that is
     /// not done, or a root context that still has stream contexts, and the
     /// [common runtime failures](CallScope#the-common-runtime-failures).
-    pub fn on_delete(&mut self, context: ContextId) -> Result<(), GuestError> {
+    /// After a failure, [`Guest::open_callouts`](crate::abi::v0_2_1::Guest::open_callouts)
+    /// tells you the callouts that did not end.
+    pub fn on_delete(&mut self, context: ContextId) -> Result<Vec<CalloutId>, GuestError> {
         self.guest.require_live()?;
         prologue::require_deletable(self.guest, context)?;
+        let root = self.guest.context_parent(context);
+        let mut ended = match root {
+            None => fail_open_callouts(self.guest, context, context)?,
+            Some(_) => Vec::new(),
+        };
         let func = self.guest.callbacks().delete.clone();
         prologue::run(
             self.guest,
@@ -71,13 +94,16 @@ impl<H: StreamState> CallScope<'_, H> {
             context.wire(),
             (),
         )?;
-        self.guest
-            .instance_mut()
-            .state_mut()
-            .abi_mut()
-            .contexts_mut()
-            .remove(context);
-        Ok(())
+        let abi = self.guest.instance_mut().state_mut().abi_mut();
+        abi.contexts_mut().remove(context);
+        if root.is_none() {
+            abi.forget_registrant(context);
+        }
+        if let Some(root) = root {
+            ended.extend(fail_open_callouts(self.guest, context, root)?);
+        }
+        ended.extend(drop_open_callouts(self.guest, context));
+        Ok(ended)
     }
 }
 

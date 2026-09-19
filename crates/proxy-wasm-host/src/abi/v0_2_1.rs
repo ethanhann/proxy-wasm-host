@@ -17,7 +17,19 @@
 //! of the runtime.
 //! You serve a request by implementing [`StreamState`], whose methods receive
 //! an [`Invocation`] and an [`Access`] and exchange [`HeaderPairs`],
-//! [`LocalResponse`], [`ForeignCall`], and [`CalloutStatus`] values.
+//! [`LocalResponse`] and [`ForeignCall`] values.
+//! You receive the HTTP calls of a guest by implementing [`Callouts`], which
+//! gives you a [`CalloutId`] and an [`HttpCall`] and takes an
+//! [`HttpCallRefusal`].
+//! You give the result back as an [`HttpCallResponse`], and
+//! [`CalloutProblem`] and [`InvalidCalloutId`] tell you why a callout was
+//! refused.
+//! [`Guest::open_callouts`] gives an [`OpenCallout`] for each open callout,
+//! with its [`CalloutKind`].
+//! You learn what a guest changed through [`Changes`], which names each
+//! [`QueueRegistration`], and an
+//! [`InMemoryStore`] tells you of a queue item through [`QueueEnqueued`],
+//! with [`QueueProblem`] as the refusal of a queue callback.
 //! [`NoStream`] is the stream state of a root context.
 //! You follow a context with [`ContextId`], [`ContextType`], and
 //! [`ContextState`], and you read a refusal through [`ContextProblem`] and
@@ -36,6 +48,9 @@ pub mod types;
 
 mod call_scope;
 mod callback;
+mod callout;
+mod callout_service;
+mod changes;
 mod context;
 mod guest;
 mod guest_error;
@@ -53,6 +68,9 @@ pub(crate) mod wasi;
 
 pub use call_scope::CallScope;
 pub use callback::Callback;
+pub use callout::{CalloutId, CalloutKind, CalloutProblem, InvalidCalloutId, OpenCallout};
+pub use callout_service::{Callouts, HttpCall, HttpCallRefusal, HttpCallResponse};
+pub use changes::{Changes, QueueRegistration};
 pub use context::{ContextId, ContextProblem, ContextState, ContextType, InvalidContextId};
 pub use guest::Guest;
 pub use guest_error::GuestError;
@@ -60,10 +78,10 @@ pub use host::Host;
 pub use plugin_config::PluginConfig;
 pub use services::{Clock, LogSink, SystemClock, VmServices};
 pub use shared_services::{
-    InMemoryStore, InMemoryStoreLimits, InvalidMetricId, InvalidQueueId, MetricId, QueueId,
-    SharedServices, SharedValue,
+    InMemoryStore, InMemoryStoreLimits, InvalidMetricId, InvalidQueueId, MetricId, QueueEnqueued,
+    QueueId, QueueProblem, SharedServices, SharedValue,
 };
-pub use stream_state::values::{CalloutStatus, ForeignCall, HeaderPairs, LocalResponse};
+pub use stream_state::values::{ForeignCall, HeaderPairs, LocalResponse};
 pub use stream_state::{Access, Invocation, NoStream, StreamState};
 /// The traits that bound the parameters and the results of
 /// [`Guest::call_export`].

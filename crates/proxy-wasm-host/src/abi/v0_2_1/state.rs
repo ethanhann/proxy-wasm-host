@@ -1,11 +1,14 @@
 //! The state the ABI layer keeps in the wasmtime store.
 
 use std::any::Any;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Duration;
 
+use crate::abi::v0_2_1::callout::{CalloutTable, Delivery};
+use crate::abi::v0_2_1::changes::{Changes, QueueRegistration};
 use crate::abi::v0_2_1::{
-    Callback, ContextTable, MetricId, QueueId, SharedServices, StreamState, VmServices,
+    Callback, ContextId, ContextTable, MetricId, QueueId, SharedServices, StreamState, VmServices,
 };
 use crate::runtime::HostState;
 
@@ -51,6 +54,10 @@ pub(crate) struct AbiState {
     queues: BTreeSet<QueueId>,
     metrics: BTreeSet<MetricId>,
     granted_against: Option<Arc<dyn SharedServices>>,
+    registrants: BTreeMap<QueueId, BTreeSet<ContextId>>,
+    callouts: CalloutTable,
+    delivery: Option<Delivery>,
+    changes: Changes,
 }
 
 impl AbiState {
@@ -63,6 +70,10 @@ impl AbiState {
             queues: BTreeSet::new(),
             metrics: BTreeSet::new(),
             granted_against: None,
+            registrants: BTreeMap::new(),
+            callouts: CalloutTable::new(),
+            delivery: None,
+            changes: Changes::default(),
         }
     }
 
@@ -83,7 +94,15 @@ impl AbiState {
         }
         self.queues.clear();
         self.metrics.clear();
+        self.registrants.clear();
+        self.changes.queues.clear();
         self.granted_against = Some(Arc::clone(shared));
+    }
+
+    /// Drops the grants when the embedder has replaced the shared services.
+    pub(crate) fn settle(&mut self) {
+        let shared = Arc::clone(self.services.shared());
+        self.settle_grants(&shared);
     }
 
     pub(crate) fn services(&self) -> &VmServices {
@@ -105,6 +124,80 @@ impl AbiState {
     /// Whether this guest obtained the queue identifier.
     pub(crate) fn holds_queue(&self, queue: QueueId) -> bool {
         self.queues.contains(&queue)
+    }
+
+    /// Records that a context of `root` registered `queue`, and reports it as
+    /// a change the first time.
+    pub(crate) fn register_queue(&mut self, queue: QueueId, root: ContextId, name: &[u8]) {
+        if self.registrants.entry(queue).or_default().insert(root) {
+            let registration = QueueRegistration::new(queue, root, name);
+            self.changes.queues.insert(registration);
+        }
+    }
+
+    /// Whether the shared services are the ones that issued the grants.
+    fn grants_are_current(&self) -> bool {
+        matches!(&self.granted_against, Some(seen) if Arc::ptr_eq(seen, self.services.shared()))
+    }
+
+    /// The roots whose contexts registered `queue` with the shared services
+    /// the guest has.
+    pub(crate) fn registrants(&self, queue: QueueId) -> Vec<ContextId> {
+        if !self.grants_are_current() {
+            return Vec::new();
+        }
+        self.registrants
+            .get(&queue)
+            .map(|roots| roots.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Removes a deleted root from every queue it registered.
+    pub(crate) fn forget_registrant(&mut self, root: ContextId) {
+        self.registrants.retain(|_, roots| {
+            roots.remove(&root);
+            !roots.is_empty()
+        });
+    }
+
+    /// Records a tick period a guest set on `root`.
+    pub(crate) fn note_tick_period(&mut self, root: ContextId, period: Option<Duration>) {
+        self.changes.tick_periods.insert(root, period);
+    }
+
+    /// The changes since the last call, without the queues of shared
+    /// services that the guest does not have.
+    pub(crate) fn take_changes(&mut self) -> Changes {
+        if !self.grants_are_current() {
+            self.changes.queues.clear();
+        }
+        std::mem::take(&mut self.changes)
+    }
+
+    /// The callouts the guest has open.
+    pub(crate) fn callouts(&self) -> &CalloutTable {
+        &self.callouts
+    }
+
+    /// The open callouts, to enter or remove one.
+    pub(crate) fn callouts_mut(&mut self) -> &mut CalloutTable {
+        &mut self.callouts
+    }
+
+    /// The result the running callback delivers, which is `None` outside a
+    /// delivery.
+    pub(crate) fn delivery(&self) -> Option<&Delivery> {
+        self.delivery.as_ref()
+    }
+
+    /// The delivered result as a header map read needs it.
+    pub(crate) fn delivery_mut(&mut self) -> Option<&mut Delivery> {
+        self.delivery.as_mut()
+    }
+
+    /// Installs the result of a delivery, or clears it with `None`.
+    pub(crate) fn set_delivery(&mut self, delivery: Option<Delivery>) {
+        self.delivery = delivery;
     }
 
     /// Records that this guest defined a metric.

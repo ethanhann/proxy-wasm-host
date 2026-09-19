@@ -1,12 +1,8 @@
 //! What the recording stream answers a host function.
 
-use std::borrow::Cow;
-
 use crate::Buffer;
 use crate::abi::v0_2_1::types::{BufferType, MapType, Status, StreamType};
-use crate::abi::v0_2_1::{
-    Access, CalloutStatus, ForeignCall, Invocation, LocalResponse, StreamState,
-};
+use crate::abi::v0_2_1::{Access, ForeignCall, Invocation, LocalResponse, StreamState};
 use crate::header_map::HeaderMap;
 
 use super::{Operation, Path, RecordingStream};
@@ -58,15 +54,6 @@ impl StreamState for RecordingStream {
     fn close_stream(&mut self, call: Invocation, stream: StreamType) -> Result<(), Status> {
         self.operations.push((call, Operation::Close(stream)));
         self.operation_answer()
-    }
-
-    fn callout_status(&mut self, call: Invocation) -> Result<CalloutStatus<'_>, Status> {
-        self.callout_calls.push(call);
-        if self.refuse_with_ok {
-            return Err(Status::Ok);
-        }
-        let (code, message) = self.callout.as_ref().ok_or(Status::Unimplemented)?;
-        Ok(CalloutStatus::new(*code, Cow::Borrowed(message)))
     }
 
     fn property(&mut self, call: Invocation, path: &[&[u8]]) -> Result<Vec<u8>, Status> {
