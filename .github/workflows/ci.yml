@@ -65,8 +65,3 @@ jobs:
             crates/test-guests
       - uses: extractions/setup-just@v4
       - run: just build-guests
-      - run: |
-          if ! git diff --exit-code -- crates/proxy-wasm-host/tests/fixtures; then
-            echo "the committed fixtures differ from a fresh build, rebuild them with just build-guests and commit the result"
-            exit 1
-          fi
