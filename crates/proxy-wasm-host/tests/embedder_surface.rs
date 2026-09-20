@@ -19,12 +19,13 @@ use proxy_wasm_host::abi::v0_2_1::types::{
 };
 use proxy_wasm_host::abi::v0_2_1::{
     Access, CallScope, Callback, CalloutId, CalloutKind, CalloutProblem, Callouts, Changes, Clock,
-    ContextId, ContextProblem, ContextState, ContextType, ForeignCall, Guest, GuestError,
-    HeaderPairs, Host, HttpCall, HttpCallRefusal, HttpCallResponse, InMemoryStore,
-    InMemoryStoreLimits, InvalidCalloutId, InvalidContextId, InvalidMetricId, InvalidQueueId,
-    Invocation, LocalResponse, LogSink, MetricId, NoStream, OpenCallout, PluginConfig,
-    QueueEnqueued, QueueId, QueueProblem, QueueRegistration, SharedServices, SharedValue,
-    StreamState, SystemClock, VmServices, WasmParams, WasmResults,
+    ContextId, ContextProblem, ContextState, ContextType, ForeignCall, GrpcCall, GrpcOpenRefusal,
+    GrpcStatus, GrpcStream, Guest, GuestError, GuestId, HeaderPairs, Host, HttpCall,
+    HttpCallRefusal, HttpCallResponse, InMemoryStore, InMemoryStoreLimits, InvalidCalloutId,
+    InvalidContextId, InvalidMetricId, InvalidQueueId, Invocation, LocalResponse, LogSink,
+    MetricId, NoStream, OpenCallout, PluginConfig, QueueEnqueued, QueueId, QueueProblem,
+    QueueRegistration, SharedServices, SharedValue, StreamState, SystemClock, VmServices,
+    WasmParams, WasmResults,
 };
 // What the codec names in a signature an embedder writes.
 use proxy_wasm_host::codec::pairs::{EncodeError, PairVisitor, Pairs};
@@ -285,4 +286,51 @@ fn a_module_with_no_accepted_version_is_refused_by_name() {
         result,
         Err(GuestError::UnsupportedAbi(UnsupportedAbi { found })) if found == ["proxy_abi_version_0_1_0"]
     ));
+}
+
+/// The names a worker writes when it serves a gRPC callout.
+#[test]
+fn an_embedder_names_the_grpc_surface_in_its_own_signatures() {
+    // Arrange
+    struct Outbox;
+    impl Callouts for Outbox {
+        fn grpc_call(
+            &self,
+            call: Invocation,
+            _: CalloutId,
+            request: GrpcCall<'_>,
+        ) -> Result<(), GrpcOpenRefusal> {
+            let _: GuestId = call.guest;
+            if request.upstream.as_ref() == b"authz" {
+                return Ok(());
+            }
+            Err(GrpcOpenRefusal::UnknownUpstream)
+        }
+
+        fn grpc_stream(
+            &self,
+            _: Invocation,
+            _: CalloutId,
+            _: GrpcStream<'_>,
+        ) -> Result<(), GrpcOpenRefusal> {
+            Ok(())
+        }
+    }
+    let request = GrpcCall::new(
+        std::borrow::Cow::Borrowed(b"authz"),
+        std::borrow::Cow::Borrowed(b"example.Authz"),
+        std::borrow::Cow::Borrowed(b"Check"),
+    );
+    let call = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
+
+    // Act
+    let answer = Outbox.grpc_call(call, CalloutId::try_from(1_u32).unwrap(), request);
+
+    // Assert
+    assert_eq!(answer, Ok(()));
+    assert_eq!(GrpcStatus::new(14, "unavailable").code, 14);
+    assert_eq!(
+        Status::from(GrpcOpenRefusal::UnknownUpstream),
+        Status::ParseFailure
+    );
 }

@@ -11,11 +11,15 @@
 //! and a plugin that closes its own stream inside `proxy_on_grpc_close` is
 //! ordinary code.
 //! They answer `NOT_FOUND` for an identifier that the crate never gave out
-//! and for a callout of another root, which are a defect of the guest.
+//! and for a callout of another context, which are a defect of the guest.
+//! They never answer `BAD_ARGUMENT`, which the ABI text lists and the SDK
+//! does not accept.
 //! The ABI text gives `NOT_FOUND` for a callout that ended, and this crate
 //! departs from it for the reason above.
 
 use std::borrow::Cow;
+use std::sync::Arc;
+use std::time::Duration;
 
 use wasmtime::AsContextMut;
 
@@ -28,7 +32,6 @@ use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{CalloutId, CalloutKind, GrpcCall, GrpcStream, HeaderPairs};
 use crate::codec::pairs::decode_pairs;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split};
-use std::time::Duration;
 
 /// The metadata of a gRPC callout, which answers `PARSE_FAILURE` when it does
 /// not decode.
@@ -133,8 +136,8 @@ pub(super) fn proxy_grpc_stream(
 /// What an open callout of this guest is, for the three functions that name
 /// one.
 enum Found {
-    /// The callout is open, with its entry.
-    Open(Callout),
+    /// The callout is open, with its identifier and its entry.
+    Open(CalloutId, Callout),
     /// The guest opened this callout and it has ended, so the function
     /// answers `OK` and does nothing.
     Ended,
@@ -142,9 +145,15 @@ enum Found {
 
 /// Finds the callout of an identifier the guest gave.
 ///
-/// The root of the effective context must be the root of the callout, so one
-/// plugin cannot feed or end the callout of another plugin in the same
-/// guest.
+/// The effective context must be the context that opened the callout, so one
+/// request cannot feed or end the callout of another request, and the
+/// context the service hears is the context every delivery names.
+///
+/// An identifier that this guest opened and that has ended answers `Ended`
+/// before the context is read, because the entry that named its context is
+/// gone.
+/// A guest can therefore learn that a number was given out, which the
+/// rustdoc of the three functions states.
 fn find(state: &HostState, id: i32) -> Result<Found, Failure> {
     let callout = CalloutId::try_from(id).map_err(|_| Status::NotFound)?;
     let abi = state.abi();
@@ -155,11 +164,10 @@ fn find(state: &HostState, id: i32) -> Result<Found, Failure> {
         return Err(Status::NotFound.into());
     };
     let caller = context(state, Status::NotFound)?;
-    let root = abi.contexts().root_of(caller).ok_or(Status::NotFound)?;
-    if root != entry.root {
+    if caller != entry.caller {
         return Err(Status::NotFound.into());
     }
-    Ok(Found::Open(entry))
+    Ok(Found::Open(callout, entry))
 }
 
 /// Sends one message on a gRPC stream the guest opened.
@@ -174,11 +182,10 @@ pub(super) fn proxy_grpc_send(
     let (memory, state) = split(ctx)?;
     let bytes = memory.read(message)?;
     let end_of_stream = end_stream != 0;
-    let entry = match find(state, stream_id)? {
+    let (callout, entry) = match find(state, stream_id)? {
         Found::Ended => return Ok(()),
-        Found::Open(entry) => entry,
+        Found::Open(callout, entry) => (callout, entry),
     };
-    let callout = CalloutId::try_from(stream_id).map_err(|_| Status::NotFound)?;
     if entry.kind != CalloutKind::GrpcStream {
         return Err(Status::NotFound.into());
     }
@@ -188,7 +195,7 @@ pub(super) fn proxy_grpc_send(
     }
     let caller = context(state, Status::NotFound)?;
     let call = invocation(state, caller);
-    let service = std::sync::Arc::clone(state.abi().services().callouts());
+    let service = Arc::clone(state.abi().services().callouts());
     service.grpc_send(call, callout, bytes, end_of_stream);
     if end_of_stream {
         state.abi_mut().callouts_mut().close_by_guest(callout);
@@ -202,11 +209,10 @@ pub(super) fn proxy_grpc_cancel(
     call_or_stream_id: i32,
 ) -> Result<(), Failure> {
     let (_, state) = split(ctx)?;
-    let entry = match find(state, call_or_stream_id)? {
+    let (callout, entry) = match find(state, call_or_stream_id)? {
         Found::Ended => return Ok(()),
-        Found::Open(entry) => entry,
+        Found::Open(callout, entry) => (callout, entry),
     };
-    let callout = CalloutId::try_from(call_or_stream_id).map_err(|_| Status::NotFound)?;
     if entry.kind == CalloutKind::HttpCall {
         return Err(Status::NotFound.into());
     }
@@ -220,11 +226,10 @@ pub(super) fn proxy_grpc_close(
     call_or_stream_id: i32,
 ) -> Result<(), Failure> {
     let (_, state) = split(ctx)?;
-    let entry = match find(state, call_or_stream_id)? {
+    let (callout, entry) = match find(state, call_or_stream_id)? {
         Found::Ended => return Ok(()),
-        Found::Open(entry) => entry,
+        Found::Open(callout, entry) => (callout, entry),
     };
-    let callout = CalloutId::try_from(call_or_stream_id).map_err(|_| Status::NotFound)?;
     match entry.kind {
         CalloutKind::HttpCall => return Err(Status::NotFound.into()),
         // A call takes no more from either side, so it ends here and the
@@ -234,7 +239,7 @@ pub(super) fn proxy_grpc_close(
         CalloutKind::GrpcStream if !entry.closed_by_guest => {
             let caller = context(state, Status::NotFound)?;
             let call = invocation(state, caller);
-            let service = std::sync::Arc::clone(state.abi().services().callouts());
+            let service = Arc::clone(state.abi().services().callouts());
             state.abi_mut().callouts_mut().close_by_guest(callout);
             service.grpc_close(call, callout);
         }
@@ -250,7 +255,7 @@ fn end_callout(state: &mut HostState, callout: CalloutId) {
         return;
     };
     let call = invocation(state, caller);
-    let service = std::sync::Arc::clone(state.abi().services().callouts());
+    let service = Arc::clone(state.abi().services().callouts());
     state.abi_mut().callouts_mut().remove(callout);
     service.grpc_cancel(call, callout);
 }
@@ -388,7 +393,7 @@ mod tests {
         // Assert
         assert_eq!(answer, Status::Ok);
         assert_eq!(written_id(&mut instance), 1);
-        let asked = service.grpc();
+        let asked = service.grpc_calls();
         assert_eq!(asked.len(), 1);
         let (call, callout, ask) = &asked[0];
         let guest = instance.state().abi().guest();
@@ -425,7 +430,7 @@ mod tests {
         // Assert
         assert_eq!(answer, Status::Ok);
         assert_eq!(written_id(&mut instance), 1);
-        let asked = service.grpc();
+        let asked = service.grpc_calls();
         assert_eq!(asked.len(), 1);
         match &asked[0].2 {
             GrpcAsk::Stream(request) => {
@@ -458,7 +463,7 @@ mod tests {
 
         // Assert
         assert_eq!(answers, vec![Status::InvalidMemoryAccess; 6]);
-        assert!(service.grpc().is_empty(), "the service was not asked");
+        assert!(service.grpc_calls().is_empty(), "the service was not asked");
         assert_eq!(open_count(&instance), 0);
     }
 
@@ -475,7 +480,7 @@ mod tests {
 
         // Assert
         assert_eq!(answer, Status::ParseFailure);
-        assert!(service.grpc().is_empty());
+        assert!(service.grpc_calls().is_empty());
         assert_eq!(open_count(&instance), 0);
     }
 
@@ -495,7 +500,7 @@ mod tests {
 
         // Assert
         assert_eq!(answer, Status::Ok);
-        match &service.grpc()[0].2 {
+        match &service.grpc_calls()[0].2 {
             GrpcAsk::Call(request) => {
                 assert!(request.message.is_empty());
                 assert_eq!(request.timeout, Duration::ZERO);
@@ -541,7 +546,7 @@ mod tests {
         // Assert
         assert_eq!(answers, vec![Status::InternalFailure; 1000]);
         assert_eq!(open_count(&instance), 0);
-        assert_eq!(service.grpc().len(), 1000);
+        assert_eq!(service.grpc_calls().len(), 1000);
     }
 
     #[test]
@@ -578,7 +583,11 @@ mod tests {
             [Status::Ok, Status::Ok, Status::InternalFailure],
             "the third call meets the maximum of the three kinds together"
         );
-        let identifiers: Vec<u32> = service.grpc().iter().map(|(_, id, _)| id.get()).collect();
+        let identifiers: Vec<u32> = service
+            .grpc_calls()
+            .iter()
+            .map(|(_, id, _)| id.get())
+            .collect();
         assert_eq!(identifiers, vec![1, 2]);
         assert_eq!(open_count(&instance), 2);
     }
@@ -600,7 +609,7 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [Status::InternalFailure; 2]);
-        assert!(service.grpc().is_empty());
+        assert!(service.grpc_calls().is_empty());
     }
 
     #[test]
@@ -617,7 +626,7 @@ mod tests {
 
         // Assert
         assert_eq!(answer, Status::InternalFailure);
-        assert!(service.grpc().is_empty());
+        assert!(service.grpc_calls().is_empty());
         assert_eq!(open_count(&instance), 0);
     }
 
@@ -634,13 +643,13 @@ mod tests {
 
         // Assert
         assert_eq!(answer, Status::Ok);
-        let asked = service.grpc();
+        let asked = service.grpc_calls();
         assert_eq!(asked.len(), 1);
         assert_eq!(
             asked[0].2,
             GrpcAsk::Send {
                 message: b"one".to_vec(),
-                end: true,
+                end_of_stream: true,
             },
             "every value but zero is an end of stream"
         );
@@ -666,7 +675,7 @@ mod tests {
 
         // Assert
         assert_eq!(answer, Status::InvalidMemoryAccess);
-        assert!(service.grpc().is_empty());
+        assert!(service.grpc_calls().is_empty());
     }
 
     #[test]
@@ -683,10 +692,10 @@ mod tests {
         // Assert
         assert_eq!(answer, Status::Ok);
         assert_eq!(
-            service.grpc()[0].2,
+            service.grpc_calls()[0].2,
             GrpcAsk::Send {
                 message: Vec::new(),
-                end: false,
+                end_of_stream: false,
             }
         );
     }
@@ -718,7 +727,7 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [Status::NotFound; 5]);
-        assert!(service.grpc().is_empty());
+        assert!(service.grpc_calls().is_empty());
     }
 
     #[test]
@@ -735,7 +744,11 @@ mod tests {
 
         // Assert
         assert_eq!(answer, Status::Ok);
-        assert_eq!(service.grpc().len(), 1, "only the first send was asked");
+        assert_eq!(
+            service.grpc_calls().len(),
+            1,
+            "only the first send was asked"
+        );
         assert_eq!(open_count(&instance), 1);
     }
 
@@ -758,7 +771,11 @@ mod tests {
         // Assert
         assert_eq!(answers, [Status::Ok; 3]);
         assert_eq!(open_count(&instance), 0);
-        let asks: Vec<GrpcAsk> = service.grpc().into_iter().map(|(_, _, ask)| ask).collect();
+        let asks: Vec<GrpcAsk> = service
+            .grpc_calls()
+            .into_iter()
+            .map(|(_, _, ask)| ask)
+            .collect();
         assert_eq!(asks, vec![GrpcAsk::Cancel, GrpcAsk::Cancel]);
     }
 
@@ -776,7 +793,7 @@ mod tests {
         // Assert
         assert_eq!(answer, Status::Ok);
         assert_eq!(open_count(&instance), 0);
-        assert_eq!(service.grpc()[0].2, GrpcAsk::Cancel);
+        assert_eq!(service.grpc_calls()[0].2, GrpcAsk::Cancel);
     }
 
     #[test]
@@ -793,7 +810,11 @@ mod tests {
         // Assert
         assert_eq!(answers, [Status::Ok; 2]);
         assert_eq!(open_count(&instance), 1);
-        let asks: Vec<GrpcAsk> = service.grpc().into_iter().map(|(_, _, ask)| ask).collect();
+        let asks: Vec<GrpcAsk> = service
+            .grpc_calls()
+            .into_iter()
+            .map(|(_, _, ask)| ask)
+            .collect();
         assert_eq!(asks, vec![GrpcAsk::Close]);
     }
 
@@ -811,12 +832,16 @@ mod tests {
 
         // Assert
         assert_eq!(answer, Status::Ok);
-        let asks: Vec<GrpcAsk> = service.grpc().into_iter().map(|(_, _, ask)| ask).collect();
+        let asks: Vec<GrpcAsk> = service
+            .grpc_calls()
+            .into_iter()
+            .map(|(_, _, ask)| ask)
+            .collect();
         assert_eq!(
             asks,
             vec![GrpcAsk::Send {
                 message: b"last".to_vec(),
-                end: true,
+                end_of_stream: true,
             }]
         );
     }
@@ -851,7 +876,7 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [Status::NotFound; 9]);
-        assert!(service.grpc().is_empty());
+        assert!(service.grpc_calls().is_empty());
         assert_eq!(open_count(&instance), 2, "nothing was removed");
     }
 
@@ -863,7 +888,7 @@ mod tests {
         let (mut instance, root) = hosted(&engine, &service);
         let stream = open(&mut instance, CalloutKind::GrpcStream, root, root);
         assert_eq!(cancel(&mut instance, stream), Status::Ok);
-        let asked = service.grpc().len();
+        let asked = service.grpc_calls().len();
 
         // Act
         let answers = [
@@ -879,7 +904,7 @@ mod tests {
             "a guest of the Rust SDK panics on any other status"
         );
         assert_eq!(
-            service.grpc().len(),
+            service.grpc_calls().len(),
             asked,
             "the service was not asked again"
         );
@@ -909,7 +934,97 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [Status::NotFound; 3]);
-        assert!(service.grpc().is_empty());
+        assert!(service.grpc_calls().is_empty());
         assert_eq!(open_count(&instance), 1);
+    }
+
+    #[test]
+    fn an_opener_is_refused_under_a_refused_root() {
+        // Arrange
+        let engine = engine();
+        let service = Arc::new(RecordingCallouts::new());
+        let (mut instance, root) = hosted(&engine, &service);
+        let arguments = call_arguments(&mut instance, &metadata_bytes());
+        instance.state_mut().abi_mut().contexts_mut().reject(root);
+
+        // Act
+        let answers = [
+            grpc_call(&mut instance, &arguments),
+            grpc_stream(&mut instance, &arguments),
+        ];
+
+        // Assert
+        assert_eq!(answers, [Status::InternalFailure; 2]);
+        assert!(service.grpc_calls().is_empty());
+        assert_eq!(open_count(&instance), 0);
+    }
+
+    #[test]
+    fn one_context_does_not_reach_the_callout_of_another_context_of_its_root() {
+        // Arrange
+        let engine = engine();
+        let service = Arc::new(RecordingCallouts::new());
+        let (mut instance, root) = hosted(&engine, &service);
+        let contexts = (
+            instance
+                .state_mut()
+                .abi_mut()
+                .contexts_mut()
+                .create(Some(root))
+                .unwrap(),
+            instance
+                .state_mut()
+                .abi_mut()
+                .contexts_mut()
+                .create(Some(root))
+                .unwrap(),
+        );
+        let theirs = open(&mut instance, CalloutKind::GrpcStream, contexts.0, root);
+        instance
+            .state_mut()
+            .abi_mut()
+            .contexts_mut()
+            .set_effective(contexts.1);
+
+        // Act
+        let answers = [
+            send(&mut instance, theirs, MESSAGE, b"a", 0),
+            cancel(&mut instance, theirs),
+            close(&mut instance, theirs),
+        ];
+
+        // Assert
+        assert_eq!(answers, [Status::NotFound; 3]);
+        assert!(service.grpc_calls().is_empty());
+        assert_eq!(open_count(&instance), 1, "the callout of the first stays");
+    }
+
+    #[test]
+    fn the_context_that_opened_a_callout_reaches_it() {
+        // Arrange
+        let engine = engine();
+        let service = Arc::new(RecordingCallouts::new());
+        let (mut instance, root) = hosted(&engine, &service);
+        let stream = instance
+            .state_mut()
+            .abi_mut()
+            .contexts_mut()
+            .create(Some(root))
+            .unwrap();
+        let mine = open(&mut instance, CalloutKind::GrpcStream, stream, root);
+        instance
+            .state_mut()
+            .abi_mut()
+            .contexts_mut()
+            .set_effective(stream);
+
+        // Act
+        let answer = send(&mut instance, mine, MESSAGE, b"a", 0);
+
+        // Assert
+        assert_eq!(answer, Status::Ok);
+        let asked = service.grpc_calls();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].0.context, stream, "the service hears the opener");
     }
 }

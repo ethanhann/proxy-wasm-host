@@ -14,6 +14,12 @@ use crate::abi::v0_2_1::{CalloutId, Invocation};
 
 /// The service that receives the callouts of a guest.
 ///
+/// A guest that acts on a callout of its own which already ended reads
+/// `OK`, and the crate asks you nothing, because a guest of the Rust SDK
+/// stops on any other answer.
+/// A guest can therefore learn that a number was given out in this guest,
+/// and it learns nothing else about the callout.
+///
 /// Sometimes a guest needs a second server, for example to check a token.
 /// A guest cannot open a connection, so it asks the host with
 /// `proxy_http_call`, and the crate gives the request to this service.
@@ -110,6 +116,9 @@ pub trait Callouts: Send + Sync {
     /// know, and [`GrpcOpenRefusal::Failed`] when you cannot send the call.
     /// The default body refuses with `Failed` and reports itself through
     /// `tracing` at the warn level.
+    ///
+    /// `call.context` is the context that made the callout, which you name
+    /// when you deliver a result.
     fn grpc_call(
         &self,
         call: Invocation,
@@ -136,6 +145,9 @@ pub trait Callouts: Send + Sync {
     /// know, and [`GrpcOpenRefusal::Failed`] when you cannot open the stream.
     /// The default body refuses with `Failed` and reports itself through
     /// `tracing` at the warn level.
+    ///
+    /// `call.context` is the context that made the callout, which you name
+    /// when you deliver a result.
     fn grpc_stream(
         &self,
         call: Invocation,
@@ -160,6 +172,11 @@ pub trait Callouts: Send + Sync {
     /// `end_of_stream` says that the guest sends no more on this stream.
     /// The server may still send, so the callout stays open until you close
     /// it.
+    /// A guest that ends the stream this way reaches [`Callouts::grpc_close`]
+    /// no more, so treat this flag as the close of its side.
+    ///
+    /// `call.context` is the context that opened the callout, because the
+    /// crate serves this function for that context alone.
     fn grpc_send(&self, call: Invocation, callout: CalloutId, message: &[u8], end_of_stream: bool) {
         let _ = (call, callout, message, end_of_stream);
         unserved("grpc_send");
@@ -174,6 +191,8 @@ pub trait Callouts: Send + Sync {
     ///
     /// A guest of the Rust SDK keeps its own record of a callout that ends
     /// with no delivery, and that record gets no callback.
+    ///
+    /// `call.context` is the context that opened the callout.
     fn grpc_cancel(&self, call: Invocation, callout: CalloutId) {
         let _ = (call, callout);
         unserved("grpc_cancel");
@@ -184,9 +203,13 @@ pub trait Callouts: Send + Sync {
     /// The callout stays open, because the server may still send.
     /// You end it when you deliver
     /// [`CallScope::on_grpc_close`](crate::abi::v0_2_1::CallScope::on_grpc_close).
-    /// The crate calls this one time for one stream, so a guest that closes
-    /// twice, or that sends with `end_of_stream` and then closes, reaches you
-    /// one time.
+    /// The crate calls this one time for one stream, and a second close
+    /// reaches you no more.
+    /// A guest that sends with `end_of_stream` and then closes reaches you
+    /// through [`Callouts::grpc_send`] alone, because that send already told
+    /// you that the guest closed its side.
+    ///
+    /// `call.context` is the context that opened the callout.
     fn grpc_close(&self, call: Invocation, callout: CalloutId) {
         let _ = (call, callout);
         unserved("grpc_close");

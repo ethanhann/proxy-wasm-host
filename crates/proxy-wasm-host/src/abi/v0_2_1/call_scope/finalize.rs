@@ -2,7 +2,7 @@
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::GuestError;
-use crate::abi::v0_2_1::call_scope::delivery::{deliver_grpc_close, deliver_response};
+use crate::abi::v0_2_1::call_scope::delivery::{deliver_grpc_close, deliver_http_response};
 use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
 use crate::abi::v0_2_1::{
     Callback, CalloutId, CalloutKind, ContextId, ContextState, GrpcStatus, Guest, HttpCallResponse,
@@ -86,7 +86,10 @@ impl<H: StreamState> CallScope<'_, H> {
     /// not done, or a root context that still has stream contexts, and the
     /// [common runtime failures](CallScope#the-common-runtime-failures).
     /// After a failure, [`Guest::open_callouts`](crate::abi::v0_2_1::Guest::open_callouts)
-    /// tells you the callouts that did not end.
+    /// tells you the callouts that did not end, which includes those of the
+    /// context you deleted.
+    /// The guest is poisoned in that case, so you end your own request for
+    /// each one and build a new guest.
     pub fn on_delete(&mut self, context: ContextId) -> Result<Vec<CalloutId>, GuestError> {
         self.guest.require_live()?;
         prologue::require_deletable(self.guest, context)?;
@@ -168,7 +171,7 @@ pub(super) fn fail_open_callouts(
         }
         match kind {
             CalloutKind::HttpCall => {
-                deliver_response(guest, root, callout, HttpCallResponse::failed())?;
+                deliver_http_response(guest, root, callout, HttpCallResponse::failed())?;
             }
             CalloutKind::GrpcCall | CalloutKind::GrpcStream => {
                 deliver_grpc_close(guest, root, callout, GrpcStatus::new(CANCELLED, ""))?;

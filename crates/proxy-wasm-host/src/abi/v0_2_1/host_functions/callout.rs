@@ -246,7 +246,7 @@ mod tests {
         // Assert
         assert_eq!(answer, Status::Ok);
         assert_eq!(written_id(&mut instance), 1);
-        let calls = service.calls();
+        let calls = service.http_calls();
         assert_eq!(calls.len(), 1);
         let (call, callout, request) = &calls[0];
         let guest = instance.state().abi().guest();
@@ -302,7 +302,7 @@ mod tests {
         // Assert
         assert!(answers.iter().all(|s| *s == Status::InternalFailure));
         assert_eq!(open(&instance), 0);
-        assert_eq!(service.calls().len(), 1000);
+        assert_eq!(service.http_calls().len(), 1000);
     }
 
     #[test]
@@ -339,7 +339,7 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [Status::InvalidMemoryAccess; 5]);
-        assert!(service.calls().is_empty());
+        assert!(service.http_calls().is_empty());
         assert_eq!(open(&instance), 0);
     }
 
@@ -363,7 +363,7 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [Status::BadArgument; 4]);
-        assert!(service.calls().is_empty());
+        assert!(service.http_calls().is_empty());
     }
 
     #[test]
@@ -379,7 +379,7 @@ mod tests {
 
         // Assert
         assert_eq!(answer, Status::BadArgument);
-        assert!(service.calls().is_empty());
+        assert!(service.http_calls().is_empty());
     }
 
     #[test]
@@ -403,7 +403,7 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [Status::Ok; 3]);
-        let calls = service.calls();
+        let calls = service.http_calls();
         assert_eq!(calls.len(), 3);
         for (_, _, request) in &calls {
             assert!(request.body.is_empty() && request.trailers.is_empty());
@@ -423,7 +423,7 @@ mod tests {
 
         // Assert
         assert_eq!(answer, Status::Ok);
-        assert_eq!(service.calls()[0].2.timeout, Duration::ZERO);
+        assert_eq!(service.http_calls()[0].2.timeout, Duration::ZERO);
     }
 
     #[test]
@@ -446,7 +446,7 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [Status::InternalFailure; 2]);
-        assert!(service.calls().is_empty());
+        assert!(service.http_calls().is_empty());
     }
 
     /// A case whose guest may have two open callouts and has `count`.
@@ -473,7 +473,7 @@ mod tests {
 
         // Assert
         assert_eq!(answer, Status::InternalFailure);
-        assert!(service.calls().is_empty());
+        assert!(service.http_calls().is_empty());
         assert_eq!((open(&instance), written_id(&mut instance)), (2, 0));
     }
 

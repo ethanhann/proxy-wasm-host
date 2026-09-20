@@ -14,6 +14,9 @@ use crate::abi::v0_2_1::ContextId;
 /// One guest never has two open callouts with one identifier, whatever their
 /// kinds.
 /// Zero is never one, because the ABI uses it for an absent value.
+/// The identifiers of each guest start at one, so a service of several
+/// guests keys its record by the guest and the callout.
+/// One guest gives out about four billion identifiers before they repeat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CalloutId(NonZeroU32);
 
@@ -352,6 +355,9 @@ mod tests {
             CalloutProblem::NotOpen,
             CalloutProblem::NotMadeBy(context(4)),
             CalloutProblem::NoResponseHeader,
+            CalloutProblem::WrongKind(CalloutKind::HttpCall),
+            CalloutProblem::WrongKind(CalloutKind::GrpcCall),
+            CalloutProblem::WrongKind(CalloutKind::GrpcStream),
         ];
 
         // Act
@@ -363,8 +369,30 @@ mod tests {
             [
                 "is not open",
                 "was not made by context 4",
-                "got a received response with no header"
+                "got a received response with no header",
+                "is an HTTP call",
+                "is a gRPC call",
+                "is a gRPC stream",
             ]
         );
+    }
+
+    #[test]
+    fn an_identifier_below_the_counter_was_given_out_and_the_next_one_was_not() {
+        // Arrange
+        let mut table = CalloutTable::new();
+        let first = table.reserve();
+        let second = table.reserve();
+        let third = CalloutId::try_from(3_u32).unwrap();
+
+        // Act
+        let answers = [
+            table.issued(first),
+            table.issued(second),
+            table.issued(third),
+        ];
+
+        // Assert
+        assert_eq!(answers, [true, true, false], "{first} {second} {third}");
     }
 }

@@ -15,7 +15,10 @@ use crate::runtime::{Engine, Instance, Module};
 pub(crate) enum GrpcAsk {
     Call(GrpcCall<'static>),
     Stream(GrpcStream<'static>),
-    Send { message: Vec<u8>, end: bool },
+    Send {
+        message: Vec<u8>,
+        end_of_stream: bool,
+    },
     Cancel,
     Close,
 }
@@ -47,11 +50,18 @@ impl RecordingCallouts {
     }
 
     /// Everything the service was asked to do with a gRPC callout, in order.
-    pub(crate) fn grpc(&self) -> Vec<(Invocation, CalloutId, GrpcAsk)> {
+    pub(crate) fn grpc_calls(&self) -> Vec<(Invocation, CalloutId, GrpcAsk)> {
         self.grpc
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    fn record_http(&self, call: Invocation, callout: CalloutId, request: HttpCall<'static>) {
+        self.calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((call, callout, request));
     }
 
     fn record_grpc(&self, call: Invocation, callout: CalloutId, ask: GrpcAsk) {
@@ -61,8 +71,8 @@ impl RecordingCallouts {
             .push((call, callout, ask));
     }
 
-    /// Every call the service was asked about, in order.
-    pub(crate) fn calls(&self) -> Vec<(Invocation, CalloutId, HttpCall<'static>)> {
+    /// Every HTTP call the service was asked about, in order.
+    pub(crate) fn http_calls(&self) -> Vec<(Invocation, CalloutId, HttpCall<'static>)> {
         self.calls
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -77,10 +87,7 @@ impl Callouts for RecordingCallouts {
         callout: CalloutId,
         request: HttpCall<'_>,
     ) -> Result<(), HttpCallRefusal> {
-        self.calls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push((call, callout, request.into_owned()));
+        self.record_http(call, callout, request.into_owned());
         self.refusal.map_or(Ok(()), Err)
     }
 
@@ -107,7 +114,7 @@ impl Callouts for RecordingCallouts {
     fn grpc_send(&self, call: Invocation, callout: CalloutId, message: &[u8], end_of_stream: bool) {
         let ask = GrpcAsk::Send {
             message: message.to_vec(),
-            end: end_of_stream,
+            end_of_stream,
         };
         self.record_grpc(call, callout, ask);
     }

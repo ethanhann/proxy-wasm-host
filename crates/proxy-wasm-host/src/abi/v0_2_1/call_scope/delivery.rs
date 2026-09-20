@@ -71,7 +71,7 @@ impl<H: StreamState> CallScope<'_, H> {
         }
         prologue::require_root(self.guest, entry.root)?;
         prologue::accepted(self.guest, entry.root)?;
-        deliver_response(self.guest, entry.root, callout, response)
+        deliver_http_response(self.guest, entry.root, callout, response)
     }
 
     /// Calls `proxy_on_tick` on a root context.
@@ -185,7 +185,7 @@ pub(super) fn deliver<P: WasmParams>(
 ///
 /// A failed response holds nothing, so its three counts are zero, which is
 /// how the ABI tells a guest that the call failed.
-pub(super) fn deliver_response(
+pub(super) fn deliver_http_response(
     guest: &mut Guest,
     root: ContextId,
     callout: CalloutId,
@@ -1138,7 +1138,7 @@ mod tests {
         // Arrange
         let (mut guest, service, root) = calling_guest(false);
         guest.enter_root().on_tick(root).unwrap();
-        let (call, callout, request) = service.calls().remove(0);
+        let (call, callout, request) = service.http_calls().remove(0);
 
         // Act
         let delivered = guest
@@ -1173,7 +1173,7 @@ mod tests {
         // Assert
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(status(word(&mut guest, 0)), Status::Ok);
-        let calls = service.calls();
+        let calls = service.http_calls();
         assert_eq!(calls.len(), 1);
         assert_eq!((calls[0].0.context, calls[0].0.callback), (root, None));
         assert_eq!(guest.open_callouts().len(), 1);
@@ -1198,7 +1198,7 @@ mod tests {
         );
         drop(scope);
         assert_eq!(
-            service.calls().len(),
+            service.http_calls().len(),
             1,
             "the service was not asked in the failure delivery"
         );
@@ -1333,7 +1333,7 @@ mod tests {
         assert_eq!(status(word(&mut guest, 28)), Status::Ok);
         assert_eq!(
             service
-                .grpc()
+                .grpc_calls()
                 .into_iter()
                 .map(|(_, id, ask)| (id, ask))
                 .collect::<Vec<_>>(),

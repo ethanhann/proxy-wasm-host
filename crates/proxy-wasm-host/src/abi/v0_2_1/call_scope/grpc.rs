@@ -72,6 +72,16 @@ impl<H: StreamState> CallScope<'_, H> {
     /// A key that is not UTF-8 stops a guest of the Rust SDK with a panic,
     /// so give the keys the server sent.
     ///
+    /// Deliver on the guest that owns the callout.
+    /// The callout identifiers of every guest start at one, and the crate
+    /// checks the identifier against the table of this guest alone, so an
+    /// event you deliver on another guest reaches the wrong plugin.
+    ///
+    /// The guest may send on the callout, cancel it, or close it from inside
+    /// the callback, and your service then runs on this thread while this
+    /// method has not returned.
+    /// Hold no lock of your own on that callout while you deliver.
+    ///
     /// # Errors
     ///
     /// Returns [`GuestError::Callout`] when the callout is not open, when
@@ -112,6 +122,11 @@ impl<H: StreamState> CallScope<'_, H> {
     /// A gRPC call gets one answer, so this delivery ends it.
     /// A gRPC stream gets many messages, so the callout stays open until you
     /// close it.
+    /// The kind you opened therefore says whether your own record of the
+    /// callout ends here.
+    /// The rules of
+    /// [`on_grpc_receive_initial_metadata`](CallScope::on_grpc_receive_initial_metadata)
+    /// on the guest and on your locks hold for this method as well.
     /// The guest reads the bytes from the `GRPC_CALL_MESSAGE` buffer while
     /// the callback runs, and in this callback alone.
     ///
@@ -155,6 +170,9 @@ impl<H: StreamState> CallScope<'_, H> {
     /// The callout stays open, and the guest reads the pairs in this
     /// callback alone.
     /// You end the callout with [`CallScope::on_grpc_close`].
+    /// The rules of
+    /// [`on_grpc_receive_initial_metadata`](CallScope::on_grpc_receive_initial_metadata)
+    /// on the guest and on your locks hold for this method as well.
     ///
     /// # Errors
     ///
@@ -197,9 +215,15 @@ impl<H: StreamState> CallScope<'_, H> {
     /// The delivery ends the callout, whether the guest exports the callback
     /// or not.
     /// The guest reads the code and the message with `proxy_get_status`
-    /// while the callback runs.
+    /// while the callback runs, and it reads them in this callback alone.
+    /// A guest that asks outside a delivery gets `NOT_FOUND`, which stops a
+    /// plugin of the Rust SDK, so a plugin asks for the status where the ABI
+    /// says it can.
     /// A code above `i32::MAX` reaches the guest whole, because the crate
     /// passes the raw bits.
+    /// Deliver on the guest that owns the callout, as
+    /// [`on_grpc_receive_initial_metadata`](CallScope::on_grpc_receive_initial_metadata)
+    /// says.
     ///
     /// # Errors
     ///
@@ -287,6 +311,25 @@ mod tests {
             (i32.store (i32.const 568) (call $buffer (i32.const 5) (i32.const 572) (i32.const 576)))
             (if (i32.eq (global.get $action) (i32.const 3)) (then unreachable))))"#;
 
+    /// A guest that opens a gRPC stream from its tick and from its done
+    /// callback.
+    ///
+    /// Address 0 and address 4 hold the status of each call.
+    const OPENER: &str = r#"(module
+        (import "env" "proxy_grpc_stream" (func $open (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+        (memory (export "memory") 1)
+        (data (i32.const 900) "authz")
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 8192)
+        (func (export "proxy_abi_version_0_2_1"))
+        (func $make (result i32)
+            (call $open (i32.const 900) (i32.const 5) (i32.const 900) (i32.const 5)
+                (i32.const 900) (i32.const 5) (i32.const 0) (i32.const 0) (i32.const 8)))
+        (func (export "proxy_on_tick") (param i32)
+            (i32.store (i32.const 0) (call $make)))
+        (func (export "proxy_on_done") (param i32) (result i32)
+            (i32.store (i32.const 4) (call $make))
+            i32.const 1))"#;
+
     /// A guest that exports none of the four gRPC callbacks.
     const SILENT: &str = r#"(module
         (memory (export "memory") 1)
@@ -333,13 +376,27 @@ mod tests {
 
     fn metadata() -> HeaderPairs<'static> {
         vec![(
-            std::borrow::Cow::Borrowed(b"k".as_slice()),
-            std::borrow::Cow::Borrowed(b"v".as_slice()),
+            Cow::Borrowed(b"k".as_slice()),
+            Cow::Borrowed(b"v".as_slice()),
         )]
     }
 
-    fn message() -> std::borrow::Cow<'static, [u8]> {
-        std::borrow::Cow::Borrowed(b"hello")
+    fn message() -> Cow<'static, [u8]> {
+        Cow::Borrowed(b"hello")
+    }
+
+    fn bytes(value: &'static [u8]) -> Cow<'static, [u8]> {
+        Cow::Borrowed(value)
+    }
+
+    /// The status of a server that ended the callout with an error.
+    fn unavailable() -> GrpcStatus {
+        GrpcStatus::new(14, "unavailable")
+    }
+
+    /// The status of a callout that ended well.
+    fn finished() -> GrpcStatus {
+        GrpcStatus::new(0, "")
     }
 
     fn wrong_kind(result: &Result<(), GuestError>, kind: CalloutKind) -> bool {
@@ -391,8 +448,8 @@ mod tests {
 
         // Act
         let answers = [
-            scope.on_grpc_close(root, unary, GrpcStatus::new(14, "unavailable")),
-            scope.on_grpc_close(root, stream, GrpcStatus::new(0, "")),
+            scope.on_grpc_close(root, unary, unavailable()),
+            scope.on_grpc_close(root, stream, finished()),
         ];
 
         // Assert
@@ -437,7 +494,7 @@ mod tests {
             scope.on_grpc_receive_initial_metadata(root, http, metadata()),
             scope.on_grpc_receive(root, http, message()),
             scope.on_grpc_receive_trailing_metadata(root, http, metadata()),
-            scope.on_grpc_close(root, http, GrpcStatus::new(0, "")),
+            scope.on_grpc_close(root, http, finished()),
         ];
 
         // Assert
@@ -501,12 +558,13 @@ mod tests {
         let (mut guest, _, root) = recording();
         let stream = open(&mut guest, CalloutKind::GrpcStream, root, root);
         let mut scope = guest.enter_root();
+        let second = bytes(b"second one");
         scope
-            .on_grpc_receive(root, stream, std::borrow::Cow::Borrowed(b"first"))
+            .on_grpc_receive(root, stream, bytes(b"first"))
             .unwrap();
 
         // Act
-        let answer = scope.on_grpc_receive(root, stream, std::borrow::Cow::Borrowed(b"second one"));
+        let answer = scope.on_grpc_receive(root, stream, second);
 
         // Assert
         assert!(answer.is_ok(), "{answer:?}");
@@ -529,7 +587,7 @@ mod tests {
         let mut scope = guest.enter_root();
 
         // Act
-        let answer = scope.on_grpc_close(root, unary, GrpcStatus::new(14, "unavailable"));
+        let answer = scope.on_grpc_close(root, unary, unavailable());
 
         // Assert
         assert!(answer.is_ok(), "{answer:?}");
@@ -550,10 +608,11 @@ mod tests {
         // Arrange
         let (mut guest, _, root) = recording();
         let unary = open(&mut guest, CalloutKind::GrpcCall, root, root);
+        let highest_code = GrpcStatus::new(u32::MAX, "");
         let mut scope = guest.enter_root();
 
         // Act
-        let answer = scope.on_grpc_close(root, unary, GrpcStatus::new(u32::MAX, ""));
+        let answer = scope.on_grpc_close(root, unary, highest_code);
 
         // Assert
         assert!(answer.is_ok(), "{answer:?}");
@@ -633,7 +692,7 @@ mod tests {
     }
 
     #[test]
-    fn the_four_deliveries_are_refused_on_a_poisoned_guest() {
+    fn the_four_callbacks_are_refused_on_a_poisoned_guest() {
         // Arrange
         let (mut guest, _, root) = recording();
         let stream = open(&mut guest, CalloutKind::GrpcStream, root, root);
@@ -645,7 +704,7 @@ mod tests {
             scope.on_grpc_receive_initial_metadata(root, stream, metadata()),
             scope.on_grpc_receive(root, stream, message()),
             scope.on_grpc_receive_trailing_metadata(root, stream, metadata()),
-            scope.on_grpc_close(root, stream, GrpcStatus::new(0, "")),
+            scope.on_grpc_close(root, stream, finished()),
         ];
 
         // Assert
@@ -669,7 +728,7 @@ mod tests {
         let mut scope = guest.enter_root();
 
         // Act
-        let answer = scope.on_grpc_close(root, unary, GrpcStatus::new(0, ""));
+        let answer = scope.on_grpc_close(root, unary, finished());
 
         // Assert
         assert!(answer.is_ok(), "{answer:?}");
@@ -695,14 +754,14 @@ mod tests {
         assert!(guest.open_callouts().is_empty());
         assert_eq!(
             service
-                .grpc()
+                .grpc_calls()
                 .into_iter()
                 .map(|(_, _, ask)| ask)
                 .collect::<Vec<_>>(),
             vec![GrpcAsk::Cancel]
         );
         let mut scope = guest.enter_root();
-        let late = scope.on_grpc_close(root, stream, GrpcStatus::new(0, ""));
+        let late = scope.on_grpc_close(root, stream, finished());
         assert!(
             matches!(
                 late,
@@ -730,13 +789,13 @@ mod tests {
         assert!(answer.is_ok(), "{answer:?}");
         drop(scope);
         assert_eq!(status(word(&mut guest, 604).cast_signed()), Status::Ok);
-        let asked = service.grpc();
+        let asked = service.grpc_calls();
         assert_eq!(asked.len(), 1);
         assert_eq!(
             asked[0].2,
             GrpcAsk::Send {
                 message: b"m".to_vec(),
-                end: false,
+                end_of_stream: false,
             }
         );
         assert_eq!(asked[0].0.callout, Some(stream), "the delivery was running");
@@ -811,7 +870,7 @@ mod tests {
         // Assert
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(status(word(&mut guest, 0).cast_signed()), Status::Ok);
-        let asked = service.grpc();
+        let asked = service.grpc_calls();
         assert_eq!(asked.len(), 1);
         assert_eq!(asked[0].0.callback, None);
         assert_eq!(guest.open_callout_count(), 1);
@@ -821,20 +880,71 @@ mod tests {
     fn a_service_of_two_guests_tells_their_callouts_apart_by_the_guest() {
         // Arrange
         let service = Arc::new(RecordingCallouts::new());
-        let mut first = guest_of(RECORDER, services_with(service.clone()));
-        let mut second = guest_of(RECORDER, services_with(service.clone()));
+        let mut first = guest_of(OPENER, services_with(service.clone()));
+        let mut second = guest_of(OPENER, services_with(service.clone()));
         let one = first.enter_root().on_context_create(None).unwrap();
         let two = second.enter_root().on_context_create(None).unwrap();
-        let first_callout = open(&mut first, CalloutKind::GrpcStream, one, one);
-        let second_callout = open(&mut second, CalloutKind::GrpcStream, two, two);
+        first.enter_root().on_tick(one).unwrap();
+        second.enter_root().on_tick(two).unwrap();
 
         // Act
-        let identities = (first.id(), second.id());
+        let asked = service.grpc_calls();
 
         // Assert
-        assert_ne!(identities.0, identities.1);
-        assert_eq!(first_callout, second_callout, "both tables start at one");
         assert_eq!(one, two, "both context tables start at one");
+        assert_eq!(asked.len(), 2);
+        assert_eq!(asked[0].1, asked[1].1, "both callout tables start at one");
+        assert_eq!(asked[0].0.context, asked[1].0.context);
+        assert_eq!(
+            (asked[0].0.guest, asked[1].0.guest),
+            (first.id(), second.id())
+        );
+        assert_ne!(
+            asked[0].0.guest, asked[1].0.guest,
+            "the guest tells them apart"
+        );
+    }
+
+    #[test]
+    fn the_identity_of_a_guest_is_the_same_in_every_callback() {
+        // Arrange
+        let service = Arc::new(RecordingCallouts::new());
+        let mut guest = guest_of(OPENER, services_with(service.clone()));
+        let root = guest.enter_root().on_context_create(None).unwrap();
+        guest.enter_root().on_tick(root).unwrap();
+
+        // Act
+        guest.enter_root().on_done(root).unwrap();
+
+        // Assert
+        let asked = service.grpc_calls();
+        assert_eq!(asked.len(), 2);
+        assert_eq!(asked[0].0.guest, asked[1].0.guest);
+        assert_eq!(asked[0].0.guest, guest.id());
+        assert_ne!(asked[0].0.callback, asked[1].0.callback);
+    }
+
+    #[test]
+    fn open_callout_reports_the_kind_of_a_grpc_callout() {
+        // Arrange
+        let (mut guest, _, root) = recording();
+        let unary = open(&mut guest, CalloutKind::GrpcCall, root, root);
+        let stream = open(&mut guest, CalloutKind::GrpcStream, root, root);
+
+        // Act
+        let answers = [guest.open_callout(unary), guest.open_callout(stream)];
+
+        // Assert
+        assert_eq!(
+            answers[0].map(|entry| entry.kind),
+            Some(CalloutKind::GrpcCall)
+        );
+        assert_eq!(
+            answers[1].map(|entry| entry.kind),
+            Some(CalloutKind::GrpcStream)
+        );
+        assert_eq!(answers[0].map(|entry| entry.caller), Some(root));
+        assert_eq!(guest.open_callout_count(), 2);
     }
 
     #[test]
@@ -849,7 +959,7 @@ mod tests {
         let mut scope = guest.enter_root();
 
         // Act
-        let answer = scope.on_grpc_close(root, callout, GrpcStatus::new(0, ""));
+        let answer = scope.on_grpc_close(root, callout, finished());
 
         // Assert
         assert!(answer.is_ok(), "a delivery does not ask the service");
