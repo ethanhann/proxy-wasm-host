@@ -856,4 +856,26 @@ mod tests {
         drop(scope);
         assert!(guest.open_callouts().is_empty());
     }
+
+    #[test]
+    fn a_delivery_for_a_stream_context_names_the_root_as_the_plugin_context() {
+        // Arrange
+        let (mut guest, _, root) = recording();
+        let stream = guest.enter_root().on_context_create(Some(root)).unwrap();
+        let callout = open(&mut guest, CalloutKind::GrpcStream, stream, root);
+        let mut scope = guest.enter_root();
+
+        // Act
+        let answer = scope.on_grpc_receive(stream, callout, message());
+
+        // Assert
+        assert!(answer.is_ok(), "{answer:?}");
+        drop(scope);
+        assert_eq!(
+            word(&mut guest, 200),
+            root.wire().cast_unsigned(),
+            "a guest SDK looks the plugin context up by this word"
+        );
+        assert_ne!(word(&mut guest, 200), stream.wire().cast_unsigned());
+    }
 }
