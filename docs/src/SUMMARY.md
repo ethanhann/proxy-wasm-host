@@ -1,6 +1,9 @@
 # Summary
 
 - [Getting Started](getting_started.md)
+
+# Guide
+
 - [Integration](guide/integration.md)
 - [Configuration](guide/configuration.md)
 - [Lifecycle](guide/lifecycle.md)
