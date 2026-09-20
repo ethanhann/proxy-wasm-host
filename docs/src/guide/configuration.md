@@ -1,10 +1,5 @@
 # Configuration
 
-todo topics to cover:
-
-- VmServices builder: log sink, clock, environment, VM identity, shared services, callouts, max open callouts.
-- InMemoryStoreLimits: queue and metric caps.
-
 ## EngineConfig
 
 The `EngineConfig` struct is used to configure the engine.
@@ -70,3 +65,31 @@ This gives the host a deterministic bound on how much work a guest can do in a s
 This is different from CPU time because the exact instruction count depends on the underlying hardware.
 It is also, generally speaking, slower than epochs.
 By default, guests have unlimited fuel and are only bound by CPU time and memory ceiling.
+
+## VmServices
+
+When you create a guest, you supply a `VmServices` that connects it to the outside world.
+The only required argument is a log sink.
+Everything else has a sensible default.
+
+A `VmServices` controls where guest log output goes, what time source the guest reads, what environment variables it sees, and where its HTTP and gRPC callouts are sent.
+If your proxy has shared state across guests (shared data, queues, or metrics), you provide a `SharedServices` implementation here as well.
+
+For example:
+
+```rust
+let services = VmServices::new(sink.clone())
+    .with_vm_id(*b"my_vm")
+    .with_vm_configuration(*b"{}")
+    .with_max_open_callouts(64);
+```
+
+See [Services](services.md) for details on logging, callouts, and shared state.
+
+## InMemoryStoreLimits
+
+If you use the shipped `InMemoryStore` for shared services, you can bound what a guest stores.
+These limits protect the host process from the guest filling the store with data.
+
+The largest value size, the total number of keys, and the number of items per queue can be capped.
+Any bound being exceeded causes a failure status to be reported to the guest.
