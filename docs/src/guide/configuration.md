@@ -4,9 +4,29 @@ todo topics to cover:
 
 - EngineConfig: epoch period, fuel, stack size.
 - Limits: CPU time budget, fuel budget, memory ceiling.
-- VmServices builder: log sink, clock, environment, VM identity, shared services, callouts, max open callouts.
 - PluginConfig: plugin name, root id, configuration bytes.
+- VmServices builder: log sink, clock, environment, VM identity, shared services, callouts, max open callouts.
 - InMemoryStoreLimits: queue and metric caps.
+
+## EngineConfig
+
+The `EngineConfig` struct is used to configure the engine.
+
+An engine has a `epoch_period`, `external_ticks`, `fuel_enabled`, and `max_wasm_stack`.
+
+An engine has a `epoch_period` which is the duration between epochs.
+A guest's CPU time limit is measured in these periods.
+This relates to the per-guest CPU time budget.
+
+The `external_ticks` setting allows the epoch to be advanced manually from the controlling program.
+This is an all-or-nothing setting: either the engine launches a thread to advance the epoch period or the implementing server manually increments the epoch.
+Depending on the architecture of a reverse proxy, this might be a useful feature.
+
+The `fuel_enabled` setting is a per-engine switch that turns fuel metering on or off.
+If it is set to off, individual fuel limits set for guests will have no effect.
+
+The `max_wasm_stack` setting sets an upperbound on the size, in bytes, of the engine's Wasm stack.
+This dictates the maximum amount of stack space that can be used by an engine instance to execute WebAssembly instructions.
 
 ## PluginConfig
 
