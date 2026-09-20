@@ -9,7 +9,7 @@ The crate is a port of [proxy-wasm-go-host](https://github.com/mosn/proxy-wasm-g
 Unlike the Golang implementation, `proxy-wasm-host` only supports version 2.0+ of the spec and has far more tests.
 
 You do not need to use this crate unless you are building or maintaining a proxy written in Rust.
-See https://areweproxyyet.github.io/ for a list of proxies that might benefit from this crate.
+See [areweproxyyet.github.io](https://areweproxyyet.github.io/) for a list of proxies that might benefit from this crate.
 
 ## Installation
 
