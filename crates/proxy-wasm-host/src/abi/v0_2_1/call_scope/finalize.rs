@@ -2,9 +2,12 @@
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::GuestError;
-use crate::abi::v0_2_1::call_scope::delivery::{drop_open_callouts, fail_open_callouts};
+use crate::abi::v0_2_1::call_scope::delivery::{deliver_grpc_close, deliver_response};
 use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
-use crate::abi::v0_2_1::{Callback, CalloutId, ContextId, ContextState, NoStream, StreamState};
+use crate::abi::v0_2_1::{
+    Callback, CalloutId, CalloutKind, ContextId, ContextState, GrpcStatus, Guest, HttpCallResponse,
+    NoStream, StreamState,
+};
 
 impl<H: StreamState> CallScope<'_, H> {
     /// Calls `proxy_on_done`.
@@ -127,6 +130,67 @@ impl<H: StreamState> CallScope<'_, H> {
         ended.extend(drop_open_callouts(self.guest, context));
         Ok(ended)
     }
+}
+
+/// The gRPC status code of a callout that the crate ends by itself, which
+/// gRPC names `CANCELLED`.
+pub(super) const CANCELLED: u32 = 1;
+
+/// Delivers a failure for every callout `context` still has open, in
+/// identifier order, on `root`.
+///
+/// A guest SDK drops its own record of a callout only on a delivery, so a
+/// callout that ended in silence would stay in the guest for its life.
+/// A refused root gets no guest call, and its entries are removed.
+/// The table is read again before each delivery, because a guest can end a
+/// callout from inside one of these callbacks.
+/// The answer holds the identifiers of the callouts that ended.
+pub(super) fn fail_open_callouts(
+    guest: &mut Guest,
+    context: ContextId,
+    root: ContextId,
+) -> Result<Vec<CalloutId>, GuestError> {
+    let open = guest.instance().state().abi().callouts().made_by(context);
+    if guest.rejected_by(root).is_some() {
+        return Ok(drop_open_callouts(guest, context));
+    }
+    let mut ended = Vec::new();
+    for (callout, kind) in open {
+        if guest
+            .instance()
+            .state()
+            .abi()
+            .callouts()
+            .get(callout)
+            .is_none()
+        {
+            continue;
+        }
+        match kind {
+            CalloutKind::HttpCall => {
+                deliver_response(guest, root, callout, HttpCallResponse::failed())?;
+            }
+            CalloutKind::GrpcCall | CalloutKind::GrpcStream => {
+                deliver_grpc_close(guest, root, callout, GrpcStatus::new(CANCELLED, ""))?;
+            }
+        }
+        ended.push(callout);
+    }
+    Ok(ended)
+}
+
+/// Removes every callout `context` has open, with no guest call, and answers
+/// their identifiers.
+///
+/// A deleted context can get no delivery, so a callout that the guest made
+/// from a failure delivery of that deletion ends here.
+pub(super) fn drop_open_callouts(guest: &mut Guest, context: ContextId) -> Vec<CalloutId> {
+    let abi = guest.instance_mut().state_mut().abi_mut();
+    let open = abi.callouts().made_by(context);
+    for (callout, _) in &open {
+        abi.callouts_mut().remove(*callout);
+    }
+    open.into_iter().map(|(callout, _)| callout).collect()
 }
 
 impl<H: StreamState> Drop for CallScope<'_, H> {

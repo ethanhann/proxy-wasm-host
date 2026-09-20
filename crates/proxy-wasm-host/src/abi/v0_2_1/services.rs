@@ -209,10 +209,8 @@ impl VmServices {
     ///
     /// The default refuses every callout, so a guest that calls
     /// `proxy_http_call` or a gRPC function gets `INTERNAL_FAILURE`.
-    /// One service can serve several guests, and the callout identifiers of
-    /// each guest start at one, so key your own record by
-    /// [`Invocation::guest`](crate::abi::v0_2_1::Invocation) and the
-    /// callout.
+    /// One service can serve several guests, whose callout identifiers each
+    /// start at one, so key your record by the guest and the callout.
     #[must_use]
     pub fn with_callouts(mut self, callouts: Arc<dyn Callouts>) -> Self {
         self.callouts = callouts;
@@ -224,9 +222,8 @@ impl VmServices {
     /// The default is 1024.
     /// A guest at the maximum gets `INTERNAL_FAILURE` for a new callout.
     /// The crate reports that refusal through `tracing` at the warn level.
-    /// The crate reads the value at each new callout.
-    /// A value below the number of open callouts keeps them and refuses a
-    /// new one.
+    /// It reads the value at each new callout, and a value below the number
+    /// of open callouts keeps them and refuses a new one.
     #[must_use]
     pub fn with_max_open_callouts(mut self, maximum: usize) -> Self {
         self.max_open_callouts = maximum;
@@ -240,8 +237,7 @@ impl VmServices {
     /// The trait is not downcastable, so keep your own `Arc` if you want
     /// your concrete type back.
     /// A call you make on the service yourself opens no callout, because
-    /// only a callout function of the guest enters one in the record of the
-    /// guest.
+    /// only a callout function of the guest enters one in its record.
     pub fn callouts(&self) -> &Arc<dyn Callouts> {
         &self.callouts
     }
