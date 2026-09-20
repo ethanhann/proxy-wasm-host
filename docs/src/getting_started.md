@@ -20,7 +20,8 @@ cargo add proxy-wasm-host
 ## Usage
 
 Usage of this crate assumes that you want to load and run a plugin in the host runtime this crate provides.
-Assume you have a file called "foo.wasm", a precompiled WebAssembly module.
+
+For example, given a pre-compiled plugin file called "foo.wasm", you would load it like this:
 
 ```rust
 const FOO_PLUGIN: &[u8] = include_bytes!("plugins/foo.wasm");
