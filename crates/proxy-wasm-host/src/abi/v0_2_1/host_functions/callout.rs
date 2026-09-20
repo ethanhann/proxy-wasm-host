@@ -1,4 +1,5 @@
-//! `proxy_http_call` and `proxy_get_status`.
+//! `proxy_http_call`, the steps every callout function shares, and
+//! `proxy_get_status`.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -7,11 +8,11 @@ use std::time::Duration;
 use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::AbiAccess;
-use crate::abi::v0_2_1::callout::{Callout, Delivery};
+use crate::abi::v0_2_1::callout::Callout;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::call::{context, invocation};
 use crate::abi::v0_2_1::types::Status;
-use crate::abi::v0_2_1::{CalloutKind, HeaderPairs, HttpCall};
+use crate::abi::v0_2_1::{CalloutId, CalloutKind, Callouts, HeaderPairs, HttpCall, Invocation};
 use crate::codec::pairs::decode_pairs;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
 
@@ -66,12 +67,41 @@ pub(super) fn proxy_http_call(
         return Err(Status::BadArgument.into());
     }
 
+    let callout = open_callout(state, CalloutKind::HttpCall, |service, call, id| {
+        service.http_call(call, id, request).map_err(Status::from)
+    })?;
+    memory.write_u32(id_ptr, callout.get())?;
+    Ok(())
+}
+
+/// Opens a callout of `kind` for the effective context and writes its
+/// identifier.
+///
+/// The three functions that open a callout share these steps.
+/// The context must be live, its root must not be refused, and the context
+/// must not be in its deletion, because a callout of a context that is going
+/// away ends with no signal to the embedder.
+/// The table must be below its maximum.
+/// The identifier is reserved, the service decides, and only an accepted
+/// callout reaches the table.
+/// The caller writes the identifier to the guest after this returns.
+/// Every pointer was read before that write, so it cannot fail, and the
+/// guest never gets an error for a callout that is open.
+pub(super) fn open_callout(
+    state: &mut HostState,
+    kind: CalloutKind,
+    ask: impl FnOnce(&Arc<dyn Callouts>, Invocation, CalloutId) -> Result<(), Status>,
+) -> Result<CalloutId, Failure> {
     let caller = context(state, Status::InternalFailure)?;
     let root = state
         .abi()
         .contexts()
         .root_of(caller)
         .ok_or(Status::InternalFailure)?;
+    if state.abi().is_deleting(caller) {
+        tracing::warn!(context = %caller, "a context that is being deleted opens no callout");
+        return Err(Status::InternalFailure.into());
+    }
     let maximum = state.abi().services().max_open_callouts();
     if state.abi().callouts().len() >= maximum {
         tracing::warn!(maximum, context = %caller, "the guest has its maximum of open callouts");
@@ -80,23 +110,17 @@ pub(super) fn proxy_http_call(
     let call = invocation(state, caller);
     let service = Arc::clone(state.abi().services().callouts());
     let callout = state.abi_mut().callouts_mut().reserve();
-    service
-        .http_call(call, callout, request)
-        .map_err(Status::from)?;
-    let entry = Callout {
-        kind: CalloutKind::HttpCall,
-        caller,
-        root,
-    };
+    ask(&service, call, callout)?;
+    let entry = Callout::new(kind, caller, root);
     state.abi_mut().callouts_mut().enter(callout, entry);
-    memory.write_u32(id_ptr, callout.get())?;
-    Ok(())
+    Ok(callout)
 }
 
 /// Answers the status of the callout that the running callback delivers.
 ///
-/// The ABI gives the status of an HTTP call no meaning, so a delivered HTTP
-/// call response answers code zero and an empty message.
+/// A gRPC close answers the code and the message of its status.
+/// The ABI gives the status of an HTTP call and of a gRPC message no
+/// meaning, so every other delivery answers code zero and an empty message.
 /// No context and no stream state is asked.
 pub(super) fn proxy_get_status(
     ctx: &mut impl AsContextMut<Data = HostState>,
@@ -111,11 +135,12 @@ pub(super) fn proxy_get_status(
     memory.read_u32(code_ptr)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
-    let (code, message): (u32, &[u8]) = match state.abi().delivery() {
-        Some(Delivery::HttpCallResponse(_)) => (0, &[]),
+    let (code, message) = match state.abi().delivery() {
+        Some(delivery) => delivery.status(),
         None => return Err(Status::NotFound.into()),
     };
-    write_return(ctx, message, data_ptr, size_ptr)?;
+    let message = message.as_bytes().to_vec();
+    write_return(ctx, &message, data_ptr, size_ptr)?;
     let (mut memory, _) = split(ctx)?;
     memory.write_u32(code_ptr, code)?;
     Ok(())
@@ -124,6 +149,7 @@ pub(super) fn proxy_get_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::v0_2_1::payload::Delivery;
     use crate::abi::v0_2_1::test_support::callouts::{
         RecordingCallouts, callout_hosted, services_with,
     };
@@ -223,9 +249,10 @@ mod tests {
         let calls = service.calls();
         assert_eq!(calls.len(), 1);
         let (call, callout, request) = &calls[0];
+        let guest = instance.state().abi().guest();
         assert_eq!(
             *call,
-            Invocation::new(root).with_callback(Callback::RequestHeaders)
+            Invocation::new(guest, root).with_callback(Callback::RequestHeaders)
         );
         assert_eq!(callout.get(), 1);
         assert_eq!(request.upstream.as_ref(), b"authz");
@@ -234,14 +261,7 @@ mod tests {
         assert_eq!(request.trailers.len(), 1);
         assert_eq!(request.timeout, Duration::from_millis(250));
         let entry = instance.state().abi().callouts().get(*callout);
-        assert_eq!(
-            entry,
-            Some(Callout {
-                kind: CalloutKind::HttpCall,
-                caller: root,
-                root
-            })
-        );
+        assert_eq!(entry, Some(Callout::new(CalloutKind::HttpCall, root, root)));
     }
 
     #[test]
@@ -437,15 +457,7 @@ mod tests {
         let table = instance.state_mut().abi_mut().callouts_mut();
         for _ in 0..count {
             let id = table.reserve();
-            let kind = CalloutKind::HttpCall;
-            table.enter(
-                id,
-                Callout {
-                    kind,
-                    caller: root,
-                    root,
-                },
-            );
+            table.enter(id, Callout::new(CalloutKind::HttpCall, root, root));
         }
         (instance, arguments)
     }
@@ -583,5 +595,63 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [Status::InvalidMemoryAccess; 3]);
+    }
+
+    #[test]
+    fn a_delivered_grpc_close_answers_its_code_and_its_message() {
+        // Arrange
+        let engine = engine();
+        let (mut instance, _) = callout_hosted(&engine, GUEST, services());
+        let callout = CalloutId::try_from(1_u32).unwrap();
+        let status = crate::abi::v0_2_1::GrpcStatus::new(14, "unavailable");
+        instance
+            .state_mut()
+            .abi_mut()
+            .set_delivery(Some(Delivery::grpc_close(callout, status)));
+
+        // Act
+        let answer = get_status(&mut instance);
+
+        // Assert
+        assert_eq!(answer, Status::Ok);
+        assert_eq!(code(&mut instance), 14);
+        assert_eq!(
+            returned(
+                &mut instance,
+                RETURN_DATA.cast_unsigned(),
+                RETURN_SIZE.cast_unsigned()
+            ),
+            b"unavailable".to_vec()
+        );
+    }
+
+    #[test]
+    fn the_other_grpc_deliveries_answer_code_zero_and_an_empty_message() {
+        // Arrange
+        let engine = engine();
+        let (mut instance, _) = callout_hosted(&engine, GUEST, services());
+        let callout = CalloutId::try_from(1_u32).unwrap();
+        let deliveries = [
+            Delivery::grpc_message(callout, Cow::Borrowed(b"hello")),
+            Delivery::grpc_initial_metadata(callout, Vec::new()),
+            Delivery::grpc_trailing_metadata(callout, Vec::new()),
+        ];
+
+        // Act
+        let answers = deliveries.map(|delivery| {
+            instance.state_mut().abi_mut().set_delivery(Some(delivery));
+            (get_status(&mut instance), code(&mut instance))
+        });
+
+        // Assert
+        assert_eq!(answers, [(Status::Ok, 0); 3]);
+        assert!(
+            returned(
+                &mut instance,
+                RETURN_DATA.cast_unsigned(),
+                RETURN_SIZE.cast_unsigned()
+            )
+            .is_empty()
+        );
     }
 }

@@ -5,10 +5,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::abi::v0_2_1::callout::{CalloutTable, Delivery};
+use crate::abi::v0_2_1::callout::CalloutTable;
 use crate::abi::v0_2_1::changes::{Changes, QueueRegistration};
+use crate::abi::v0_2_1::payload::Delivery;
 use crate::abi::v0_2_1::{
-    Callback, ContextId, ContextTable, MetricId, QueueId, SharedServices, StreamState, VmServices,
+    Callback, ContextId, ContextTable, GuestId, MetricId, QueueId, SharedServices, StreamState,
+    VmServices,
 };
 use crate::runtime::HostState;
 
@@ -47,6 +49,7 @@ impl AbiAccess for HostState {
 /// The runtime holds one of these in its store data and never reads inside
 /// it, so the ABI layer adds state without a change under `runtime/`.
 pub(crate) struct AbiState {
+    guest: GuestId,
     services: VmServices,
     stream_state: Option<Box<dyn StreamState>>,
     contexts: ContextTable,
@@ -56,6 +59,7 @@ pub(crate) struct AbiState {
     granted_against: Option<Arc<dyn SharedServices>>,
     registrants: BTreeMap<QueueId, BTreeSet<ContextId>>,
     callouts: CalloutTable,
+    deleting: Option<ContextId>,
     delivery: Option<Delivery>,
     changes: Changes,
 }
@@ -63,6 +67,7 @@ pub(crate) struct AbiState {
 impl AbiState {
     pub(crate) fn new(services: VmServices) -> Self {
         Self {
+            guest: GuestId::next(),
             services,
             stream_state: None,
             contexts: ContextTable::new(),
@@ -72,6 +77,7 @@ impl AbiState {
             granted_against: None,
             registrants: BTreeMap::new(),
             callouts: CalloutTable::new(),
+            deleting: None,
             delivery: None,
             changes: Changes::default(),
         }
@@ -103,6 +109,11 @@ impl AbiState {
     pub(crate) fn settle(&mut self) {
         let shared = Arc::clone(self.services.shared());
         self.settle_grants(&shared);
+    }
+
+    /// The identity of the guest this state belongs to.
+    pub(crate) fn guest(&self) -> GuestId {
+        self.guest
     }
 
     pub(crate) fn services(&self) -> &VmServices {
@@ -182,6 +193,20 @@ impl AbiState {
     /// The open callouts, to enter or remove one.
     pub(crate) fn callouts_mut(&mut self) -> &mut CalloutTable {
         &mut self.callouts
+    }
+
+    /// Marks the context whose deletion is running, or clears the mark.
+    ///
+    /// A guest runs plugin code in the failure deliveries of a deletion, and
+    /// a callout it opens for that context would end with no signal to the
+    /// embedder, so the callout functions refuse one.
+    pub(crate) fn set_deleting(&mut self, context: Option<ContextId>) {
+        self.deleting = context;
+    }
+
+    /// Whether the deletion of `context` is running.
+    pub(crate) fn is_deleting(&self, context: ContextId) -> bool {
+        self.deleting == Some(context)
     }
 
     /// The result the running callback delivers, which is `None` outside a

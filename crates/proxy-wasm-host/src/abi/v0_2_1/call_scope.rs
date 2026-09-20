@@ -2,6 +2,7 @@
 
 mod delivery;
 mod finalize;
+mod grpc;
 mod prologue;
 mod stream;
 
@@ -1080,9 +1081,14 @@ mod tests {
         let text = format!("{scope:?}");
 
         // Assert
-        assert!(text.starts_with(
-            "CallScope { guest: Guest { abi: V0_2_1, effective_context: Some(ContextId(1))"
-        ));
+        assert!(
+            text.contains("abi: V0_2_1, effective_context: Some(ContextId(1))"),
+            "{text}"
+        );
+        assert!(
+            text.starts_with("CallScope { guest: Guest { id: GuestId("),
+            "{text}"
+        );
         assert!(text.ends_with("NoStream\" }"));
     }
 

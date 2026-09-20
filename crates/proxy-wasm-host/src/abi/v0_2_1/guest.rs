@@ -3,6 +3,7 @@
 mod callbacks;
 mod contexts;
 mod exports;
+pub(crate) mod identity;
 mod recovery;
 
 use std::fmt;
@@ -13,6 +14,7 @@ use crate::abi::v0_2_1::VmServices;
 use crate::abi::v0_2_1::{CallScope, Callback, GuestError, Host, NoStream, StreamState};
 use crate::runtime::{Instance, Limits, Module};
 use callbacks::Callbacks;
+use identity::GuestId;
 
 /// A running guest and the ABI conversation with it.
 ///
@@ -102,12 +104,14 @@ pub struct Guest {
     detached: Option<Box<dyn StreamState>>,
     instance: Instance,
     abi: AbiVersion,
+    id: GuestId,
     callbacks: Callbacks,
 }
 
 impl fmt::Debug for Guest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Guest")
+            .field("id", &self.id)
             .field("abi", &self.abi)
             .field("effective_context", &self.effective_context())
             .field("poisoned", &self.instance.is_poisoned())
@@ -141,10 +145,12 @@ impl Guest {
             limits,
         )?;
         let callbacks = Callbacks::resolve(&mut instance)?;
+        let id = instance.state().abi().guest();
         Ok(Self {
             detached: None,
             instance,
             abi,
+            id,
             callbacks,
         })
     }
@@ -152,6 +158,15 @@ impl Guest {
     /// The ABI version the module advertises.
     pub fn abi(&self) -> AbiVersion {
         self.abi
+    }
+
+    /// The identity of this guest in this process.
+    ///
+    /// Your [`Callouts`](crate::abi::v0_2_1::Callouts) service receives the
+    /// same value on its [`Invocation`](crate::abi::v0_2_1::Invocation), so
+    /// one service serves several guests and tells their callouts apart.
+    pub fn id(&self) -> GuestId {
+        self.id
     }
 
     pub(crate) fn instance(&self) -> &Instance {
@@ -366,7 +381,10 @@ mod tests {
         assert!(!guest.instance().is_poisoned());
         assert_eq!(
             format!("{guest:?}"),
-            "Guest { abi: V0_2_1, effective_context: None, poisoned: false, .. }"
+            format!(
+                "Guest {{ id: {:?}, abi: V0_2_1, effective_context: None, poisoned: false, .. }}",
+                guest.id()
+            )
         );
     }
 

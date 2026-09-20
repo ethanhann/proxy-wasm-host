@@ -1,8 +1,9 @@
 //! The seven header map functions.
 //!
 //! Each one converts its arguments, checks every guest address it will use,
-//! asks the stream state for the map, acts on the map, and last writes to
-//! guest memory.
+//! finds the map, acts on it, and last writes to guest memory.
+//! The map of a delivery comes from the value that delivery holds, and every
+//! other map comes from the stream state.
 
 use std::borrow::Cow;
 
@@ -10,57 +11,47 @@ use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::Access;
-use crate::abi::v0_2_1::callout::Delivery;
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_stream};
 use crate::abi::v0_2_1::host_functions::{Failure, Served};
+use crate::abi::v0_2_1::payload::{DeliveredMap, serves_map};
 use crate::abi::v0_2_1::types::{MapType, Status};
 use crate::codec::pairs::decode_pairs;
 use crate::header_map::HeaderMap;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
 
-/// A map the crate answers from the response the embedder delivered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResponseMap {
-    HttpCallResponseHeaders,
-    HttpCallResponseTrailers,
-}
-
 /// Whether the crate serves this map itself.
 ///
-/// The two maps of an HTTP call response come from the response the embedder
-/// delivered for the running callback, so no implementation sees them.
+/// The two maps of an HTTP call response and the two gRPC metadata maps come
+/// from the value the embedder delivered for the running callback, so no
+/// implementation sees them.
+/// [`serves_map`] holds that list for every family.
 ///
 /// See [`Served`] for the rule.
-fn served(map_type: MapType) -> Served<ResponseMap> {
-    match map_type {
-        MapType::HttpCallResponseHeaders => Served::Crate(ResponseMap::HttpCallResponseHeaders),
-        MapType::HttpCallResponseTrailers => Served::Crate(ResponseMap::HttpCallResponseTrailers),
-        _ => Served::Embedder,
+fn served(map_type: MapType) -> Served<DeliveredMap> {
+    match serves_map(map_type) {
+        Some(which) => Served::Crate(which),
+        None => Served::Embedder,
     }
 }
 
-/// The map of the delivered response, which a guest may read and may not
-/// change.
+/// The map of the value the embedder delivered, which a guest may read and
+/// may not change.
 ///
 /// `BAD_ARGUMENT` is the status of this family for a map that is not
-/// available, which covers a read outside a delivery and every write.
+/// available, which covers a read outside the delivery that holds the map
+/// and every write.
 fn delivered(
     state: &mut HostState,
-    which: ResponseMap,
+    which: DeliveredMap,
     access: Access,
 ) -> Result<&mut dyn HeaderMap, Failure> {
     let delivery = match access {
         Access::Read => state.abi_mut().delivery_mut(),
         Access::Write => None,
     };
-    match (delivery, which) {
-        (Some(Delivery::HttpCallResponse(response)), ResponseMap::HttpCallResponseHeaders) => {
-            Ok(&mut response.headers)
-        }
-        (Some(Delivery::HttpCallResponse(response)), ResponseMap::HttpCallResponseTrailers) => {
-            Ok(&mut response.trailers)
-        }
-        (None, _) => Err(Status::BadArgument.into()),
+    match delivery.and_then(|delivery| delivery.map_mut(which)) {
+        Some(map) => Ok(map),
+        None => Err(Status::BadArgument.into()),
     }
 }
 
@@ -204,6 +195,8 @@ pub(super) fn proxy_remove_header_map_value(
 mod tests {
     use super::*;
     use crate::abi::v0_2_1::AbiAccess;
+    use crate::abi::v0_2_1::HeaderPairs;
+    use crate::abi::v0_2_1::payload::Delivery;
     use crate::abi::v0_2_1::test_support::{
         RecordingStream, engine, hosted, instance, outcome, status, write,
     };
@@ -858,6 +851,8 @@ mod tests {
 
     const DELIVERED_HEADERS: i32 = MapType::HttpCallResponseHeaders as i32;
     const DELIVERED_TRAILERS: i32 = MapType::HttpCallResponseTrailers as i32;
+    const GRPC_INITIAL: i32 = MapType::GrpcCallInitialMetadata as i32;
+    const GRPC_TRAILING: i32 = MapType::GrpcCallTrailingMetadata as i32;
 
     /// An instance in a delivery of a response with one header and one
     /// trailer.
@@ -999,5 +994,100 @@ mod tests {
         let (data, size) = return_slots(&mut instance);
         assert_eq!(read(&mut instance, data, size), b"200");
         assert_eq!(asked(&mut instance), 0, "the stream state was not asked");
+    }
+
+    /// An instance with `delivery` installed and a recording stream state.
+    fn delivering_grpc(metadata: fn(CalloutId, HeaderPairs<'static>) -> Delivery) -> Instance {
+        let (_engine, mut instance, _) = setup(RecordingStream::new());
+        let pairs = vec![(
+            Cow::Borrowed(b"k".as_slice()),
+            Cow::Borrowed(b"v".as_slice()),
+        )];
+        let callout = CalloutId::try_from(1_u32).unwrap();
+        instance
+            .state_mut()
+            .abi_mut()
+            .set_delivery(Some(metadata(callout, pairs)));
+        instance
+    }
+
+    #[test]
+    fn the_initial_metadata_of_a_grpc_callout_is_read_in_its_own_delivery() {
+        // Arrange
+        let mut instance = delivering_grpc(Delivery::grpc_initial_metadata);
+        write(&mut instance, KEY, b"k");
+        write(&mut instance, VALUE, b"v");
+
+        // Act
+        let answers = drive_all(&mut instance, GRPC_INITIAL);
+
+        // Assert
+        assert_eq!(answers[0], Status::Ok, "the size");
+        assert_eq!(answers[1], Status::Ok, "the pairs");
+        assert_eq!(answers[3], Status::Ok, "the value of a key");
+        assert_eq!(
+            [answers[2], answers[4], answers[5], answers[6]],
+            [Status::BadArgument; 4],
+            "every write is refused"
+        );
+        assert_eq!(asked(&mut instance), 0, "the stream state was not asked");
+    }
+
+    #[test]
+    fn the_trailing_metadata_of_a_grpc_callout_is_read_in_its_own_delivery() {
+        // Arrange
+        let mut instance = delivering_grpc(Delivery::grpc_trailing_metadata);
+        write(&mut instance, KEY, b"k");
+        write(&mut instance, VALUE, b"v");
+
+        // Act
+        let answers = drive_all(&mut instance, GRPC_TRAILING);
+
+        // Assert
+        assert_eq!([answers[0], answers[1], answers[3]], [Status::Ok; 3]);
+        assert_eq!(
+            [answers[2], answers[4], answers[5], answers[6]],
+            [Status::BadArgument; 4]
+        );
+        assert_eq!(asked(&mut instance), 0);
+    }
+
+    #[test]
+    fn a_metadata_map_is_a_bad_argument_in_another_delivery_and_outside_one() {
+        // Arrange
+        let mut inside = delivering_grpc(Delivery::grpc_initial_metadata);
+        let (_engine, mut outside, _) = setup(RecordingStream::new());
+        write(&mut inside, KEY, b"k");
+        write(&mut outside, KEY, b"k");
+
+        // Act
+        let answers = [
+            drive_all(&mut inside, GRPC_TRAILING),
+            drive_all(&mut outside, GRPC_INITIAL),
+            drive_all(&mut outside, GRPC_TRAILING),
+        ];
+
+        // Assert
+        assert_eq!(answers[0], [Status::BadArgument; 7]);
+        assert_eq!(answers[1], [Status::BadArgument; 7]);
+        assert_eq!(answers[2], [Status::BadArgument; 7]);
+        assert_eq!(asked(&mut inside), 0);
+        assert_eq!(asked(&mut outside), 0);
+    }
+
+    #[test]
+    fn a_response_map_is_a_bad_argument_in_a_grpc_delivery() {
+        // Arrange
+        let mut instance = delivering_grpc(Delivery::grpc_initial_metadata);
+        write(&mut instance, KEY, b"k");
+
+        // Act
+        let answers =
+            [DELIVERED_HEADERS, DELIVERED_TRAILERS].map(|map| drive_all(&mut instance, map));
+
+        // Assert
+        assert_eq!(answers[0], [Status::BadArgument; 7]);
+        assert_eq!(answers[1], [Status::BadArgument; 7]);
+        assert_eq!(asked(&mut instance), 0);
     }
 }

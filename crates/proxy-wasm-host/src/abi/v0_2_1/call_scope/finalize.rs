@@ -58,14 +58,21 @@ impl<H: StreamState> CallScope<'_, H> {
     /// A callout that the context still has open ends here, and the answer
     /// holds the identifier of each one, so that you can end your own record
     /// of the request you sent for it.
-    /// The crate delivers a failure for each one through
-    /// `proxy_on_http_call_response`, in identifier order, so that the guest
-    /// drops its own record of the callout.
+    /// The crate calls no method of your
+    /// [`Callouts`](crate::abi::v0_2_1::Callouts) service for them, so the
+    /// answer is the one signal you get.
+    /// The crate delivers a failure for each one in identifier order, so
+    /// that the guest drops its own record of the callout.
+    /// An HTTP call gets `proxy_on_http_call_response` with three counts of
+    /// zero, and a gRPC callout gets `proxy_on_grpc_close` with the code
+    /// one, which gRPC names `CANCELLED`.
+    /// A callout that the guest ends from inside one of those callbacks gets
+    /// no delivery and is not in the answer.
+    /// The context opens no new callout while this runs, and a callout
+    /// function of the guest answers `INTERNAL_FAILURE`.
     /// For a stream context the failures come after `proxy_on_delete`, where
     /// a guest SDK finds no context and runs none of your plugin's code.
     /// For a root context they come before it.
-    /// A callout that a root makes from one of those failures gets no
-    /// delivery, and the crate removes it with the root.
     /// If you want the guest to handle the end of a callout while its stream
     /// is alive, deliver [`HttpCallResponse::failed`](crate::abi::v0_2_1::HttpCallResponse::failed)
     /// before you call this.
@@ -80,6 +87,21 @@ impl<H: StreamState> CallScope<'_, H> {
     pub fn on_delete(&mut self, context: ContextId) -> Result<Vec<CalloutId>, GuestError> {
         self.guest.require_live()?;
         prologue::require_deletable(self.guest, context)?;
+        self.mark_deleting(Some(context));
+        let ended = self.delete(context);
+        self.mark_deleting(None);
+        ended
+    }
+
+    fn mark_deleting(&mut self, context: Option<ContextId>) {
+        self.guest
+            .instance_mut()
+            .state_mut()
+            .abi_mut()
+            .set_deleting(context);
+    }
+
+    fn delete(&mut self, context: ContextId) -> Result<Vec<CalloutId>, GuestError> {
         let root = self.guest.context_parent(context);
         let mut ended = match root {
             None => fail_open_callouts(self.guest, context, context)?,

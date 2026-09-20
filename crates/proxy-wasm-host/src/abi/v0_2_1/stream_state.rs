@@ -65,9 +65,12 @@ pub trait StreamState: Any + Send {
     /// The default body reports [`Status::BadArgument`], the status for a
     /// map that is not available.
     ///
-    /// The crate never asks for [`MapType::HttpCallResponseHeaders`] or
-    /// [`MapType::HttpCallResponseTrailers`].
-    /// It serves them from the response you gave to
+    /// The crate never asks for [`MapType::HttpCallResponseHeaders`],
+    /// [`MapType::HttpCallResponseTrailers`],
+    /// [`MapType::GrpcCallInitialMetadata`], or
+    /// [`MapType::GrpcCallTrailingMetadata`].
+    /// It serves each one from the value you gave to the delivery that
+    /// holds it, such as
     /// [`CallScope::on_http_call_response`](crate::abi::v0_2_1::CallScope::on_http_call_response).
     ///
     /// For example, a stream that serves the request headers only during
@@ -119,14 +122,13 @@ pub trait StreamState: Any + Send {
     /// paused from it.
     /// `DownstreamData` and `UpstreamData` are read and written in the data
     /// callbacks.
-    /// `GrpcCallMessage` is read in `proxy_on_grpc_receive`.
     /// `ForeignFunctionArguments` is read in `proxy_on_foreign_function`.
     /// The crate does not enforce those rules, and you can apply them by
     /// matching on `call.callback` and `access`.
     ///
     /// The crate never asks you for `VmConfiguration`, `PluginConfiguration`,
-    /// or `HttpCallResponseBody`, because it serves them itself from the
-    /// values you gave it.
+    /// `HttpCallResponseBody`, or `GrpcCallMessage`, because it serves them
+    /// itself from the values you gave it.
     /// The crate clamps `start` and the length against
     /// [`Buffer::len`](crate::Buffer::len) before it calls your buffer, so a
     /// range you receive is inside it.
@@ -279,14 +281,15 @@ mod tests {
     use std::borrow::Cow;
 
     use super::*;
-    use crate::abi::v0_2_1::{Callback, ContextId};
+    use crate::abi::v0_2_1::{Callback, ContextId, GuestId};
 
     struct Empty;
 
     impl StreamState for Empty {}
 
     fn call() -> Invocation {
-        Invocation::new(ContextId::try_from(1).unwrap()).with_callback(Callback::RequestHeaders)
+        Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap())
+            .with_callback(Callback::RequestHeaders)
     }
 
     #[test]

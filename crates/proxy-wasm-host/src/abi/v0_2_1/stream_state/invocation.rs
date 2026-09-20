@@ -1,6 +1,6 @@
 //! What the guest is doing when it calls a host function.
 
-use crate::abi::v0_2_1::{Callback, CalloutId, ContextId, StreamState};
+use crate::abi::v0_2_1::{Callback, CalloutId, ContextId, GuestId, StreamState};
 
 /// Whether a host function reads or writes the value it asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -22,6 +22,12 @@ pub enum Access {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Invocation {
+    /// The guest that is running.
+    ///
+    /// The contexts and the callouts of every guest start at one, so a
+    /// service that serves two guests keys its own record by this value and
+    /// the callout.
+    pub guest: GuestId,
     /// The effective context, which the guest may have changed with
     /// `proxy_set_effective_context`.
     pub context: ContextId,
@@ -34,9 +40,14 @@ pub struct Invocation {
 }
 
 impl Invocation {
-    /// A call on `context` with no callback running.
-    pub fn new(context: ContextId) -> Self {
+    /// A call of `guest` on `context` with no callback running.
+    ///
+    /// [`Guest::id`](crate::abi::v0_2_1::Guest::id) gives you the identity of
+    /// a guest you built, and [`GuestId::next`] gives you one where no guest
+    /// runs.
+    pub fn new(guest: GuestId, context: ContextId) -> Self {
         Self {
+            guest,
             context,
             callback: None,
             callout: None,
@@ -73,25 +84,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_new_invocation_has_the_context_and_no_callback() {
+    fn a_new_invocation_has_the_guest_the_context_and_no_callback() {
         // Arrange
         let context = ContextId::try_from(3).unwrap();
+        let guest = GuestId::next();
 
         // Act
-        let invocation = Invocation::new(context);
+        let invocation = Invocation::new(guest, context);
 
         // Assert
+        assert_eq!(invocation.guest, guest);
         assert_eq!(invocation.context, context);
         assert_eq!(invocation.callback, None);
+        assert_eq!(invocation.callout, None);
     }
 
     #[test]
     fn with_callback_adds_the_callback_and_keeps_the_context() {
         // Arrange
         let context = ContextId::try_from(3).unwrap();
+        let guest = GuestId::next();
 
         // Act
-        let invocation = Invocation::new(context).with_callback(Callback::Done);
+        let invocation = Invocation::new(guest, context).with_callback(Callback::Done);
 
         // Assert
         assert_eq!(invocation.context, context);

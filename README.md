@@ -7,10 +7,9 @@ It is a port of [proxy-wasm-go-host](https://github.com/mosn/proxy-wasm-go-host)
 ## Status
 
 The crate is not published yet.
-It runs the request header lifecycle of ABI v0.2.1, HTTP callouts, ticks, and queue ready callbacks.
-It serves logging, the log level, the clock, the tick period, the header maps, the buffers, the stream operations, the HTTP callouts, the local response, the shared data, the shared queues, the metrics, the properties, and the foreign function call.
-The gRPC callouts are refused.
-The body, trailer, response, and gRPC callbacks are not delivered yet.
+It runs the request header lifecycle of ABI v0.2.1, HTTP and gRPC callouts, ticks, and queue ready callbacks.
+It serves logging, the log level, the clock, the tick period, the header maps, the buffers, the stream operations, the HTTP and gRPC callouts, the local response, the shared data, the shared queues, the metrics, the properties, and the foreign function call.
+The body, trailer, response, and foreign function callbacks are not delivered yet.
 When it is published, the facts below decide whether you can use it.
 
 - ABI: Proxy-Wasm v0.2.1, with v0.2.0 guests accepted.

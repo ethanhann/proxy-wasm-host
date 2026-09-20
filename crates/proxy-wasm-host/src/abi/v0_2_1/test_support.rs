@@ -148,8 +148,11 @@ pub(crate) fn shared_hosted(
 
 /// A call from the request header callback on context one.
 pub(crate) fn call() -> crate::abi::v0_2_1::Invocation {
-    crate::abi::v0_2_1::Invocation::new(ContextId::try_from(1).unwrap())
-        .with_callback(Callback::RequestHeaders)
+    crate::abi::v0_2_1::Invocation::new(
+        crate::abi::v0_2_1::GuestId::next(),
+        ContextId::try_from(1).unwrap(),
+    )
+    .with_callback(Callback::RequestHeaders)
 }
 
 /// The bytes a host function returned through the two pointers at `data` and

@@ -4,8 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU32;
 
-use crate::abi::v0_2_1::{ContextId, HeaderPairs, HttpCallResponse};
-use crate::header_map::VecHeaderMap;
+use crate::abi::v0_2_1::ContextId;
 
 /// The identifier of one callout.
 ///
@@ -65,6 +64,20 @@ pub struct InvalidCalloutId {
 pub enum CalloutKind {
     /// An HTTP call, which one response ends.
     HttpCall,
+    /// A gRPC call, which sends one message and gets one answer.
+    GrpcCall,
+    /// A gRPC stream, which stays open for many messages.
+    GrpcStream,
+}
+
+impl fmt::Display for CalloutKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HttpCall => f.write_str("an HTTP call"),
+            Self::GrpcCall => f.write_str("a gRPC call"),
+            Self::GrpcStream => f.write_str("a gRPC stream"),
+        }
+    }
 }
 
 /// Why a delivery for a callout was refused.
@@ -77,8 +90,12 @@ pub enum CalloutProblem {
     NotMadeBy(ContextId),
     /// The response you gave arrived and has no header.
     /// The ABI reads a header count of zero as a call that failed, so give
-    /// [`HttpCallResponse::failed`] when that is what you mean.
+    /// [`HttpCallResponse::failed`](crate::abi::v0_2_1::HttpCallResponse::failed)
+    /// when that is what you mean.
     NoResponseHeader,
+    /// The callout is of another kind than the delivery you gave, and this
+    /// is the kind it has.
+    WrongKind(CalloutKind),
 }
 
 impl fmt::Display for CalloutProblem {
@@ -87,6 +104,7 @@ impl fmt::Display for CalloutProblem {
             Self::NotOpen => f.write_str("is not open"),
             Self::NotMadeBy(context) => write!(f, "was not made by context {context}"),
             Self::NoResponseHeader => f.write_str("got a received response with no header"),
+            Self::WrongKind(kind) => write!(f, "is {kind}"),
         }
     }
 }
@@ -117,60 +135,27 @@ pub(crate) struct Callout {
     pub(crate) caller: ContextId,
     /// The root of the caller, which a callback names as the plugin context.
     pub(crate) root: ContextId,
-}
-
-/// The result that the running callback delivers to the guest.
-///
-/// The crate holds it for the time of the callback and serves the guest from
-/// it, so neither the stream state nor the service is asked.
-#[derive(Debug)]
-pub(crate) enum Delivery {
-    HttpCallResponse(DeliveredResponse),
-}
-
-fn owned_map(pairs: HeaderPairs<'_>) -> VecHeaderMap {
-    pairs
-        .into_iter()
-        .map(|(key, value)| (key.into_owned(), value.into_owned()))
-        .collect()
-}
-
-/// A delivered HTTP call response, which borrows nothing.
-#[derive(Debug)]
-pub(crate) struct DeliveredResponse {
-    pub(crate) callout: CalloutId,
-    pub(crate) headers: VecHeaderMap,
-    pub(crate) trailers: VecHeaderMap,
-    pub(crate) body: Vec<u8>,
+    /// Whether the guest closed its side of a gRPC stream, which it does
+    /// with `proxy_grpc_close` or with a send that ends the stream.
+    pub(crate) closed_by_guest: bool,
 }
 
 impl Callout {
+    pub(crate) fn new(kind: CalloutKind, caller: ContextId, root: ContextId) -> Self {
+        Self {
+            kind,
+            caller,
+            root,
+            closed_by_guest: false,
+        }
+    }
+
     pub(crate) fn report(self, callout: CalloutId) -> OpenCallout {
         OpenCallout {
             callout,
             caller: self.caller,
             root: self.root,
             kind: self.kind,
-        }
-    }
-}
-
-impl Delivery {
-    /// Takes the response apart, so a value that owns its bytes is moved and
-    /// not copied.
-    pub(crate) fn http_call_response(callout: CalloutId, response: HttpCallResponse<'_>) -> Self {
-        let (headers, body, trailers) = response.into_parts();
-        Self::HttpCallResponse(DeliveredResponse {
-            callout,
-            headers: owned_map(headers),
-            trailers: owned_map(trailers),
-            body: body.into_owned(),
-        })
-    }
-
-    pub(crate) fn callout(&self) -> CalloutId {
-        match self {
-            Self::HttpCallResponse(response) => response.callout,
         }
     }
 }
@@ -225,6 +210,23 @@ impl CalloutTable {
         self.open.remove(&id)
     }
 
+    /// Whether this table ever gave out the identifier.
+    ///
+    /// The counter moves forward, so every identifier below it was given to
+    /// the guest.
+    /// The answer is false for every identifier after the counter wraps,
+    /// which needs about four billion callouts in one guest.
+    pub(crate) fn issued(&self, id: CalloutId) -> bool {
+        id.get() < self.next.get()
+    }
+
+    /// Records that the guest closed its side of a gRPC stream.
+    pub(crate) fn close_by_guest(&mut self, id: CalloutId) {
+        if let Some(callout) = self.open.get_mut(&id) {
+            callout.closed_by_guest = true;
+        }
+    }
+
     /// The callouts `caller` made, in identifier order.
     pub(crate) fn made_by(&self, caller: ContextId) -> Vec<(CalloutId, CalloutKind)> {
         self.open
@@ -253,11 +255,7 @@ mod tests {
     }
 
     fn http(caller: u32, root: u32) -> Callout {
-        Callout {
-            kind: CalloutKind::HttpCall,
-            caller: context(caller),
-            root: context(root),
-        }
+        Callout::new(CalloutKind::HttpCall, context(caller), context(root))
     }
 
     #[test]

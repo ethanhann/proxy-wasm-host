@@ -208,7 +208,11 @@ impl VmServices {
     /// Sets the service that receives the callouts of the guest.
     ///
     /// The default refuses every callout, so a guest that calls
-    /// `proxy_http_call` gets `INTERNAL_FAILURE`.
+    /// `proxy_http_call` or a gRPC function gets `INTERNAL_FAILURE`.
+    /// One service can serve several guests, and the callout identifiers of
+    /// each guest start at one, so key your own record by
+    /// [`Invocation::guest`](crate::abi::v0_2_1::Invocation) and the
+    /// callout.
     #[must_use]
     pub fn with_callouts(mut self, callouts: Arc<dyn Callouts>) -> Self {
         self.callouts = callouts;
@@ -236,7 +240,8 @@ impl VmServices {
     /// The trait is not downcastable, so keep your own `Arc` if you want
     /// your concrete type back.
     /// A call you make on the service yourself opens no callout, because
-    /// only `proxy_http_call` enters one in the record of the guest.
+    /// only a callout function of the guest enters one in the record of the
+    /// guest.
     pub fn callouts(&self) -> &Arc<dyn Callouts> {
         &self.callouts
     }
@@ -412,6 +417,7 @@ mod tests {
     fn the_shared_services_default_to_the_in_memory_one() {
         // Arrange
         let call = crate::abi::v0_2_1::Invocation::new(
+            crate::abi::v0_2_1::GuestId::next(),
             crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
         );
 
@@ -440,6 +446,7 @@ mod tests {
         // Arrange
         let mine: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let call = crate::abi::v0_2_1::Invocation::new(
+            crate::abi::v0_2_1::GuestId::next(),
             crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
         );
         mine.set_shared_data(call, b"vm", b"k", b"mine", None)

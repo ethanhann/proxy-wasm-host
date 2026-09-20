@@ -18,12 +18,14 @@
 //! You serve a request by implementing [`StreamState`], whose methods receive
 //! an [`Invocation`] and an [`Access`] and exchange [`HeaderPairs`],
 //! [`LocalResponse`] and [`ForeignCall`] values.
-//! You receive the HTTP calls of a guest by implementing [`Callouts`], which
-//! gives you a [`CalloutId`] and an [`HttpCall`] and takes an
-//! [`HttpCallRefusal`].
-//! You give the result back as an [`HttpCallResponse`], and
-//! [`CalloutProblem`] and [`InvalidCalloutId`] tell you why a callout was
-//! refused.
+//! You receive the callouts of a guest by implementing [`Callouts`], which
+//! gives you a [`CalloutId`] with an [`HttpCall`], a [`GrpcCall`], or a
+//! [`GrpcStream`], and takes an [`HttpCallRefusal`] or a
+//! [`GrpcOpenRefusal`].
+//! You give the result back as an [`HttpCallResponse`] or as a
+//! [`GrpcStatus`], and [`CalloutProblem`] and [`InvalidCalloutId`] tell you
+//! why a callout was refused.
+//! [`GuestId`] names the guest a callout belongs to.
 //! [`Guest::open_callouts`] gives an [`OpenCallout`] for each open callout,
 //! with its [`CalloutKind`].
 //! You learn what a guest changed through [`Changes`], which names each
@@ -56,6 +58,7 @@ mod guest;
 mod guest_error;
 mod host;
 pub(crate) mod host_functions;
+pub(crate) mod payload;
 mod plugin_config;
 mod services;
 mod shared_services;
@@ -69,10 +72,14 @@ pub(crate) mod wasi;
 pub use call_scope::CallScope;
 pub use callback::Callback;
 pub use callout::{CalloutId, CalloutKind, CalloutProblem, InvalidCalloutId, OpenCallout};
-pub use callout_service::{Callouts, HttpCall, HttpCallRefusal, HttpCallResponse};
+pub use callout_service::{
+    Callouts, GrpcCall, GrpcOpenRefusal, GrpcStatus, GrpcStream, HttpCall, HttpCallRefusal,
+    HttpCallResponse,
+};
 pub use changes::{Changes, QueueRegistration};
 pub use context::{ContextId, ContextProblem, ContextState, ContextType, InvalidContextId};
 pub use guest::Guest;
+pub use guest::identity::GuestId;
 pub use guest_error::GuestError;
 pub use host::Host;
 pub use plugin_config::PluginConfig;

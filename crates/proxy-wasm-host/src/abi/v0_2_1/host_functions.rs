@@ -3,8 +3,6 @@
 //! Every one of the 39 functions is registered for every guest, because a
 //! guest built with an SDK imports most of them whether or not it calls them.
 //! Every function has a body.
-//! The five gRPC callout functions refuse, because the crate delivers no gRPC
-//! callback.
 
 mod buffer;
 mod call;

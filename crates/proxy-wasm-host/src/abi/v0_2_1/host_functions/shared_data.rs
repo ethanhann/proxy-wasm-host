@@ -73,7 +73,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{
         VM_ID, bare, engine, outcome, returned, shared_hosted, status, write,
     };
-    use crate::abi::v0_2_1::{ContextId, InMemoryStore, Invocation, SharedServices};
+    use crate::abi::v0_2_1::{ContextId, GuestId, InMemoryStore, Invocation, SharedServices};
     use crate::runtime::{GuestPtr, Instance};
 
     const KEY: i32 = 1024;
@@ -361,7 +361,7 @@ mod tests {
         // Arrange
         let engine = engine();
         let replacement = Arc::new(InMemoryStore::new());
-        let call = Invocation::new(ContextId::try_from(1).unwrap());
+        let call = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
         replacement
             .set_shared_data(call, VM_ID, b"k", b"from the replacement", None)
             .unwrap();

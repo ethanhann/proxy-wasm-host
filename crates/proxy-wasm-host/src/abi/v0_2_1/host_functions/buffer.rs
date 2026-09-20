@@ -1,8 +1,9 @@
 //! The three buffer functions.
 //!
 //! The crate serves `VM_CONFIGURATION` and `PLUGIN_CONFIGURATION` from the
-//! values the embedder gave it, and asks the stream state for every other
-//! buffer.
+//! values the embedder gave it, and the buffers of a delivery from the value
+//! that delivery holds.
+//! It asks the stream state for every other buffer.
 //! Each body resolves the buffer type before the context, so a configuration
 //! read never needs a callback to be running.
 
@@ -10,10 +11,10 @@ use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::Access;
-use crate::abi::v0_2_1::callout::Delivery;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::Served;
 use crate::abi::v0_2_1::host_functions::call::{context, from_embedder, with_stream};
+use crate::abi::v0_2_1::payload::{DeliveredBuffer, serves_buffer};
 use crate::abi::v0_2_1::types::{BufferType, Status};
 use crate::buffer::clamp_range;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
@@ -70,15 +71,18 @@ fn as_usize(value: i32) -> usize {
 enum CrateBuffer {
     VmConfiguration,
     PluginConfiguration,
-    HttpCallResponseBody,
+    /// A buffer of the value the embedder delivered for the running
+    /// callback.
+    Delivered(DeliveredBuffer),
 }
 
 /// Whether the crate serves this buffer itself.
 ///
 /// The configuration buffers come from what the embedder supplied before the
 /// call.
-/// The body of an HTTP call response comes from the response the embedder
-/// delivered for the running callback.
+/// The body of an HTTP call response and the message of a gRPC callout come
+/// from the value the embedder delivered for the running callback, and
+/// [`serves_buffer`] holds that list for every family.
 /// No implementation of the embedder sees a request for one of them.
 ///
 /// See [`Served`] for the rule.
@@ -86,8 +90,10 @@ fn served(buffer_type: BufferType) -> Served<CrateBuffer> {
     match buffer_type {
         BufferType::VmConfiguration => Served::Crate(CrateBuffer::VmConfiguration),
         BufferType::PluginConfiguration => Served::Crate(CrateBuffer::PluginConfiguration),
-        BufferType::HttpCallResponseBody => Served::Crate(CrateBuffer::HttpCallResponseBody),
-        _ => Served::Embedder,
+        _ => match serves_buffer(buffer_type) {
+            Some(which) => Served::Crate(CrateBuffer::Delivered(which)),
+            None => Served::Embedder,
+        },
     }
 }
 
@@ -105,10 +111,16 @@ fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<
                 .ok_or(Status::NotFound)?;
             Ok(Source::Crate(plugin.configuration()))
         }
-        Served::Crate(CrateBuffer::HttpCallResponseBody) => match state.abi().delivery() {
-            Some(Delivery::HttpCallResponse(response)) => Ok(Source::Crate(&response.body)),
-            None => Err(Status::NotFound.into()),
-        },
+        Served::Crate(CrateBuffer::Delivered(which)) => {
+            match state
+                .abi()
+                .delivery()
+                .and_then(|delivery| delivery.buffer(which))
+            {
+                Some(bytes) => Ok(Source::Crate(bytes)),
+                None => Err(Status::NotFound.into()),
+            }
+        }
         Served::Embedder => {
             let (call, stream) = with_stream(state, Status::NotFound)?;
             let buffer = from_embedder("buffer", stream.buffer(call, Access::Read, buffer_type))?;
@@ -203,6 +215,7 @@ pub(super) fn proxy_get_buffer_status(
 
 #[cfg(test)]
 mod tests {
+    use crate::abi::v0_2_1::payload::Delivery;
     use std::borrow::Cow;
 
     use super::*;
@@ -833,6 +846,7 @@ mod tests {
     }
 
     const DELIVERED_BODY: i32 = BufferType::HttpCallResponseBody as i32;
+    const GRPC_MESSAGE: i32 = BufferType::GrpcCallMessage as i32;
 
     /// An instance with a recording stream, in a delivery of a response with
     /// `body` when one is given.
@@ -928,12 +942,13 @@ mod tests {
     }
 
     #[test]
-    fn the_predicate_names_the_three_crate_buffers_and_sends_the_rest_to_the_embedder() {
+    fn the_predicate_names_the_four_crate_buffers_and_sends_the_rest_to_the_embedder() {
         // Arrange
         let asked = [
             BufferType::VmConfiguration,
             BufferType::PluginConfiguration,
             BufferType::HttpCallResponseBody,
+            BufferType::GrpcCallMessage,
             BufferType::HttpRequestBody,
             BufferType::HttpResponseBody,
         ];
@@ -947,10 +962,99 @@ mod tests {
             [
                 Served::Crate(CrateBuffer::VmConfiguration),
                 Served::Crate(CrateBuffer::PluginConfiguration),
-                Served::Crate(CrateBuffer::HttpCallResponseBody),
+                Served::Crate(CrateBuffer::Delivered(
+                    DeliveredBuffer::HttpCallResponseBody
+                )),
+                Served::Crate(CrateBuffer::Delivered(DeliveredBuffer::GrpcCallMessage)),
                 Served::Embedder,
                 Served::Embedder,
             ]
         );
+    }
+
+    /// An instance with a recording stream, in a delivery of the gRPC
+    /// message `message`.
+    fn delivering_message(message: &'static [u8]) -> Instance {
+        let (mut instance, _) = hosted(&engine(), GUEST, RecordingStream::new());
+        let callout = CalloutId::try_from(1_u32).unwrap();
+        let delivery = Delivery::grpc_message(callout, Cow::Borrowed(message));
+        instance.state_mut().abi_mut().set_delivery(Some(delivery));
+        instance
+    }
+
+    #[test]
+    fn the_message_of_a_grpc_delivery_is_sliced_as_every_buffer_is() {
+        // Arrange
+        let mut instance = delivering_message(b"hello");
+        let ranges = [(0, i32::MAX), (1, 3), (5, 1)];
+
+        // Act
+        let answers = ranges.map(|(start, max_size)| {
+            (
+                get(&mut instance, GRPC_MESSAGE, start, max_size),
+                returned(&mut instance),
+            )
+        });
+
+        // Assert
+        assert_eq!(answers[0], (Status::Ok, b"hello".to_vec()));
+        assert_eq!(answers[1], (Status::Ok, b"ell".to_vec()));
+        assert_eq!(answers[2], (Status::Ok, Vec::new()));
+        assert_eq!(
+            buffer_status(&mut instance, GRPC_MESSAGE),
+            Status::Ok,
+            "the status of the buffer"
+        );
+        assert_eq!(asked(&mut instance), 0, "the stream state was not asked");
+    }
+
+    #[test]
+    fn a_write_to_the_message_of_a_grpc_delivery_is_not_found() {
+        // Arrange
+        let mut instance = delivering_message(b"hello");
+
+        // Act
+        let answer = set(&mut instance, GRPC_MESSAGE, 0, 0, b"new ");
+
+        // Assert
+        assert_eq!(answer, Status::NotFound);
+        assert_eq!(asked(&mut instance), 0);
+    }
+
+    #[test]
+    fn the_message_buffer_is_not_found_in_another_delivery_and_outside_one() {
+        // Arrange
+        let mut response = delivering(Some(b"hello"));
+        let mut outside = delivering(None);
+
+        // Act
+        let answers = [
+            get(&mut response, GRPC_MESSAGE, 0, i32::MAX),
+            buffer_status(&mut response, GRPC_MESSAGE),
+            get(&mut outside, GRPC_MESSAGE, 0, i32::MAX),
+            buffer_status(&mut outside, GRPC_MESSAGE),
+        ];
+
+        // Assert
+        assert_eq!(answers, [Status::NotFound; 4]);
+        assert_eq!(asked(&mut response), 0);
+        assert_eq!(asked(&mut outside), 0);
+    }
+
+    #[test]
+    fn the_response_body_is_not_found_in_a_grpc_delivery() {
+        // Arrange
+        let mut instance = delivering_message(b"hello");
+
+        // Act
+        let answers = [
+            get(&mut instance, DELIVERED_BODY, 0, i32::MAX),
+            buffer_status(&mut instance, DELIVERED_BODY),
+            set(&mut instance, DELIVERED_BODY, 0, 0, b"new "),
+        ];
+
+        // Assert
+        assert_eq!(answers, [Status::NotFound; 3]);
+        assert_eq!(asked(&mut instance), 0);
     }
 }

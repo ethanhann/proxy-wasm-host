@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::SharedServices;
 use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::payload::Delivery;
 use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{ContextId, Invocation, StreamState};
 use crate::runtime::HostState;
@@ -20,12 +21,12 @@ use crate::runtime::HostState;
 /// running, and the callout that callback delivers.
 pub(super) fn invocation(state: &HostState, context: ContextId) -> Invocation {
     let abi = state.abi();
-    let mut call = Invocation::new(context);
+    let mut call = Invocation::new(abi.guest(), context);
     if let Some(callback) = abi.current_callback() {
         call = call.with_callback(callback);
     }
-    if let Some(delivery) = abi.delivery() {
-        call = call.with_callout(delivery.callout());
+    if let Some(callout) = abi.delivery().and_then(Delivery::callout) {
+        call = call.with_callout(callout);
     }
     call
 }
@@ -94,7 +95,7 @@ pub(super) fn from_embedder<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::v0_2_1::callout::Delivery;
+    use crate::abi::v0_2_1::payload::Delivery;
     use crate::abi::v0_2_1::test_support::{
         MINIMAL_GUEST, RecordingStream, bare, engine, hosted, unhosted,
     };

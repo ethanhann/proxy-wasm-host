@@ -247,6 +247,7 @@ mod tests {
         let engine = engine();
         let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let other = crate::abi::v0_2_1::Invocation::new(
+            crate::abi::v0_2_1::GuestId::next(),
             crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
         );
         let theirs = shared
@@ -285,6 +286,7 @@ mod tests {
         let first: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let second: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let other = crate::abi::v0_2_1::Invocation::new(
+            crate::abi::v0_2_1::GuestId::next(),
             crate::abi::v0_2_1::ContextId::try_from(1).unwrap(),
         );
         let theirs = second

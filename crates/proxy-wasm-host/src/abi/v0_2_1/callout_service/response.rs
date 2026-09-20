@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use super::owned_pairs;
+use super::http::owned_pairs;
 use crate::abi::v0_2_1::HeaderPairs;
 
 /// The result of an HTTP call, which you deliver to the guest.

@@ -72,6 +72,9 @@ impl Guest {
     ///
     /// This answers on a poisoned guest, so when a guest traps you can end
     /// the requests that wait for one of its callouts.
+    /// A gRPC stream of a poisoned guest is still running at your side, and
+    /// the crate ends none of them, so cancel each one before you build a
+    /// new guest.
     /// A callout whose delivery trapped is in the list, because the guest
     /// did not complete it.
     pub fn open_callouts(&self) -> Vec<OpenCallout> {
@@ -84,9 +87,10 @@ impl Guest {
 
     /// One open callout, or `None` when `callout` is not open.
     ///
-    /// When a response arrives, this tells you the context to name in
+    /// When a result arrives, this tells you the context to name in
     /// [`CallScope::on_http_call_response`](crate::abi::v0_2_1::CallScope::on_http_call_response)
-    /// and whether the caller is a root, so you need no record of your own.
+    /// or in a gRPC delivery, the kind of the callout, and whether the
+    /// caller is a root, so you need no record of your own.
     /// `None` for a late response is the usual result after the context of
     /// the request was deleted.
     pub fn open_callout(&self, callout: CalloutId) -> Option<OpenCallout> {

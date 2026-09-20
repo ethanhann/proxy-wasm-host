@@ -123,7 +123,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{
         VM_ID, bare, engine, outcome, returned, shared_hosted, status, write,
     };
-    use crate::abi::v0_2_1::{ContextId, InMemoryStore, Invocation, SharedServices};
+    use crate::abi::v0_2_1::{ContextId, GuestId, InMemoryStore, Invocation, SharedServices};
     use crate::runtime::{GuestPtr, Instance};
 
     const NAME: i32 = 1024;
@@ -211,7 +211,7 @@ mod tests {
         // Arrange
         let engine = engine();
         let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
-        let other = Invocation::new(ContextId::try_from(1).unwrap());
+        let other = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
         let theirs = shared
             .register_shared_queue(other, b"vm-2", b"private")
             .unwrap();
@@ -246,7 +246,7 @@ mod tests {
         // Arrange
         let engine = engine();
         let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
-        let other = Invocation::new(ContextId::try_from(1).unwrap());
+        let other = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
         let theirs = shared
             .register_shared_queue(other, VM_ID, b"shared")
             .unwrap();
@@ -510,7 +510,7 @@ mod tests {
         let engine = engine();
         let first: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let second: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
-        let other = Invocation::new(ContextId::try_from(1).unwrap());
+        let other = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
         let theirs = second
             .register_shared_queue(other, b"other-vm", b"private")
             .unwrap();

@@ -10,6 +10,10 @@ use crate::runtime::Instance;
 /// and the three counts.
 type HttpCallResponseFn = TypedFunc<(i32, i32, i32, i32, i32), ()>;
 
+/// A gRPC callback, which takes the plugin context, the callout, and one
+/// count, size, or code.
+type GrpcFn = TypedFunc<(i32, i32, i32), ()>;
+
 /// The callbacks this crate drives, resolved once at construction.
 pub(crate) struct Callbacks {
     pub(crate) context_create: Option<TypedFunc<(i32, i32), ()>>,
@@ -17,6 +21,10 @@ pub(crate) struct Callbacks {
     pub(crate) configure: Option<TypedFunc<(i32, i32), i32>>,
     pub(crate) request_headers: Option<TypedFunc<(i32, i32, i32), i32>>,
     pub(crate) http_call_response: Option<HttpCallResponseFn>,
+    pub(crate) grpc_receive_initial_metadata: Option<GrpcFn>,
+    pub(crate) grpc_receive: Option<GrpcFn>,
+    pub(crate) grpc_receive_trailing_metadata: Option<GrpcFn>,
+    pub(crate) grpc_close: Option<GrpcFn>,
     pub(crate) done: Option<TypedFunc<i32, i32>>,
     pub(crate) log: Option<TypedFunc<i32, ()>>,
     pub(crate) delete: Option<TypedFunc<i32, ()>>,
@@ -32,6 +40,12 @@ impl Callbacks {
             configure: instance.typed_func(Callback::Configure.export_name())?,
             request_headers: instance.typed_func(Callback::RequestHeaders.export_name())?,
             http_call_response: instance.typed_func(Callback::HttpCallResponse.export_name())?,
+            grpc_receive_initial_metadata: instance
+                .typed_func(Callback::GrpcReceiveInitialMetadata.export_name())?,
+            grpc_receive: instance.typed_func(Callback::GrpcReceive.export_name())?,
+            grpc_receive_trailing_metadata: instance
+                .typed_func(Callback::GrpcReceiveTrailingMetadata.export_name())?,
+            grpc_close: instance.typed_func(Callback::GrpcClose.export_name())?,
             done: instance.typed_func(Callback::Done.export_name())?,
             log: instance.typed_func(Callback::Log.export_name())?,
             delete: instance.typed_func(Callback::Delete.export_name())?,
@@ -47,6 +61,10 @@ impl Callbacks {
             Callback::Configure => self.configure.is_some(),
             Callback::RequestHeaders => self.request_headers.is_some(),
             Callback::HttpCallResponse => self.http_call_response.is_some(),
+            Callback::GrpcReceiveInitialMetadata => self.grpc_receive_initial_metadata.is_some(),
+            Callback::GrpcReceive => self.grpc_receive.is_some(),
+            Callback::GrpcReceiveTrailingMetadata => self.grpc_receive_trailing_metadata.is_some(),
+            Callback::GrpcClose => self.grpc_close.is_some(),
             Callback::Done => self.done.is_some(),
             Callback::Log => self.log.is_some(),
             Callback::Delete => self.delete.is_some(),

@@ -2,9 +2,11 @@
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
-use crate::abi::v0_2_1::callout::Delivery;
+use crate::abi::v0_2_1::payload::Delivery;
+use wasmtime::{TypedFunc, WasmParams};
+
 use crate::abi::v0_2_1::{
-    Callback, CalloutId, CalloutKind, CalloutProblem, ContextId, Guest, GuestError,
+    Callback, CalloutId, CalloutKind, CalloutProblem, ContextId, GrpcStatus, Guest, GuestError,
     HttpCallResponse, QueueId, QueueProblem, StreamState,
 };
 
@@ -34,10 +36,10 @@ impl<H: StreamState> CallScope<'_, H> {
     /// # Errors
     ///
     /// Returns [`GuestError::Callout`] when the callout is not open, when
-    /// `context` did not make it, or when `response` arrived and has no
-    /// header, [`GuestError::Context`] when the root of
-    /// the caller is unknown, and [`GuestError::GuestRejected`] when that
-    /// root was refused.
+    /// `context` did not make it, when it is a gRPC callout, or when
+    /// `response` arrived and has no header, [`GuestError::Context`] when
+    /// the root of the caller is unknown, and [`GuestError::GuestRejected`]
+    /// when that root was refused.
     /// The guest does not run in those cases, and the callout stays as it
     /// was.
     /// Returns the
@@ -61,12 +63,15 @@ impl<H: StreamState> CallScope<'_, H> {
         if entry.caller != context {
             return Err(refused(CalloutProblem::NotMadeBy(context)));
         }
+        if entry.kind != CalloutKind::HttpCall {
+            return Err(refused(CalloutProblem::WrongKind(entry.kind)));
+        }
         if !response.is_failed() && response.headers().is_empty() {
             return Err(refused(CalloutProblem::NoResponseHeader));
         }
         prologue::require_root(self.guest, entry.root)?;
         prologue::accepted(self.guest, entry.root)?;
-        deliver(self.guest, entry.root, callout, response)
+        deliver_response(self.guest, entry.root, callout, response)
     }
 
     /// Calls `proxy_on_tick` on a root context.
@@ -122,18 +127,69 @@ impl<H: StreamState> CallScope<'_, H> {
     }
 }
 
+/// The gRPC status code of a callout that the crate ends by itself, which
+/// gRPC names `CANCELLED`.
+pub(super) const CANCELLED: u32 = 1;
+
+/// One delivery, as [`deliver`] runs it.
+///
+/// The fields travel in one value, because the argument list would otherwise
+/// pass the limit that clippy sets.
+pub(super) struct Delivered<P: WasmParams> {
+    /// The root of the caller, which the guest gets as the plugin context.
+    pub(super) root: ContextId,
+    /// The callout the delivery answers.
+    pub(super) callout: CalloutId,
+    /// What the guest reads while the callback runs.
+    pub(super) delivery: Delivery,
+    /// The callback to run.
+    pub(super) callback: Callback,
+    /// The exported function, or `None` when the guest exports none.
+    pub(super) func: Option<TypedFunc<P, ()>>,
+    /// The arguments of the callback.
+    pub(super) params: P,
+    /// Whether this delivery ends the callout.
+    pub(super) ends: bool,
+}
+
+/// Runs one callback of a callout on `root`.
+///
+/// An entry that the delivery ends goes before the guest runs, because the
+/// delivery is the one answer that callout gets.
+/// It comes back when the delivery poisoned the guest, so that the embedder
+/// can find the request that waits for it.
+/// A delivery that does not end the callout leaves the entry in the table,
+/// so the guest can send on the stream, cancel it, or close it from inside
+/// the callback.
+/// The delivered value is cleared when the guest returns or fails.
+/// A panic of the stream state leaves it on a guest that the scope poisons,
+/// where nothing reads it.
+pub(super) fn deliver<P: WasmParams>(
+    guest: &mut Guest,
+    call: Delivered<P>,
+) -> Result<(), GuestError> {
+    let abi = guest.instance_mut().state_mut().abi_mut();
+    let entry = if call.ends {
+        abi.callouts_mut().remove(call.callout)
+    } else {
+        None
+    };
+    abi.set_delivery(Some(call.delivery));
+    let result = prologue::run(guest, call.root, call.callback, call.func, call.params, ());
+    let poisoned = guest.is_poisoned();
+    let abi = guest.instance_mut().state_mut().abi_mut();
+    abi.set_delivery(None);
+    if let Some(entry) = entry.filter(|_| poisoned) {
+        abi.callouts_mut().enter(call.callout, entry);
+    }
+    Ok(result?)
+}
+
 /// Ends `callout` and runs `proxy_on_http_call_response` on `root`.
 ///
 /// A failed response holds nothing, so its three counts are zero, which is
 /// how the ABI tells a guest that the call failed.
-/// The entry goes before the guest runs, because the delivery is the one
-/// answer a callout gets.
-/// It comes back when the delivery poisoned the guest, so that the embedder
-/// can find the request that waits for it.
-/// The response is cleared when the guest returns or fails.
-/// A panic of the stream state leaves it on a guest that the scope poisons,
-/// where nothing reads it.
-fn deliver(
+fn deliver_response(
     guest: &mut Guest,
     root: ContextId,
     callout: CalloutId,
@@ -144,25 +200,54 @@ fn deliver(
         prologue::wire_size(response.body().len())?,
         prologue::wire_size(response.trailers().len())?,
     );
-    let abi = guest.instance_mut().state_mut().abi_mut();
-    let entry = abi.callouts_mut().remove(callout);
-    abi.set_delivery(Some(Delivery::http_call_response(callout, response)));
     let func = guest.callbacks().http_call_response.clone();
-    let params = (
-        root.wire(),
-        callout.get().cast_signed(),
-        counts.0,
-        counts.1,
-        counts.2,
-    );
-    let result = prologue::run(guest, root, Callback::HttpCallResponse, func, params, ());
-    let poisoned = guest.is_poisoned();
-    let abi = guest.instance_mut().state_mut().abi_mut();
-    abi.set_delivery(None);
-    if let Some(entry) = entry.filter(|_| poisoned) {
-        abi.callouts_mut().enter(callout, entry);
-    }
-    Ok(result?)
+    deliver(
+        guest,
+        Delivered {
+            root,
+            callout,
+            delivery: Delivery::http_call_response(callout, response),
+            callback: Callback::HttpCallResponse,
+            func,
+            params: (
+                root.wire(),
+                callout.get().cast_signed(),
+                counts.0,
+                counts.1,
+                counts.2,
+            ),
+            ends: true,
+        },
+    )
+}
+
+/// Ends `callout` and runs `proxy_on_grpc_close` on `root` with `status`.
+///
+/// The message is measured before anything changes, so a message the ABI
+/// cannot carry leaves the callout open.
+/// The code passes as its raw bits, so a code above `i32::MAX` reaches the
+/// guest whole.
+pub(super) fn deliver_grpc_close(
+    guest: &mut Guest,
+    root: ContextId,
+    callout: CalloutId,
+    status: GrpcStatus,
+) -> Result<(), GuestError> {
+    prologue::wire_size(status.message.len())?;
+    let code = status.code.cast_signed();
+    let func = guest.callbacks().grpc_close.clone();
+    deliver(
+        guest,
+        Delivered {
+            root,
+            callout,
+            delivery: Delivery::grpc_close(callout, status),
+            callback: Callback::GrpcClose,
+            func,
+            params: (root.wire(), callout.get().cast_signed(), code),
+            ends: true,
+        },
+    )
 }
 
 /// Delivers a failure for every callout `context` still has open, in
@@ -171,6 +256,8 @@ fn deliver(
 /// A guest SDK drops its own record of a callout only on a delivery, so a
 /// callout that ended in silence would stay in the guest for its life.
 /// A refused root gets no guest call, and its entries are removed.
+/// The table is read again before each delivery, because a guest can end a
+/// callout from inside one of these callbacks.
 /// The answer holds the identifiers of the callouts that ended.
 pub(super) fn fail_open_callouts(
     guest: &mut Guest,
@@ -181,12 +268,29 @@ pub(super) fn fail_open_callouts(
     if guest.rejected_by(root).is_some() {
         return Ok(drop_open_callouts(guest, context));
     }
-    for (callout, kind) in &open {
-        match kind {
-            CalloutKind::HttpCall => deliver(guest, root, *callout, HttpCallResponse::failed())?,
+    let mut ended = Vec::new();
+    for (callout, kind) in open {
+        if guest
+            .instance()
+            .state()
+            .abi()
+            .callouts()
+            .get(callout)
+            .is_none()
+        {
+            continue;
         }
+        match kind {
+            CalloutKind::HttpCall => {
+                deliver_response(guest, root, callout, HttpCallResponse::failed())?;
+            }
+            CalloutKind::GrpcCall | CalloutKind::GrpcStream => {
+                deliver_grpc_close(guest, root, callout, GrpcStatus::new(CANCELLED, ""))?;
+            }
+        }
+        ended.push(callout);
     }
-    Ok(open.into_iter().map(|(callout, _)| callout).collect())
+    Ok(ended)
 }
 
 /// Removes every callout `context` has open, with no guest call, and answers
@@ -212,7 +316,7 @@ mod tests {
     use super::*;
     use crate::Error;
     use crate::abi::v0_2_1::callout::Callout;
-    use crate::abi::v0_2_1::test_support::callouts::{RecordingCallouts, services_with};
+    use crate::abi::v0_2_1::test_support::callouts::{GrpcAsk, RecordingCallouts, services_with};
     use crate::abi::v0_2_1::test_support::{RecordingSink, RecordingStream, engine, wat_bytes};
     use crate::abi::v0_2_1::types::Status;
     use crate::abi::v0_2_1::{
@@ -317,18 +421,13 @@ mod tests {
     fn open(guest: &mut Guest, caller: ContextId, root: ContextId) -> CalloutId {
         let table = guest.instance_mut().state_mut().abi_mut().callouts_mut();
         let id = table.reserve();
-        let callout = Callout {
-            kind: CalloutKind::HttpCall,
-            caller,
-            root,
-        };
+        let callout = Callout::new(CalloutKind::HttpCall, caller, root);
         table.enter(id, callout);
         id
     }
 
     fn http(callout: CalloutId, caller: ContextId, root: ContextId) -> OpenCallout {
-        let kind = CalloutKind::HttpCall;
-        Callout { kind, caller, root }.report(callout)
+        Callout::new(CalloutKind::HttpCall, caller, root).report(callout)
     }
 
     fn word(guest: &mut Guest, at: u32) -> u32 {
@@ -1142,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn a_call_a_root_makes_while_it_is_deleted_does_not_stay_open() {
+    fn a_root_that_is_deleted_opens_no_call_in_its_failure_delivery() {
         // Arrange
         let (mut guest, service, root) = calling_guest(true);
         guest.enter_root().on_tick(root).unwrap();
@@ -1155,12 +1254,152 @@ mod tests {
         // Assert
         assert_eq!(
             result.ok().map(|ended| ended.len()),
-            Some(2),
-            "the first and the new one"
+            Some(1),
+            "the call of the tick alone"
         );
         drop(scope);
-        assert_eq!(service.calls().len(), 2, "the failure callback made a call");
+        assert_eq!(
+            service.calls().len(),
+            1,
+            "the service was not asked in the failure delivery"
+        );
+        assert_eq!(
+            status(word(&mut guest, 0)),
+            Status::InternalFailure,
+            "the guest was refused inside the deletion"
+        );
         assert_eq!(guest.context_type(root), None);
+        assert!(guest.open_callouts().is_empty());
+    }
+
+    /// A guest that counts the failure deliveries of a deletion.
+    ///
+    /// Address 0 counts the HTTP responses and address 4 the gRPC closes.
+    /// Address 8 holds the sum of both as `proxy_on_delete` saw it.
+    /// Address 16 and address 20 hold the last identifier of each kind.
+    /// `set_cancel` names a callout that the close callback cancels.
+    const ENDING: &str = r#"(module
+        (import "env" "proxy_grpc_cancel" (func $cancel (param i32) (result i32)))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 8192)
+        (func (export "proxy_abi_version_0_2_1"))
+        (func (export "set_cancel") (param i32) (i32.store (i32.const 24) (local.get 0)))
+        (func (export "proxy_on_http_call_response") (param i32 i32 i32 i32 i32)
+            (i32.store (i32.const 0) (i32.add (i32.load (i32.const 0)) (i32.const 1)))
+            (i32.store (i32.const 16) (local.get 1)))
+        (func (export "proxy_on_grpc_close") (param i32 i32 i32)
+            (i32.store (i32.const 4) (i32.add (i32.load (i32.const 4)) (i32.const 1)))
+            (i32.store (i32.const 20) (local.get 1))
+            (if (i32.load (i32.const 24))
+                (then (i32.store (i32.const 28) (call $cancel (i32.load (i32.const 24)))))))
+        (func (export "proxy_on_delete") (param i32)
+            (i32.store (i32.const 8)
+                (i32.add (i32.load (i32.const 0)) (i32.load (i32.const 4))))))"#;
+
+    /// A guest of `ENDING` with a service and a root context.
+    fn ending() -> (Guest, Arc<RecordingCallouts>, ContextId) {
+        let engine = engine();
+        let host = Host::new(&engine).unwrap();
+        let module = Module::new(&engine, &wat_bytes(ENDING)).unwrap();
+        let service = Arc::new(RecordingCallouts::new());
+        let mut guest = Guest::new(
+            &host,
+            &module,
+            services_with(service.clone()),
+            &Limits::default(),
+        )
+        .unwrap();
+        let root = guest.enter_root().on_context_create(None).unwrap();
+        (guest, service, root)
+    }
+
+    fn open_kind(
+        guest: &mut Guest,
+        kind: CalloutKind,
+        caller: ContextId,
+        root: ContextId,
+    ) -> CalloutId {
+        let table = guest.instance_mut().state_mut().abi_mut().callouts_mut();
+        let id = table.reserve();
+        table.enter(id, Callout::new(kind, caller, root));
+        id
+    }
+
+    #[test]
+    fn a_deleted_stream_context_ends_a_callout_of_each_kind_after_the_delete_callback() {
+        // Arrange
+        let (mut guest, _, root) = ending();
+        let stream = guest.enter_root().on_context_create(Some(root)).unwrap();
+        let http = open_kind(&mut guest, CalloutKind::HttpCall, stream, root);
+        let unary = open_kind(&mut guest, CalloutKind::GrpcCall, stream, root);
+        let opened = open_kind(&mut guest, CalloutKind::GrpcStream, stream, root);
+        let mut scope = guest.enter_root();
+        scope.on_done(stream).unwrap();
+
+        // Act
+        let ended = scope.on_delete(stream);
+
+        // Assert
+        assert_eq!(ended.ok(), Some(vec![http, unary, opened]));
+        drop(scope);
+        assert_eq!(word(&mut guest, 0), 1, "one HTTP failure");
+        assert_eq!(word(&mut guest, 4), 2, "one close for each gRPC kind");
+        assert_eq!(word(&mut guest, 8), 0, "the failures come after the delete");
+        assert!(guest.open_callouts().is_empty());
+    }
+
+    #[test]
+    fn a_deleted_root_gets_its_closes_before_the_delete_callback() {
+        // Arrange
+        let (mut guest, _, root) = ending();
+        let unary = open_kind(&mut guest, CalloutKind::GrpcCall, root, root);
+        let mut scope = guest.enter_root();
+        scope.on_done(root).unwrap();
+
+        // Act
+        let ended = scope.on_delete(root);
+
+        // Assert
+        assert_eq!(ended.ok(), Some(vec![unary]));
+        drop(scope);
+        assert_eq!(word(&mut guest, 4), 1);
+        assert_eq!(word(&mut guest, 20), unary.get());
+        assert_eq!(word(&mut guest, 8), 1, "the delete saw the close");
+    }
+
+    #[test]
+    fn a_callout_the_guest_cancels_inside_a_close_gets_no_delivery() {
+        // Arrange
+        let (mut guest, service, root) = ending();
+        let first = open_kind(&mut guest, CalloutKind::GrpcStream, root, root);
+        let second = open_kind(&mut guest, CalloutKind::GrpcCall, root, root);
+        guest
+            .instance_mut()
+            .call::<i32, ()>("set_cancel", second.get().cast_signed())
+            .unwrap();
+        let mut scope = guest.enter_root();
+        scope.on_done(root).unwrap();
+
+        // Act
+        let ended = scope.on_delete(root);
+
+        // Assert
+        assert_eq!(
+            ended.ok(),
+            Some(vec![first]),
+            "the answer names the callouts the deletion ended"
+        );
+        drop(scope);
+        assert_eq!(word(&mut guest, 4), 1, "the second got no callback");
+        assert_eq!(status(word(&mut guest, 28)), Status::Ok);
+        assert_eq!(
+            service
+                .grpc()
+                .into_iter()
+                .map(|(_, id, ask)| (id, ask))
+                .collect::<Vec<_>>(),
+            vec![(second, GrpcAsk::Cancel)]
+        );
         assert!(guest.open_callouts().is_empty());
     }
 }

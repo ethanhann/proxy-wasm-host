@@ -67,8 +67,8 @@ pub enum GuestError {
         /// The value it returned.
         value: i32,
     },
-    /// A delivery named a callout that is not open, or not the context that
-    /// made it.
+    /// A delivery named a callout that is not open, that another context
+    /// made, or that is of another kind than the delivery.
     #[error("callout {id} {problem}")]
     Callout {
         /// The callout you named.

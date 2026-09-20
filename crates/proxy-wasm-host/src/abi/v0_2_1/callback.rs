@@ -20,6 +20,14 @@ pub enum Callback {
     RequestHeaders,
     /// `proxy_on_http_call_response`.
     HttpCallResponse,
+    /// `proxy_on_grpc_receive_initial_metadata`.
+    GrpcReceiveInitialMetadata,
+    /// `proxy_on_grpc_receive`.
+    GrpcReceive,
+    /// `proxy_on_grpc_receive_trailing_metadata`.
+    GrpcReceiveTrailingMetadata,
+    /// `proxy_on_grpc_close`.
+    GrpcClose,
     /// `proxy_on_done`.
     Done,
     /// `proxy_on_log`.
@@ -41,6 +49,10 @@ impl Callback {
             Self::Configure => "proxy_on_configure",
             Self::RequestHeaders => "proxy_on_request_headers",
             Self::HttpCallResponse => "proxy_on_http_call_response",
+            Self::GrpcReceiveInitialMetadata => "proxy_on_grpc_receive_initial_metadata",
+            Self::GrpcReceive => "proxy_on_grpc_receive",
+            Self::GrpcReceiveTrailingMetadata => "proxy_on_grpc_receive_trailing_metadata",
+            Self::GrpcClose => "proxy_on_grpc_close",
             Self::Done => "proxy_on_done",
             Self::Log => "proxy_on_log",
             Self::Delete => "proxy_on_delete",
@@ -49,14 +61,22 @@ impl Callback {
         }
     }
 
-    /// Every callback this crate drives, with the callbacks of a stream in
-    /// lifecycle order and the two that a root gets at any time last.
+    /// Every callback this crate drives.
+    ///
+    /// The callbacks of a stream come in lifecycle order.
+    /// The callbacks of a callout follow them, because a callout belongs to
+    /// the context that made it and not to a place in that order.
+    /// The two that a root gets at any time come last.
     pub const ALL: &[Self] = &[
         Self::ContextCreate,
         Self::VmStart,
         Self::Configure,
         Self::RequestHeaders,
         Self::HttpCallResponse,
+        Self::GrpcReceiveInitialMetadata,
+        Self::GrpcReceive,
+        Self::GrpcReceiveTrailingMetadata,
+        Self::GrpcClose,
         Self::Done,
         Self::Log,
         Self::Delete,
@@ -82,11 +102,15 @@ mod tests {
             Callback::Configure => 2,
             Callback::RequestHeaders => 3,
             Callback::HttpCallResponse => 4,
-            Callback::Done => 5,
-            Callback::Log => 6,
-            Callback::Delete => 7,
-            Callback::Tick => 8,
-            Callback::QueueReady => 9,
+            Callback::GrpcReceiveInitialMetadata => 5,
+            Callback::GrpcReceive => 6,
+            Callback::GrpcReceiveTrailingMetadata => 7,
+            Callback::GrpcClose => 8,
+            Callback::Done => 9,
+            Callback::Log => 10,
+            Callback::Delete => 11,
+            Callback::Tick => 12,
+            Callback::QueueReady => 13,
         }
     }
 
@@ -102,7 +126,7 @@ mod tests {
             .collect();
 
         // Assert
-        assert_eq!(positions, (0..10).collect::<Vec<usize>>());
+        assert_eq!(positions, (0..14).collect::<Vec<usize>>());
         assert_eq!(Callback::Delete.to_string(), "proxy_on_delete");
         assert!(
             callbacks

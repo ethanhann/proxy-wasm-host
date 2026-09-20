@@ -1,16 +1,16 @@
 //! The service that receives the callouts of a guest, and the values it
 //! exchanges with the crate.
 
+mod grpc;
+mod http;
 mod response;
 
+pub use grpc::{GrpcCall, GrpcOpenRefusal, GrpcStatus, GrpcStream};
+pub use http::{HttpCall, HttpCallRefusal};
 pub use response::HttpCallResponse;
 
-use std::borrow::Cow;
-use std::time::Duration;
-
-use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::unserved::unserved;
-use crate::abi::v0_2_1::{CalloutId, HeaderPairs, Invocation};
+use crate::abi::v0_2_1::{CalloutId, Invocation};
 
 /// The service that receives the callouts of a guest.
 ///
@@ -26,9 +26,22 @@ use crate::abi::v0_2_1::{CalloutId, HeaderPairs, Invocation};
 /// so one value serves every callback of a guest, which includes the
 /// callbacks of a root context such as `proxy_on_tick`.
 ///
+/// A guest asks a gRPC server in the same way, with `proxy_grpc_call` for
+/// one question and `proxy_grpc_stream` for a conversation, and the five
+/// gRPC methods below belong together.
+/// A service that opens a gRPC callout and ignores [`Callouts::grpc_cancel`]
+/// leaves its own request running after the guest gave up.
+///
 /// The guest waits inside the call, so a method must return at once.
 /// Keep what you need with [`HttpCall::into_owned`], start the request
 /// elsewhere, and return.
+///
+/// The identifiers of a guest start at one, so key your own record by
+/// [`Invocation::guest`](crate::abi::v0_2_1::Invocation) and the callout, and
+/// never by the context alone.
+/// A guest may send, cancel, or close inside a delivery you are running, so
+/// the crate can call this service from your own thread while you deliver.
+/// Hold no lock of your own on that callout while you deliver.
 ///
 /// For example, a service that accepts every call to one upstream:
 ///
@@ -81,6 +94,103 @@ pub trait Callouts: Send + Sync {
         unserved("http_call");
         Err(HttpCallRefusal::Failed)
     }
+    /// Accepts or refuses a gRPC call, which sends one message and gets one
+    /// answer.
+    ///
+    /// The callout is open from the moment you return `Ok`.
+    /// It ends when you deliver
+    /// [`CallScope::on_grpc_receive`](crate::abi::v0_2_1::CallScope::on_grpc_receive)
+    /// or
+    /// [`CallScope::on_grpc_close`](crate::abi::v0_2_1::CallScope::on_grpc_close),
+    /// when the guest cancels or closes it, or when its context is deleted.
+    ///
+    /// # Errors
+    ///
+    /// Return [`GrpcOpenRefusal::UnknownUpstream`] for an upstream you do not
+    /// know, and [`GrpcOpenRefusal::Failed`] when you cannot send the call.
+    /// The default body refuses with `Failed` and reports itself through
+    /// `tracing` at the warn level.
+    fn grpc_call(
+        &self,
+        call: Invocation,
+        callout: CalloutId,
+        request: GrpcCall<'_>,
+    ) -> Result<(), GrpcOpenRefusal> {
+        let _ = (call, callout, request);
+        unserved("grpc_call");
+        Err(GrpcOpenRefusal::Failed)
+    }
+
+    /// Accepts or refuses a gRPC stream, which stays open for many messages.
+    ///
+    /// The guest sends on the stream through [`Callouts::grpc_send`], and you
+    /// give it messages and metadata through the deliveries of
+    /// [`CallScope`](crate::abi::v0_2_1::CallScope).
+    /// The callout ends when you deliver
+    /// [`CallScope::on_grpc_close`](crate::abi::v0_2_1::CallScope::on_grpc_close),
+    /// when the guest cancels it, or when its context is deleted.
+    ///
+    /// # Errors
+    ///
+    /// Return [`GrpcOpenRefusal::UnknownUpstream`] for an upstream you do not
+    /// know, and [`GrpcOpenRefusal::Failed`] when you cannot open the stream.
+    /// The default body refuses with `Failed` and reports itself through
+    /// `tracing` at the warn level.
+    fn grpc_stream(
+        &self,
+        call: Invocation,
+        callout: CalloutId,
+        request: GrpcStream<'_>,
+    ) -> Result<(), GrpcOpenRefusal> {
+        let _ = (call, callout, request);
+        unserved("grpc_stream");
+        Err(GrpcOpenRefusal::Failed)
+    }
+
+    /// Sends one message on a gRPC stream that the guest opened.
+    ///
+    /// The guest reads `OK` whenever the crate reaches you, so a message you
+    /// cannot send is a message you drop.
+    /// You then deliver
+    /// [`CallScope::on_grpc_close`](crate::abi::v0_2_1::CallScope::on_grpc_close),
+    /// which ends the callout.
+    /// The reason is that a guest of the Rust SDK stops with a panic on any
+    /// other answer.
+    ///
+    /// `end_of_stream` says that the guest sends no more on this stream.
+    /// The server may still send, so the callout stays open until you close
+    /// it.
+    fn grpc_send(&self, call: Invocation, callout: CalloutId, message: &[u8], end_of_stream: bool) {
+        let _ = (call, callout, message, end_of_stream);
+        unserved("grpc_send");
+    }
+
+    /// Ends a gRPC call or stream that the guest gave up.
+    ///
+    /// The callout is closed when this returns, and the guest gets no
+    /// callback for it, so stop your own request here.
+    /// The crate calls this for `proxy_grpc_cancel` of either kind and for
+    /// `proxy_grpc_close` of a call.
+    ///
+    /// A guest of the Rust SDK keeps its own record of a callout that ends
+    /// with no delivery, and that record gets no callback.
+    fn grpc_cancel(&self, call: Invocation, callout: CalloutId) {
+        let _ = (call, callout);
+        unserved("grpc_cancel");
+    }
+
+    /// Reports that the guest sends no more on a gRPC stream.
+    ///
+    /// The callout stays open, because the server may still send.
+    /// You end it when you deliver
+    /// [`CallScope::on_grpc_close`](crate::abi::v0_2_1::CallScope::on_grpc_close).
+    /// The crate calls this one time for one stream, so a guest that closes
+    /// twice, or that sends with `end_of_stream` and then closes, reaches you
+    /// one time.
+    fn grpc_close(&self, call: Invocation, callout: CalloutId) {
+        let _ = (call, callout);
+        unserved("grpc_close");
+    }
 }
 
 /// The service of a guest whose embedder serves no callout.
@@ -89,165 +199,105 @@ pub(crate) struct NoCallouts;
 
 impl Callouts for NoCallouts {}
 
-/// Why you refused an HTTP call.
-///
-/// Each case is a status that every guest SDK accepts from
-/// `proxy_http_call`, so a refusal is an error value in the guest and never
-/// a trap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum HttpCallRefusal {
-    /// You do not know the upstream, which the guest reads as `BAD_ARGUMENT`.
-    UnknownUpstream,
-    /// You cannot send the request, which the guest reads as
-    /// `INTERNAL_FAILURE`.
-    Failed,
-}
-
-impl From<HttpCallRefusal> for Status {
-    fn from(refusal: HttpCallRefusal) -> Self {
-        match refusal {
-            HttpCallRefusal::UnknownUpstream => Self::BadArgument,
-            HttpCallRefusal::Failed => Self::InternalFailure,
-        }
-    }
-}
-
-/// The HTTP request a guest asks you to send.
-///
-/// The crate hands you a value that borrows guest memory for the duration of
-/// the call.
-/// Call [`HttpCall::into_owned`] to keep it after you return.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct HttpCall<'a> {
-    /// The name of the upstream, as the guest wrote it.
-    pub upstream: Cow<'a, [u8]>,
-    /// The request headers, which hold `:authority`, `:method`, and `:path`.
-    pub headers: HeaderPairs<'a>,
-    /// The request body, which may be empty.
-    pub body: Cow<'a, [u8]>,
-    /// The request trailers, which may be empty.
-    pub trailers: HeaderPairs<'a>,
-    /// How long the guest waits for the response.
-    /// The ABI gives a timeout of zero no meaning.
-    pub timeout: Duration,
-}
-
-impl<'a> HttpCall<'a> {
-    /// A call to `upstream` with no header, no body, no trailer, and a
-    /// timeout of zero, for a test of your own service.
-    pub fn new(upstream: Cow<'a, [u8]>) -> Self {
-        Self {
-            upstream,
-            headers: Vec::new(),
-            body: Cow::Borrowed(&[]),
-            trailers: Vec::new(),
-            timeout: Duration::ZERO,
-        }
-    }
-
-    /// Sets the headers.
-    #[must_use]
-    pub fn with_headers(mut self, headers: HeaderPairs<'a>) -> Self {
-        self.headers = headers;
-        self
-    }
-
-    /// Sets the body.
-    #[must_use]
-    pub fn with_body(mut self, body: Cow<'a, [u8]>) -> Self {
-        self.body = body;
-        self
-    }
-
-    /// Sets the trailers.
-    #[must_use]
-    pub fn with_trailers(mut self, trailers: HeaderPairs<'a>) -> Self {
-        self.trailers = trailers;
-        self
-    }
-
-    /// Sets the timeout.
-    #[must_use]
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
-    /// A copy that borrows nothing, for a request you send after you return.
-    #[must_use]
-    pub fn into_owned(self) -> HttpCall<'static> {
-        HttpCall {
-            upstream: Cow::Owned(self.upstream.into_owned()),
-            headers: owned_pairs(self.headers),
-            body: Cow::Owned(self.body.into_owned()),
-            trailers: owned_pairs(self.trailers),
-            timeout: self.timeout,
-        }
-    }
-}
-
-fn owned_pairs(pairs: HeaderPairs<'_>) -> HeaderPairs<'static> {
-    pairs
-        .into_iter()
-        .map(|(key, value)| (Cow::Owned(key.into_owned()), Cow::Owned(value.into_owned())))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::abi::v0_2_1::ContextId;
+    use std::borrow::Cow;
 
-    fn pairs(list: &[(&'static [u8], &'static [u8])]) -> HeaderPairs<'static> {
-        list.iter()
-            .map(|(key, value)| (Cow::Borrowed(*key), Cow::Borrowed(*value)))
-            .collect()
+    use super::*;
+    use crate::abi::v0_2_1::test_support::events::warnings;
+    use crate::abi::v0_2_1::types::Status;
+    use crate::abi::v0_2_1::{ContextId, GuestId};
+
+    fn call() -> Invocation {
+        Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap())
+    }
+
+    fn callout() -> CalloutId {
+        CalloutId::try_from(1_u32).unwrap()
     }
 
     #[test]
     fn the_default_service_refuses_an_http_call_as_failed() {
         // Arrange
-        let call = Invocation::new(ContextId::try_from(1).unwrap());
-        let callout = CalloutId::try_from(1_u32).unwrap();
         let request = HttpCall::new(Cow::Borrowed(b"authz"));
 
         // Act
-        let answer = NoCallouts.http_call(call, callout, request);
+        let answer = NoCallouts.http_call(call(), callout(), request);
 
         // Assert
         assert_eq!(answer, Err(HttpCallRefusal::Failed));
     }
 
     #[test]
-    fn each_refusal_is_a_status_every_sdk_accepts_from_an_http_call() {
+    fn the_two_grpc_openers_refuse_as_failed() {
         // Arrange
-        let refusals = [HttpCallRefusal::UnknownUpstream, HttpCallRefusal::Failed];
+        let unary = GrpcCall::new(
+            Cow::Borrowed(b"authz"),
+            Cow::Borrowed(b"svc"),
+            Cow::Borrowed(b"Check"),
+        );
+        let stream = GrpcStream::new(
+            Cow::Borrowed(b"authz"),
+            Cow::Borrowed(b"svc"),
+            Cow::Borrowed(b"Watch"),
+        );
+
+        // Act
+        let answers = (
+            NoCallouts.grpc_call(call(), callout(), unary),
+            NoCallouts.grpc_stream(call(), callout(), stream),
+        );
+
+        // Assert
+        assert_eq!(answers.0, Err(GrpcOpenRefusal::Failed));
+        assert_eq!(answers.1, Err(GrpcOpenRefusal::Failed));
+    }
+
+    #[test]
+    fn every_default_body_warns_one_time() {
+        // Arrange
+        let service = NoCallouts;
+        let message = b"m".as_slice();
+
+        // Act
+        let counted = warnings(|| {
+            let _ = service.http_call(call(), callout(), HttpCall::new(Cow::Borrowed(b"a")));
+            let _ = service.grpc_call(
+                call(),
+                callout(),
+                GrpcCall::new(
+                    Cow::Borrowed(b"a"),
+                    Cow::Borrowed(b"s"),
+                    Cow::Borrowed(b"m"),
+                ),
+            );
+            let _ = service.grpc_stream(
+                call(),
+                callout(),
+                GrpcStream::new(
+                    Cow::Borrowed(b"a"),
+                    Cow::Borrowed(b"s"),
+                    Cow::Borrowed(b"m"),
+                ),
+            );
+            service.grpc_send(call(), callout(), message, true);
+            service.grpc_cancel(call(), callout());
+            service.grpc_close(call(), callout());
+        });
+
+        // Assert
+        assert_eq!(counted, 6);
+    }
+
+    #[test]
+    fn each_grpc_refusal_is_a_status_the_sdk_accepts_from_an_opener() {
+        // Arrange
+        let refusals = [GrpcOpenRefusal::UnknownUpstream, GrpcOpenRefusal::Failed];
 
         // Act
         let statuses = refusals.map(Status::from);
 
         // Assert
-        assert_eq!(statuses, [Status::BadArgument, Status::InternalFailure]);
-    }
-
-    #[test]
-    fn an_owned_call_keeps_every_field() {
-        // Arrange
-        let upstream = b"authz".to_vec();
-        let call = HttpCall::new(Cow::Borrowed(&upstream))
-            .with_headers(pairs(&[(b":path", b"/check")]))
-            .with_body(Cow::Borrowed(b"body"))
-            .with_trailers(pairs(&[(b"t", b"v")]))
-            .with_timeout(Duration::from_millis(250));
-        let expected = call.clone();
-
-        // Act
-        let owned = call.into_owned();
-
-        // Assert
-        assert_eq!(owned, expected);
-        assert!(matches!(owned.upstream, Cow::Owned(_)));
+        assert_eq!(statuses, [Status::ParseFailure, Status::InternalFailure]);
     }
 }
