@@ -2,9 +2,6 @@
 
 todo topics to cover:
 
-- EngineConfig: epoch period, fuel, stack size.
-- Limits: CPU time budget, fuel budget, memory ceiling.
-- PluginConfig: plugin name, root id, configuration bytes.
 - VmServices builder: log sink, clock, environment, VM identity, shared services, callouts, max open callouts.
 - InMemoryStoreLimits: queue and metric caps.
 
