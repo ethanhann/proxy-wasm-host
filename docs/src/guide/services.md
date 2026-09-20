@@ -4,7 +4,12 @@ Services allow VMs to do stuff outside the VM itself.
 
 ## Logging
 
-todo
+todo topics to cover:
+
+- The LogSink trait and what it receives (a log level and a message).
+- How the guest calls proxy_log and how that reaches your sink.
+- Setting an initial log level on VmServices and how the guest can change it at runtime.
+- Connecting LogSink to a proxy's logger.
 
 ## Callouts
 
