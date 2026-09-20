@@ -7,9 +7,45 @@ Services allow VMs to do stuff outside the VM itself.
 todo topics to cover:
 
 - The LogSink trait and what it receives (a log level and a message).
+- Connecting LogSink to a proxy's logger.
 - How the guest calls proxy_log and how that reaches your sink.
 - Setting an initial log level on VmServices and how the guest can change it at runtime.
-- Connecting LogSink to a proxy's logger.
+
+### The LogSink trait
+
+The `LogSink` trait implementation determines where a guest's log messages are sent.
+
+For example, if you wanted to discard all messages you would implement it like this:
+
+```rust
+struct Discard;
+
+impl LogSink for Discard {
+    fn log(&self, _log_level: LogLevel, _message: &[u8]) {}
+}
+```
+
+However, this would not be done except for perhaps during local development.
+Realistically, the log level and message would be sent somewhere useful.
+
+This connects guest log output to whatever tracing subscriber (e.g., stdout, JSON, OpenTelemetry, etc.) is configured:
+
+```rust
+struct TracingSink;
+
+impl LogSink for TracingSink {
+    fn log(&self, level: LogLevel, message: &[u8]) {
+        let text = String::from_utf8_lossy(message);
+        match level {
+            LogLevel::Trace => tracing::trace!("{text}"),
+            LogLevel::Debug => tracing::debug!("{text}"),
+            LogLevel::Info => tracing::info!("{text}"),
+            LogLevel::Warn => tracing::warn!("{text}"),
+            LogLevel::Error | LogLevel::Critical => tracing::error!("{text}"),
+        }
+    }
+}
+```
 
 ## Callouts
 
