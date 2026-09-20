@@ -563,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn a_delivery_the_table_does_not_allow_is_refused_and_the_guest_does_not_run() {
+    fn a_grpc_delivery_the_table_does_not_allow_is_refused_and_the_guest_does_not_run() {
         // Arrange
         let (mut guest, _, root) = recording();
         let stream = guest.enter_root().on_context_create(Some(root)).unwrap();
