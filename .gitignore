@@ -29,3 +29,7 @@ profile.json.gz
 
 # Mac
 .DS_Store
+
+# mdbook
+book
+
