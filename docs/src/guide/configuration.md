@@ -8,6 +8,21 @@ todo topics to cover:
 - PluginConfig: plugin name, root id, configuration bytes.
 - InMemoryStoreLimits: queue and metric caps.
 
+## PluginConfig
+
+The `PluginConfig` struct is used to configure a plugin instance.
+
+A plugin has a `name`, a `root_id`, and an unstructured `configuration` blob represented as bytes.
+
+A plugin config can be built like this (assuming it expects a JSON configuration):
+
+```rust
+let plugin = plugin
+    .with_name(*b"my_plugin")
+    .with_root_id(*b"my_plugin_root")
+    .with_configuration(*b"{}");
+```
+
 ## Limits
 
 The limits are used to control the behavior of the VM and prevent it from consuming too many resources.
