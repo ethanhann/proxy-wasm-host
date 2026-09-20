@@ -1,5 +1,9 @@
 # proxy-wasm-host
 
+[![CI](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/snakewayhq/snakeway/actions/workflows/build.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+
+
 A [Proxy-Wasm](https://github.com/proxy-wasm/spec) ABI v0.2.1 host library for Rust, built on [wasmtime](https://wasmtime.dev/).
 If you write a proxy in Rust and want to run Proxy-Wasm guests in it, this crate provides the host side of the ABI.
 It is a port of [proxy-wasm-go-host](https://github.com/mosn/proxy-wasm-go-host) from Go to Rust.
