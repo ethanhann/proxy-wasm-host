@@ -106,7 +106,7 @@ impl<H: StreamState> CallScope<'_, H> {
             self.guest,
             Delivered {
                 root: open.root,
-                callout,
+                callout: Some(callout),
                 delivery: Delivery::grpc_initial_metadata(callout, metadata),
                 callback: Callback::GrpcReceiveInitialMetadata,
                 func,
@@ -154,7 +154,7 @@ impl<H: StreamState> CallScope<'_, H> {
             self.guest,
             Delivered {
                 root: open.root,
-                callout,
+                callout: Some(callout),
                 delivery: Delivery::grpc_message(callout, message),
                 callback: Callback::GrpcReceive,
                 func,
@@ -200,7 +200,7 @@ impl<H: StreamState> CallScope<'_, H> {
             self.guest,
             Delivered {
                 root: open.root,
-                callout,
+                callout: Some(callout),
                 delivery: Delivery::grpc_trailing_metadata(callout, metadata),
                 callback: Callback::GrpcReceiveTrailingMetadata,
                 func,

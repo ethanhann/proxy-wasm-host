@@ -1,8 +1,8 @@
 //! The three buffer functions.
 //!
 //! The crate serves `VM_CONFIGURATION` and `PLUGIN_CONFIGURATION` from the
-//! values the embedder gave it, and the buffers of a delivery from the value
-//! that delivery holds.
+//! values the embedder gave it, and the three buffers of a delivery from the
+//! value that delivery holds.
 //! It asks the stream state for every other buffer.
 //! Each body resolves the buffer type before the context, so a configuration
 //! read never needs a callback to be running.
@@ -80,9 +80,10 @@ enum CrateBuffer {
 ///
 /// The configuration buffers come from what the embedder supplied before the
 /// call.
-/// The body of an HTTP call response and the message of a gRPC callout come
-/// from the value the embedder delivered for the running callback, and
-/// [`serves_buffer`] holds that list for every family.
+/// The body of an HTTP call response, the message of a gRPC callout, and the
+/// arguments of a foreign function call come from the value the embedder
+/// delivered for the running callback, and [`serves_buffer`] holds that list
+/// for every family.
 /// No implementation of the embedder sees a request for one of them.
 ///
 /// See [`Served`] for the rule.
@@ -122,10 +123,33 @@ fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<
             }
         }
         Served::Embedder => {
+            let announced = state.abi().announced(buffer_type);
             let (call, stream) = with_stream(state, Status::NotFound)?;
             let buffer = from_embedder("buffer", stream.buffer(call, Access::Read, buffer_type))?;
+            report_announced(buffer_type, announced, buffer.len());
             Ok(Source::Stream(buffer))
         }
+    }
+}
+
+/// Reports a length that differs from the size the running callback
+/// announced.
+///
+/// The guest reads what the stream state holds, so a size that is too large
+/// gives the guest a short read with an `OK` status and a size that is too
+/// small hides bytes.
+/// Neither answer names the mistake, so the crate names it here.
+fn report_announced(buffer_type: BufferType, announced: Option<u32>, length: usize) {
+    let Some(announced) = announced else {
+        return;
+    };
+    if u64::from(announced) != length.try_into().unwrap_or(u64::MAX) {
+        tracing::warn!(
+            buffer = ?buffer_type,
+            announced,
+            length,
+            "the callback announced a size the stream state does not hold"
+        );
     }
 }
 
@@ -942,13 +966,14 @@ mod tests {
     }
 
     #[test]
-    fn the_predicate_names_the_four_crate_buffers_and_sends_the_rest_to_the_embedder() {
+    fn the_predicate_names_the_five_crate_buffers_and_sends_the_rest_to_the_embedder() {
         // Arrange
         let asked = [
             BufferType::VmConfiguration,
             BufferType::PluginConfiguration,
             BufferType::HttpCallResponseBody,
             BufferType::GrpcCallMessage,
+            BufferType::ForeignFunctionArguments,
             BufferType::HttpRequestBody,
             BufferType::HttpResponseBody,
         ];
@@ -966,6 +991,9 @@ mod tests {
                     DeliveredBuffer::HttpCallResponseBody
                 )),
                 Served::Crate(CrateBuffer::Delivered(DeliveredBuffer::GrpcCallMessage)),
+                Served::Crate(CrateBuffer::Delivered(
+                    DeliveredBuffer::ForeignFunctionArguments
+                )),
                 Served::Embedder,
                 Served::Embedder,
             ]
@@ -1056,5 +1084,104 @@ mod tests {
         // Assert
         assert_eq!(answers, [Status::NotFound; 3]);
         assert_eq!(asked(&mut instance), 0);
+    }
+
+    /// A guest that reads the downstream data buffer and answers the status.
+    const READER: &str = r#"(module
+        (import "env" "proxy_get_buffer_bytes" (func $get (param i32 i32 i32 i32 i32) (result i32)))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 8192)
+        (func (export "proxy_abi_version_0_2_1"))
+        (func (export "proxy_on_downstream_data") (param i32 i32 i32) (result i32)
+            (i32.store (i32.const 0)
+                (call $get (i32.const 2) (i32.const 0) (i32.const 2147483647)
+                    (i32.const 100) (i32.const 104)))
+            i32.const 0)
+        (func (export "proxy_on_new_connection") (param i32) (result i32) i32.const 0))"#;
+
+    /// Runs one downstream data callback of `announced` bytes on a stream
+    /// state that holds `bytes`, and answers the warnings it reported.
+    fn data_callback(announced: u32, bytes: &'static [u8], read: bool) -> usize {
+        use crate::abi::v0_2_1::test_support::events::warnings;
+        let engine = engine();
+        let host = crate::abi::v0_2_1::Host::new(&engine).unwrap();
+        let wat = if read {
+            READER
+        } else {
+            r#"(module
+                (memory (export "memory") 1)
+                (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 8192)
+                (func (export "proxy_abi_version_0_2_1")))"#
+        };
+        let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
+        let mut guest = crate::abi::v0_2_1::Guest::new(
+            &host,
+            &module,
+            crate::abi::v0_2_1::test_support::services(),
+            &crate::runtime::Limits::default(),
+        )
+        .unwrap();
+        let root = guest.enter_root().on_context_create(None).unwrap();
+        let stream = guest.enter_root().on_context_create(Some(root)).unwrap();
+        let state = RecordingStream::new().with_buffer(BufferType::DownstreamData, bytes);
+        warnings(|| {
+            let mut scope = guest.enter(state);
+            let _ = scope.on_downstream_data(stream, announced, false);
+            drop(scope.finish());
+        })
+    }
+
+    #[test]
+    fn a_size_that_the_stream_state_does_not_hold_is_reported_one_time() {
+        // Arrange
+        let announced = 4096;
+
+        // Act
+        let warnings = data_callback(announced, b"four", true);
+
+        // Assert
+        assert_eq!(warnings, 1);
+    }
+
+    #[test]
+    fn a_size_that_agrees_with_the_stream_state_reports_nothing() {
+        // Arrange
+        let announced = 4;
+
+        // Act
+        let warnings = data_callback(announced, b"four", true);
+
+        // Assert
+        assert_eq!(warnings, 0);
+    }
+
+    #[test]
+    fn a_guest_that_does_not_read_the_buffer_reports_nothing() {
+        // Arrange
+        let announced = 4096;
+
+        // Act
+        let warnings = data_callback(announced, b"four", false);
+
+        // Assert
+        assert_eq!(warnings, 0);
+    }
+
+    #[test]
+    fn a_read_outside_a_data_callback_reports_nothing() {
+        // Arrange
+        use crate::abi::v0_2_1::test_support::events::warnings;
+        let state = RecordingStream::new().with_buffer(BufferType::DownstreamData, b"four");
+        let (mut instance, _) = hosted(&engine(), GUEST, state);
+        let buffer = BufferType::DownstreamData as i32;
+
+        // Act
+        let counted = warnings(|| {
+            get(&mut instance, buffer, 0, i32::MAX);
+        });
+
+        // Assert
+        assert_eq!(counted, 0);
+        assert_eq!(returned(&mut instance), b"four".to_vec());
     }
 }

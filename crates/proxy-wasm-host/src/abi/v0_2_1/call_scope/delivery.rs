@@ -134,8 +134,9 @@ impl<H: StreamState> CallScope<'_, H> {
 pub(super) struct Delivered<P: WasmParams> {
     /// The root of the caller, which the guest gets as the plugin context.
     pub(super) root: ContextId,
-    /// The callout the delivery answers.
-    pub(super) callout: CalloutId,
+    /// The callout the delivery answers, which a foreign function call has
+    /// none of.
+    pub(super) callout: Option<CalloutId>,
     /// What the guest reads while the callback runs.
     pub(super) delivery: Delivery,
     /// The callback to run.
@@ -165,18 +166,20 @@ pub(super) fn deliver<P: WasmParams>(
     call: Delivered<P>,
 ) -> Result<(), GuestError> {
     let abi = guest.instance_mut().state_mut().abi_mut();
-    let entry = if call.ends {
-        abi.callouts_mut().remove(call.callout)
-    } else {
-        None
+    let entry = match call.callout.filter(|_| call.ends) {
+        Some(callout) => abi
+            .callouts_mut()
+            .remove(callout)
+            .map(|entry| (callout, entry)),
+        None => None,
     };
     abi.set_delivery(Some(call.delivery));
     let result = prologue::run(guest, call.root, call.callback, call.func, call.params, ());
     let poisoned = guest.is_poisoned();
     let abi = guest.instance_mut().state_mut().abi_mut();
     abi.set_delivery(None);
-    if let Some(entry) = entry.filter(|_| poisoned) {
-        abi.callouts_mut().enter(call.callout, entry);
+    if let Some((callout, entry)) = entry.filter(|_| poisoned) {
+        abi.callouts_mut().enter(callout, entry);
     }
     Ok(result?)
 }
@@ -201,7 +204,7 @@ pub(super) fn deliver_http_response(
         guest,
         Delivered {
             root,
-            callout,
+            callout: Some(callout),
             delivery: Delivery::http_call_response(callout, response),
             callback: Callback::HttpCallResponse,
             func,
@@ -236,7 +239,7 @@ pub(super) fn deliver_grpc_close(
         guest,
         Delivered {
             root,
-            callout,
+            callout: Some(callout),
             delivery: Delivery::grpc_close(callout, status),
             callback: Callback::GrpcClose,
             func,

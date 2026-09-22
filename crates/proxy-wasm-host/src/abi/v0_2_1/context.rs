@@ -80,6 +80,39 @@ pub enum ContextType {
     Stream,
 }
 
+/// Which family of stream a stream context serves.
+///
+/// A guest decides for itself whether a stream context is a TCP stream or an
+/// HTTP stream, and it decides inside its own SDK, so the crate cannot read
+/// the choice.
+/// Both guest SDKs stop with a panic when a callback of one family names a
+/// context of the other family, and a panic poisons the guest.
+///
+/// The crate records the family of a stream context at its first stream
+/// callback and refuses a callback of the other family from then on.
+/// A wrong first callback still reaches the guest, so tell the crate which
+/// family you serve with
+/// [`Guest::expect_stream_kind`](crate::abi::v0_2_1::Guest::expect_stream_kind)
+/// before the first callback of a context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StreamKind {
+    /// A TCP stream, which takes the connection callbacks and the two data
+    /// callbacks.
+    Tcp,
+    /// An HTTP stream, which takes the header, body, and trailer callbacks
+    /// of a request and of its response.
+    Http,
+}
+
+impl fmt::Display for StreamKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Tcp => "a TCP stream",
+            Self::Http => "an HTTP stream",
+        })
+    }
+}
+
 /// How far a context is through its finalization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -108,17 +141,30 @@ pub enum ContextProblem {
     NotDone,
     /// The root context still has stream contexts under it.
     HasChildren,
+    /// The context serves one family of stream, and the callback belongs to
+    /// the other family.
+    WrongStreamKind {
+        /// The family the context took at its first stream callback, or the
+        /// family you declared for it.
+        recorded: StreamKind,
+        /// The family of the callback you called.
+        attempted: StreamKind,
+    },
 }
 
 impl fmt::Display for ContextProblem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Unknown => "is unknown",
-            Self::NotRoot => "is not a root context",
-            Self::NotStream => "is not a stream context",
-            Self::NotDone => "is not done",
-            Self::HasChildren => "still has stream contexts",
-        })
+        match self {
+            Self::Unknown => f.write_str("is unknown"),
+            Self::NotRoot => f.write_str("is not a root context"),
+            Self::NotStream => f.write_str("is not a stream context"),
+            Self::NotDone => f.write_str("is not done"),
+            Self::HasChildren => f.write_str("still has stream contexts"),
+            Self::WrongStreamKind {
+                recorded,
+                attempted,
+            } => write!(f, "is {recorded} and took a callback of {attempted}"),
+        }
     }
 }
 
@@ -171,6 +217,10 @@ mod tests {
             ContextProblem::NotStream,
             ContextProblem::NotDone,
             ContextProblem::HasChildren,
+            ContextProblem::WrongStreamKind {
+                recorded: StreamKind::Tcp,
+                attempted: StreamKind::Http,
+            },
         ];
 
         // Act
@@ -184,7 +234,8 @@ mod tests {
                 "is not a root context",
                 "is not a stream context",
                 "is not done",
-                "still has stream contexts"
+                "still has stream contexts",
+                "is a TCP stream and took a callback of an HTTP stream",
             ]
         );
     }

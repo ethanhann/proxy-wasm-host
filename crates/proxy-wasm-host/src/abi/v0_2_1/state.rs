@@ -8,6 +8,7 @@ use std::time::Duration;
 use crate::abi::v0_2_1::callout::CalloutTable;
 use crate::abi::v0_2_1::changes::{Changes, QueueRegistration};
 use crate::abi::v0_2_1::payload::Delivery;
+use crate::abi::v0_2_1::types::BufferType;
 use crate::abi::v0_2_1::{
     Callback, ContextId, ContextTable, GuestId, MetricId, QueueId, SharedServices, StreamState,
     VmServices,
@@ -59,6 +60,7 @@ pub(crate) struct AbiState {
     granted_against: Option<Arc<dyn SharedServices>>,
     registrants: BTreeMap<QueueId, BTreeSet<ContextId>>,
     callouts: CalloutTable,
+    announced: Option<(BufferType, u32)>,
     deleting: Option<ContextId>,
     delivery: Option<Delivery>,
     changes: Changes,
@@ -77,6 +79,7 @@ impl AbiState {
             granted_against: None,
             registrants: BTreeMap::new(),
             callouts: CalloutTable::new(),
+            announced: None,
             deleting: None,
             delivery: None,
             changes: Changes::default(),
@@ -193,6 +196,21 @@ impl AbiState {
     /// The open callouts, to enter or remove one.
     pub(crate) fn callouts_mut(&mut self) -> &mut CalloutTable {
         &mut self.callouts
+    }
+
+    /// Records the buffer and the size that the running data callback
+    /// announced, or clears the record.
+    ///
+    /// A guest that reads that buffer inside the callback gets what the
+    /// stream state holds, and the crate reports a length that differs.
+    pub(crate) fn set_announced(&mut self, announced: Option<(BufferType, u32)>) {
+        self.announced = announced;
+    }
+
+    /// The size the running data callback announced for `buffer`.
+    pub(crate) fn announced(&self, buffer: BufferType) -> Option<u32> {
+        self.announced
+            .and_then(|(kind, size)| (kind == buffer).then_some(size))
     }
 
     /// Marks the context whose deletion is running, or clears the mark.

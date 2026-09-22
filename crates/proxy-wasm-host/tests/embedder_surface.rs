@@ -24,8 +24,8 @@ use proxy_wasm_host::abi::v0_2_1::{
     HttpCallRefusal, HttpCallResponse, InMemoryStore, InMemoryStoreLimits, InvalidCalloutId,
     InvalidContextId, InvalidMetricId, InvalidQueueId, Invocation, LocalResponse, LogSink,
     MetricId, NoStream, OpenCallout, PluginConfig, QueueEnqueued, QueueId, QueueProblem,
-    QueueRegistration, SharedServices, SharedValue, StreamState, SystemClock, VmServices,
-    WasmParams, WasmResults,
+    QueueRegistration, SharedServices, SharedValue, StreamKind, StreamState, SystemClock,
+    VmServices, WasmParams, WasmResults,
 };
 // What the codec names in a signature an embedder writes.
 use proxy_wasm_host::codec::pairs::{EncodeError, PairVisitor, Pairs};
@@ -121,7 +121,7 @@ fn the_versioned_module_exports_the_names_listed_here() {
             "pub use callout::{CalloutId, CalloutKind, CalloutProblem, InvalidCalloutId, OpenCallout};",
             "pub use callout_service::{ Callouts, GrpcCall, GrpcOpenRefusal, GrpcStatus, GrpcStream, HttpCall, HttpCallRefusal, HttpCallResponse, };",
             "pub use changes::{Changes, QueueRegistration};",
-            "pub use context::{ContextId, ContextProblem, ContextState, ContextType, InvalidContextId};",
+            "pub use context::{ ContextId, ContextProblem, ContextState, ContextType, InvalidContextId, StreamKind, };",
             "pub use guest::Guest;",
             "pub use guest::identity::GuestId;",
             "pub use guest_error::GuestError;",
@@ -333,4 +333,48 @@ fn an_embedder_names_the_grpc_surface_in_its_own_signatures() {
         Status::from(GrpcOpenRefusal::UnknownUpstream),
         Status::ParseFailure
     );
+}
+
+/// The names a worker writes when it serves a stream of either family.
+#[test]
+fn an_embedder_names_the_stream_surface_in_its_own_signatures() {
+    // Arrange
+    fn declare(guest: &mut Guest, stream: ContextId, kind: StreamKind) -> Result<(), GuestError> {
+        guest.expect_stream_kind(stream, kind)
+    }
+    fn serve_connection<H: StreamState>(
+        scope: &mut CallScope<'_, H>,
+        stream: ContextId,
+        chunk: &[u8],
+    ) -> Result<Action, GuestError> {
+        scope.on_new_connection(stream)?;
+        let action =
+            scope.on_downstream_data(stream, chunk.len().try_into().unwrap_or(u32::MAX), true)?;
+        scope.on_downstream_connection_close(stream, PeerType::Remote)?;
+        Ok(action)
+    }
+    let wat = r#"(module
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+        (func (export "proxy_abi_version_0_2_1")))"#;
+    let engine = Engine::new().unwrap();
+    let module = Module::new(&engine, &wat::parse_str(wat).unwrap()).unwrap();
+    let host = Host::new(&engine).unwrap();
+    let services = VmServices::new(std::sync::Arc::new(Discard));
+    let mut guest = Guest::new(&host, &module, services, &Limits::default()).unwrap();
+    let root = guest.enter_root().on_context_create(None).unwrap();
+    let stream = guest.enter_root().on_context_create(Some(root)).unwrap();
+    let declared = declare(&mut guest, stream, StreamKind::Tcp);
+    let mut scope = guest.enter(Request {
+        headers: VecHeaderMap::default(),
+    });
+
+    // Act
+    let action = serve_connection(&mut scope, stream, b"bytes");
+
+    // Assert
+    assert!(declared.is_ok(), "{declared:?}");
+    assert!(matches!(action, Ok(Action::Continue)), "{action:?}");
+    drop(scope.finish());
+    assert_eq!(guest.context_stream_kind(stream), Some(StreamKind::Tcp));
 }

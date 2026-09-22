@@ -11,6 +11,7 @@ use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::callout::Callout;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::call::{context, invocation};
+use crate::abi::v0_2_1::payload::Delivery;
 use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{CalloutId, CalloutKind, Callouts, HeaderPairs, HttpCall, Invocation};
 use crate::codec::pairs::decode_pairs;
@@ -120,7 +121,10 @@ pub(super) fn open_callout(
 ///
 /// A gRPC close answers the code and the message of its status.
 /// The ABI gives the status of an HTTP call and of a gRPC message no
-/// meaning, so every other delivery answers code zero and an empty message.
+/// meaning, so every other callout delivery answers code zero and an empty
+/// message.
+/// A foreign function call is no callout, and the ABI gives it no status, so
+/// it answers `NOT_FOUND` as a call outside a delivery does.
 /// No context and no stream state is asked.
 pub(super) fn proxy_get_status(
     ctx: &mut impl AsContextMut<Data = HostState>,
@@ -135,9 +139,8 @@ pub(super) fn proxy_get_status(
     memory.read_u32(code_ptr)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
-    let (code, message) = match state.abi().delivery() {
-        Some(delivery) => delivery.status(),
-        None => return Err(Status::NotFound.into()),
+    let Some((code, message)) = state.abi().delivery().and_then(Delivery::status) else {
+        return Err(Status::NotFound.into());
     };
     let message = message.as_bytes().to_vec();
     write_return(ctx, &message, data_ptr, size_ptr)?;

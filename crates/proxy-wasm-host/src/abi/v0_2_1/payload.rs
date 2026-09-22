@@ -27,6 +27,7 @@ pub(crate) enum DeliveredMap {
 pub(crate) enum DeliveredBuffer {
     HttpCallResponseBody,
     GrpcCallMessage,
+    ForeignFunctionArguments,
 }
 
 /// The map types a delivery serves, which no implementation of the embedder
@@ -47,6 +48,7 @@ pub(crate) fn serves_buffer(buffer_type: BufferType) -> Option<DeliveredBuffer> 
     match buffer_type {
         BufferType::HttpCallResponseBody => Some(DeliveredBuffer::HttpCallResponseBody),
         BufferType::GrpcCallMessage => Some(DeliveredBuffer::GrpcCallMessage),
+        BufferType::ForeignFunctionArguments => Some(DeliveredBuffer::ForeignFunctionArguments),
         _ => None,
     }
 }
@@ -79,6 +81,7 @@ enum Payload {
     GrpcMessage(Vec<u8>),
     GrpcTrailingMetadata(VecHeaderMap),
     GrpcClose(GrpcStatus),
+    ForeignArguments(Vec<u8>),
 }
 
 impl Delivery {
@@ -124,6 +127,14 @@ impl Delivery {
         }
     }
 
+    /// The arguments of a foreign function call, which names no callout.
+    pub(crate) fn foreign_arguments(arguments: Cow<'_, [u8]>) -> Self {
+        Self {
+            callout: None,
+            payload: Payload::ForeignArguments(arguments.into_owned()),
+        }
+    }
+
     pub(crate) fn callout(&self) -> Option<CalloutId> {
         self.callout
     }
@@ -154,19 +165,25 @@ impl Delivery {
                 Some(body)
             }
             (Payload::GrpcMessage(message), DeliveredBuffer::GrpcCallMessage) => Some(message),
+            (Payload::ForeignArguments(arguments), DeliveredBuffer::ForeignFunctionArguments) => {
+                Some(arguments)
+            }
             _ => None,
         }
     }
 
-    /// The code and the message `proxy_get_status` answers.
+    /// The code and the message `proxy_get_status` answers, or `None` for a
+    /// delivery that has no status.
     ///
     /// The ABI gives the status of an HTTP call and of a gRPC message no
-    /// meaning, so every delivery but a gRPC close answers code zero and an
-    /// empty message.
-    pub(crate) fn status(&self) -> (u32, &str) {
+    /// meaning, so a callout delivery that is not a gRPC close answers code
+    /// zero and an empty message.
+    /// A foreign function call is no callout and answers no status.
+    pub(crate) fn status(&self) -> Option<(u32, &str)> {
         match &self.payload {
-            Payload::GrpcClose(status) => (status.code, &status.message),
-            _ => (0, ""),
+            Payload::GrpcClose(status) => Some((status.code, &status.message)),
+            Payload::ForeignArguments(_) => None,
+            _ => Some((0, "")),
         }
     }
 }
@@ -185,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn the_two_predicates_name_the_four_maps_and_the_two_buffers_a_delivery_serves() {
+    fn the_two_predicates_name_the_four_maps_and_the_three_buffers_a_delivery_serves() {
         // Arrange
         let maps = [
             MapType::HttpRequestHeaders,
@@ -198,6 +215,7 @@ mod tests {
             BufferType::HttpRequestBody,
             BufferType::GrpcCallMessage,
             BufferType::HttpCallResponseBody,
+            BufferType::ForeignFunctionArguments,
             BufferType::VmConfiguration,
         ];
 
@@ -221,6 +239,7 @@ mod tests {
                 None,
                 Some(DeliveredBuffer::GrpcCallMessage),
                 Some(DeliveredBuffer::HttpCallResponseBody),
+                Some(DeliveredBuffer::ForeignFunctionArguments),
                 None,
             ]
         );
@@ -262,7 +281,7 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [Some(b"hello".as_slice()), None]);
-        assert_eq!(delivery.status(), (0, ""));
+        assert_eq!(delivery.status(), Some((0, "")));
     }
 
     #[test]
@@ -274,7 +293,7 @@ mod tests {
         let status = delivery.status();
 
         // Assert
-        assert_eq!(status, (14, "unavailable"));
+        assert_eq!(status, Some((14, "unavailable")));
         assert!(delivery.buffer(DeliveredBuffer::GrpcCallMessage).is_none());
         assert!(
             delivery
@@ -308,6 +327,21 @@ mod tests {
                 .map(|map| map.len()),
             Some(1)
         );
-        assert_eq!(delivery.status(), (0, ""));
+        assert_eq!(delivery.status(), Some((0, "")));
+    }
+
+    #[test]
+    fn a_foreign_function_delivery_holds_its_arguments_and_no_callout() {
+        // Arrange
+        let delivery = Delivery::foreign_arguments(Cow::Borrowed(b"hello"));
+
+        // Act
+        let arguments = delivery.buffer(DeliveredBuffer::ForeignFunctionArguments);
+
+        // Assert
+        assert_eq!(arguments, Some(b"hello".as_slice()));
+        assert_eq!(delivery.callout(), None);
+        assert_eq!(delivery.status(), None, "the ABI gives it no status");
+        assert!(delivery.buffer(DeliveredBuffer::GrpcCallMessage).is_none());
     }
 }

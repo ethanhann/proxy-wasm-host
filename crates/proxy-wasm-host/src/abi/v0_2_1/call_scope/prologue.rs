@@ -5,7 +5,9 @@ use wasmtime::{TypedFunc, WasmParams, WasmResults};
 use crate::Error;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::GuestError;
-use crate::abi::v0_2_1::{Callback, ContextId, ContextProblem, ContextState, ContextType, Guest};
+use crate::abi::v0_2_1::{
+    Callback, ContextId, ContextProblem, ContextState, ContextType, Guest, StreamKind,
+};
 
 fn problem(context: ContextId, problem: ContextProblem) -> GuestError {
     GuestError::Context {
@@ -54,6 +56,47 @@ pub(super) fn require_deletable(guest: &Guest, context: ContextId) -> Result<(),
         return Err(problem(context, ContextProblem::HasChildren));
     }
     Ok(())
+}
+
+/// Refuses a stream callback of the family that `context` does not serve.
+///
+/// A guest decides the family of a stream context inside its own SDK, and
+/// both SDKs panic on a callback of the other family, so the crate refuses
+/// the callback before the guest runs.
+/// The family is recorded when a callback reaches the guest, which
+/// [`record_stream_kind`] does.
+pub(super) fn require_stream_kind(
+    guest: &Guest,
+    context: ContextId,
+    kind: StreamKind,
+) -> Result<(), GuestError> {
+    match guest
+        .instance()
+        .state()
+        .abi()
+        .contexts()
+        .stream_kind(context)
+    {
+        Some(recorded) if recorded != kind => Err(problem(
+            context,
+            ContextProblem::WrongStreamKind {
+                recorded,
+                attempted: kind,
+            },
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Records the family of a stream context, which the first callback that
+/// reaches the guest fills.
+pub(super) fn record_stream_kind(guest: &mut Guest, context: ContextId, kind: StreamKind) {
+    guest
+        .instance_mut()
+        .state_mut()
+        .abi_mut()
+        .contexts_mut()
+        .set_stream_kind(context, kind);
 }
 
 pub(super) fn accepted(guest: &Guest, context: ContextId) -> Result<(), GuestError> {

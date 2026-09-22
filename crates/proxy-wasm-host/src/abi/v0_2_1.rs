@@ -36,6 +36,9 @@
 //! You follow a context with [`ContextId`], [`ContextType`], and
 //! [`ContextState`], and you read a refusal through [`ContextProblem`] and
 //! [`InvalidContextId`].
+//! A stream context serves one [`StreamKind`], which the crate records at its
+//! first stream callback and
+//! [`Guest::expect_stream_kind`] declares before it.
 //! You give a guest its log, its clock, and its configuration through
 //! [`VmServices`], [`LogSink`], [`Clock`], and [`SystemClock`].
 //! You share data, queues, and metrics between guests by implementing
@@ -77,7 +80,9 @@ pub use callout_service::{
     HttpCallResponse,
 };
 pub use changes::{Changes, QueueRegistration};
-pub use context::{ContextId, ContextProblem, ContextState, ContextType, InvalidContextId};
+pub use context::{
+    ContextId, ContextProblem, ContextState, ContextType, InvalidContextId, StreamKind,
+};
 pub use guest::Guest;
 pub use guest::identity::GuestId;
 pub use guest_error::GuestError;

@@ -122,13 +122,13 @@ pub trait StreamState: Any + Send {
     /// paused from it.
     /// `DownstreamData` and `UpstreamData` are read and written in the data
     /// callbacks.
-    /// `ForeignFunctionArguments` is read in `proxy_on_foreign_function`.
     /// The crate does not enforce those rules, and you can apply them by
     /// matching on `call.callback` and `access`.
     ///
     /// The crate never asks you for `VmConfiguration`, `PluginConfiguration`,
-    /// `HttpCallResponseBody`, or `GrpcCallMessage`, because it serves them
-    /// itself from the values you gave it.
+    /// `HttpCallResponseBody`, `GrpcCallMessage`, or
+    /// `ForeignFunctionArguments`, because it serves each one itself from
+    /// the value you gave it.
     /// The crate clamps `start` and the length against
     /// [`Buffer::len`](crate::Buffer::len) before it calls your buffer, so a
     /// range you receive is inside it.

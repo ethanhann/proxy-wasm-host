@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::abi::v0_2_1::GuestError;
 use crate::abi::v0_2_1::{
-    Callback, ContextId, ContextProblem, ContextState, ContextType, PluginConfig,
+    Callback, ContextId, ContextProblem, ContextState, ContextType, PluginConfig, StreamKind,
 };
 
 /// The live contexts of one instance.
@@ -21,6 +21,9 @@ pub(crate) struct ContextTable {
 #[derive(Debug)]
 struct ContextEntry {
     context_type: ContextType,
+    /// The family of stream this context serves, which its first stream
+    /// callback or a declaration of the embedder records.
+    stream_kind: Option<StreamKind>,
     parent: Option<ContextId>,
     state: ContextState,
     rejected: bool,
@@ -67,6 +70,7 @@ impl ContextTable {
             id,
             ContextEntry {
                 context_type,
+                stream_kind: None,
                 parent,
                 state: ContextState::Active,
                 rejected: false,
@@ -75,6 +79,29 @@ impl ContextTable {
             },
         );
         Ok(id)
+    }
+
+    /// The family of stream `id` serves, which is `None` for a root context,
+    /// for an unknown context, and for a stream context that took no stream
+    /// callback yet.
+    pub(crate) fn stream_kind(&self, id: ContextId) -> Option<StreamKind> {
+        self.entries.get(&id)?.stream_kind
+    }
+
+    /// Records the family of a stream context, and answers the family it
+    /// already had.
+    ///
+    /// The record lives on the entry, so it ends with the context, and the
+    /// table reuses no identifier, so a later context inherits nothing.
+    pub(crate) fn set_stream_kind(
+        &mut self,
+        id: ContextId,
+        kind: StreamKind,
+    ) -> Option<StreamKind> {
+        let entry = self.entries.get_mut(&id)?;
+        let had = entry.stream_kind;
+        entry.stream_kind = Some(kind);
+        had
     }
 
     pub(crate) fn context_type(&self, id: ContextId) -> Option<ContextType> {

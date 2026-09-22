@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::{
-    Callback, CalloutId, Changes, ContextId, ContextState, ContextType, Guest, OpenCallout,
-    PluginConfig, QueueId,
+    Callback, CalloutId, Changes, ContextId, ContextProblem, ContextState, ContextType, Guest,
+    GuestError, OpenCallout, PluginConfig, QueueId, StreamKind,
 };
 
 impl Guest {
@@ -25,6 +25,76 @@ impl Guest {
     /// the guest called `proxy_done`.
     pub fn context_state(&self, context: ContextId) -> Option<ContextState> {
         self.instance.state().abi().contexts().state(context)
+    }
+
+    /// The family of stream `context` serves.
+    ///
+    /// A stream context takes the callbacks of one family, and the crate
+    /// records the family at the first callback that reaches the guest.
+    /// The answer is `None` for a root context, for a context this guest
+    /// does not hold, and for a stream context that took no stream callback
+    /// and got no declaration.
+    /// [`Guest::expect_stream_kind`] writes the record before the first
+    /// callback.
+    pub fn context_stream_kind(&self, context: ContextId) -> Option<StreamKind> {
+        self.instance.state().abi().contexts().stream_kind(context)
+    }
+
+    /// Declares the family of stream that `context` serves.
+    ///
+    /// A guest chooses the family of a stream context inside its own SDK,
+    /// and both SDKs stop with a panic when a callback of the other family
+    /// reaches them.
+    /// The crate cannot read that choice, so a first callback of the wrong
+    /// family poisons the guest.
+    /// Call this after you create a stream context, and a callback of the
+    /// other family is then refused from the first one.
+    ///
+    /// A guest you build after a trap starts with no record, so declare the
+    /// family again for each context of the new guest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GuestError::Context`] with
+    /// [`ContextProblem::Unknown`](crate::abi::v0_2_1::ContextProblem) for a
+    /// context this guest does not hold, with `NotStream` for a root
+    /// context, and with `WrongStreamKind` for a context that already serves
+    /// the other family.
+    /// A declaration that repeats the family of the context answers `Ok`.
+    pub fn expect_stream_kind(
+        &mut self,
+        context: ContextId,
+        kind: StreamKind,
+    ) -> Result<(), GuestError> {
+        let problem = |problem| GuestError::Context {
+            id: context,
+            problem,
+        };
+        match self.context_type(context) {
+            None => return Err(problem(ContextProblem::Unknown)),
+            Some(ContextType::Root) => return Err(problem(ContextProblem::NotStream)),
+            Some(ContextType::Stream) => {}
+        }
+        let had = self
+            .instance
+            .state_mut()
+            .abi_mut()
+            .contexts_mut()
+            .set_stream_kind(context, kind);
+        match had {
+            Some(recorded) if recorded != kind => {
+                self.instance
+                    .state_mut()
+                    .abi_mut()
+                    .contexts_mut()
+                    .set_stream_kind(context, recorded);
+                Err(problem(ContextProblem::WrongStreamKind {
+                    recorded,
+                    attempted: kind,
+                }))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Whether `context` is a root context or a stream context.

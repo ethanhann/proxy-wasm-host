@@ -16,8 +16,28 @@ pub enum Callback {
     VmStart,
     /// `proxy_on_configure`.
     Configure,
+    /// `proxy_on_new_connection`.
+    NewConnection,
+    /// `proxy_on_downstream_data`.
+    DownstreamData,
+    /// `proxy_on_downstream_connection_close`.
+    DownstreamConnectionClose,
+    /// `proxy_on_upstream_data`.
+    UpstreamData,
+    /// `proxy_on_upstream_connection_close`.
+    UpstreamConnectionClose,
     /// `proxy_on_request_headers`.
     RequestHeaders,
+    /// `proxy_on_request_body`.
+    RequestBody,
+    /// `proxy_on_request_trailers`.
+    RequestTrailers,
+    /// `proxy_on_response_headers`.
+    ResponseHeaders,
+    /// `proxy_on_response_body`.
+    ResponseBody,
+    /// `proxy_on_response_trailers`.
+    ResponseTrailers,
     /// `proxy_on_http_call_response`.
     HttpCallResponse,
     /// `proxy_on_grpc_receive_initial_metadata`.
@@ -38,6 +58,8 @@ pub enum Callback {
     Tick,
     /// `proxy_on_queue_ready`.
     QueueReady,
+    /// `proxy_on_foreign_function`.
+    ForeignFunction,
 }
 
 impl Callback {
@@ -47,7 +69,17 @@ impl Callback {
             Self::ContextCreate => "proxy_on_context_create",
             Self::VmStart => "proxy_on_vm_start",
             Self::Configure => "proxy_on_configure",
+            Self::NewConnection => "proxy_on_new_connection",
+            Self::DownstreamData => "proxy_on_downstream_data",
+            Self::DownstreamConnectionClose => "proxy_on_downstream_connection_close",
+            Self::UpstreamData => "proxy_on_upstream_data",
+            Self::UpstreamConnectionClose => "proxy_on_upstream_connection_close",
             Self::RequestHeaders => "proxy_on_request_headers",
+            Self::RequestBody => "proxy_on_request_body",
+            Self::RequestTrailers => "proxy_on_request_trailers",
+            Self::ResponseHeaders => "proxy_on_response_headers",
+            Self::ResponseBody => "proxy_on_response_body",
+            Self::ResponseTrailers => "proxy_on_response_trailers",
             Self::HttpCallResponse => "proxy_on_http_call_response",
             Self::GrpcReceiveInitialMetadata => "proxy_on_grpc_receive_initial_metadata",
             Self::GrpcReceive => "proxy_on_grpc_receive",
@@ -58,20 +90,34 @@ impl Callback {
             Self::Delete => "proxy_on_delete",
             Self::Tick => "proxy_on_tick",
             Self::QueueReady => "proxy_on_queue_ready",
+            Self::ForeignFunction => "proxy_on_foreign_function",
         }
     }
 
     /// Every callback this crate drives.
     ///
-    /// The callbacks of a stream come in lifecycle order.
+    /// The callbacks of a stream come in lifecycle order, with the TCP
+    /// family before the HTTP family.
     /// The callbacks of a callout follow them, because a callout belongs to
     /// the context that made it and not to a place in that order.
-    /// The two that a root gets at any time come last.
+    /// The two that a root gets at any time come next.
+    /// The callback of a foreign function call comes last, because the host
+    /// starts it and it belongs to no lifecycle.
     pub const ALL: &[Self] = &[
         Self::ContextCreate,
         Self::VmStart,
         Self::Configure,
+        Self::NewConnection,
+        Self::DownstreamData,
+        Self::DownstreamConnectionClose,
+        Self::UpstreamData,
+        Self::UpstreamConnectionClose,
         Self::RequestHeaders,
+        Self::RequestBody,
+        Self::RequestTrailers,
+        Self::ResponseHeaders,
+        Self::ResponseBody,
+        Self::ResponseTrailers,
         Self::HttpCallResponse,
         Self::GrpcReceiveInitialMetadata,
         Self::GrpcReceive,
@@ -82,6 +128,7 @@ impl Callback {
         Self::Delete,
         Self::Tick,
         Self::QueueReady,
+        Self::ForeignFunction,
     ];
 }
 
@@ -100,17 +147,28 @@ mod tests {
             Callback::ContextCreate => 0,
             Callback::VmStart => 1,
             Callback::Configure => 2,
-            Callback::RequestHeaders => 3,
-            Callback::HttpCallResponse => 4,
-            Callback::GrpcReceiveInitialMetadata => 5,
-            Callback::GrpcReceive => 6,
-            Callback::GrpcReceiveTrailingMetadata => 7,
-            Callback::GrpcClose => 8,
-            Callback::Done => 9,
-            Callback::Log => 10,
-            Callback::Delete => 11,
-            Callback::Tick => 12,
-            Callback::QueueReady => 13,
+            Callback::NewConnection => 3,
+            Callback::DownstreamData => 4,
+            Callback::DownstreamConnectionClose => 5,
+            Callback::UpstreamData => 6,
+            Callback::UpstreamConnectionClose => 7,
+            Callback::RequestHeaders => 8,
+            Callback::RequestBody => 9,
+            Callback::RequestTrailers => 10,
+            Callback::ResponseHeaders => 11,
+            Callback::ResponseBody => 12,
+            Callback::ResponseTrailers => 13,
+            Callback::HttpCallResponse => 14,
+            Callback::GrpcReceiveInitialMetadata => 15,
+            Callback::GrpcReceive => 16,
+            Callback::GrpcReceiveTrailingMetadata => 17,
+            Callback::GrpcClose => 18,
+            Callback::Done => 19,
+            Callback::Log => 20,
+            Callback::Delete => 21,
+            Callback::Tick => 22,
+            Callback::QueueReady => 23,
+            Callback::ForeignFunction => 24,
         }
     }
 
@@ -126,7 +184,7 @@ mod tests {
             .collect();
 
         // Assert
-        assert_eq!(positions, (0..14).collect::<Vec<usize>>());
+        assert_eq!(positions, (0..25).collect::<Vec<usize>>());
         assert_eq!(Callback::Delete.to_string(), "proxy_on_delete");
         assert!(
             callbacks
