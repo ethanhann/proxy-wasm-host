@@ -34,6 +34,7 @@ CI runs the same recipe.
 Run `just` with no arguments to list every recipe.
 `just build-guests` rebuilds the test guests under `crates/test-guests`.
 It needs rustup, and it installs the pinned toolchain and the `wasm32-wasip1` target on first use.
+`just bench` runs the benchmarks.
 
 ## License
 

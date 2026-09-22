@@ -60,3 +60,25 @@ jobs:
       - uses: extractions/setup-just@v4
       - run: just build-guests
       - run: cargo check --workspace --all-targets --locked
+
+  bench:
+    name: bench
+    # A shared runner gives numbers that show a trend and not a precise cost,
+    # so the job runs on the main branch alone and has no gate.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/test-guests
+      - uses: extractions/setup-just@v4
+      - run: just build-guests
+      - run: just bench
+      - uses: actions/upload-artifact@v7
+        with:
+          name: criterion
+          path: target/criterion

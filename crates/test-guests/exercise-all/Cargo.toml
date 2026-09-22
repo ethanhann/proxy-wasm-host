@@ -1,0 +1,11 @@
+[package]
+name = "exercise-all"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+proxy-wasm = "=0.2.5"

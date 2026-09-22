@@ -48,6 +48,18 @@ pub enum GuestError {
         /// The root context that callback served.
         root: ContextId,
     },
+    /// A root of this guest already holds the root id of the plugin that
+    /// [`Guest::start`](crate::abi::v0_2_1::Guest::start) was given.
+    #[error(
+        "root context {root} already holds the root id {}",
+        String::from_utf8_lossy(root_id)
+    )]
+    DuplicateRootId {
+        /// The root id of the plugin.
+        root_id: Vec<u8>,
+        /// The root context that holds it.
+        root: ContextId,
+    },
     /// A context argument does not satisfy the callback's precondition.
     #[error("context {id} {problem}")]
     Context {
@@ -113,6 +125,10 @@ mod tests {
                 callback: Callback::Done,
                 value: 7,
             },
+            GuestError::DuplicateRootId {
+                root_id: b"http".to_vec(),
+                root: id,
+            },
         ];
 
         // Act
@@ -126,6 +142,7 @@ mod tests {
                 "context 4 is not done",
                 "no context identifier is left",
                 "proxy_on_done returned 7, which is not a valid result",
+                "root context 4 already holds the root id http",
             ]
         );
     }

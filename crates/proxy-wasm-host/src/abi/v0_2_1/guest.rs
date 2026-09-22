@@ -5,6 +5,7 @@ mod contexts;
 mod exports;
 pub(crate) mod identity;
 mod recovery;
+pub(crate) mod start;
 
 use std::fmt;
 
@@ -34,8 +35,10 @@ use identity::GuestId;
 /// and you may move it between threads.
 /// A trap, a spent limit, or a panic in your stream state poisons the guest,
 /// and [`Guest::is_poisoned`] then reports `true`.
-/// To recover, build a new `Guest` from the same [`Module`], which keeps the
-/// compiled code.
+/// To recover, build a new `Guest` from the same [`Module`] with
+/// [`GuestSpec`](crate::abi::v0_2_1::GuestSpec).
+/// The module keeps the compiled code, so the new guest does not compile it
+/// again.
 ///
 /// For example, a guest with no callbacks runs the whole lifecycle with the
 /// default answers:

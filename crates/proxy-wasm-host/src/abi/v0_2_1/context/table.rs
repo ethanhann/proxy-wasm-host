@@ -221,6 +221,17 @@ impl ContextTable {
         self.entries.get(&root)?.plugin.as_ref()
     }
 
+    /// The root context whose plugin has `root_id`.
+    pub(crate) fn root_with_id(&self, root_id: &[u8]) -> Option<ContextId> {
+        self.entries.iter().find_map(|(id, entry)| {
+            entry
+                .plugin
+                .as_ref()
+                .is_some_and(|plugin| plugin.root_id() == root_id)
+                .then_some(*id)
+        })
+    }
+
     /// Records a tick period on the root context of `id`, and reports whether
     /// it did.
     pub(crate) fn set_tick_period(&mut self, id: ContextId, period: Option<Duration>) -> bool {
@@ -456,6 +467,33 @@ mod tests {
         assert!(recorded);
         assert_eq!(table.plugin(root).unwrap().name(), b"auth");
         assert_eq!(table.plugin(stream).unwrap().name(), b"auth");
+    }
+
+    #[test]
+    fn a_root_is_found_by_the_root_id_of_its_plugin() {
+        // Arrange
+        let (mut table, root, _) = table_with_root_and_stream();
+        let other = table.create(None).unwrap();
+        table.set_plugin(root, PluginConfig::new().with_root_id(b"http".to_vec()));
+        table.set_plugin(other, PluginConfig::new().with_root_id(b"tcp".to_vec()));
+
+        // Act
+        let found = [b"http".as_slice(), b"tcp", b"udp"].map(|id| table.root_with_id(id));
+
+        // Assert
+        assert_eq!(found, [Some(root), Some(other), None]);
+    }
+
+    #[test]
+    fn a_root_with_no_plugin_holds_no_root_id() {
+        // Arrange
+        let (table, _, _) = table_with_root_and_stream();
+
+        // Act
+        let found = table.root_with_id(b"");
+
+        // Assert
+        assert_eq!(found, None);
     }
 
     #[test]

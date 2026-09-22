@@ -142,7 +142,7 @@ impl Guest {
     /// the requests that wait for one of its callouts.
     /// A gRPC stream of a poisoned guest is still running at your side, and
     /// the crate ends none of them, so cancel each one before you build a
-    /// new guest.
+    /// new guest with [`GuestSpec`](crate::abi::v0_2_1::GuestSpec).
     /// A callout whose delivery trapped is in the list, because the guest
     /// did not complete it.
     pub fn open_callouts(&self) -> Vec<OpenCallout> {

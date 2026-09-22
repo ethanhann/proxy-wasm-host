@@ -12,6 +12,8 @@
 //! You link the host functions once with [`Host`].
 //! You run a guest with [`Guest`], [`CallScope`], and [`PluginConfig`], and
 //! [`Callback`] names the callback a report is about.
+//! You build a guest again with [`GuestSpec`], and [`Guest::start`] answers
+//! [`Started`] for each root.
 //! You read why a guest or a callback failed through [`GuestError`], which
 //! holds the refusals this version defines and the [`Error`](crate::Error)
 //! of the runtime.
@@ -59,6 +61,7 @@ mod changes;
 mod context;
 mod guest;
 mod guest_error;
+mod guest_spec;
 mod host;
 pub(crate) mod host_functions;
 pub(crate) mod payload;
@@ -85,7 +88,9 @@ pub use context::{
 };
 pub use guest::Guest;
 pub use guest::identity::GuestId;
+pub use guest::start::Started;
 pub use guest_error::GuestError;
+pub use guest_spec::GuestSpec;
 pub use host::Host;
 pub use plugin_config::PluginConfig;
 pub use services::{Clock, LogSink, SystemClock, VmServices};

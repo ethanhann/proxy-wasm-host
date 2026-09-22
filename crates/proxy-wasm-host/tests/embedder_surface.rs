@@ -20,11 +20,11 @@ use proxy_wasm_host::abi::v0_2_1::types::{
 use proxy_wasm_host::abi::v0_2_1::{
     Access, CallScope, Callback, CalloutId, CalloutKind, CalloutProblem, Callouts, Changes, Clock,
     ContextId, ContextProblem, ContextState, ContextType, ForeignCall, GrpcCall, GrpcOpenRefusal,
-    GrpcStatus, GrpcStream, Guest, GuestError, GuestId, HeaderPairs, Host, HttpCall,
+    GrpcStatus, GrpcStream, Guest, GuestError, GuestId, GuestSpec, HeaderPairs, Host, HttpCall,
     HttpCallRefusal, HttpCallResponse, InMemoryStore, InMemoryStoreLimits, InvalidCalloutId,
     InvalidContextId, InvalidMetricId, InvalidQueueId, Invocation, LocalResponse, LogSink,
     MetricId, NoStream, OpenCallout, PluginConfig, QueueEnqueued, QueueId, QueueProblem,
-    QueueRegistration, SharedServices, SharedValue, StreamKind, StreamState, SystemClock,
+    QueueRegistration, SharedServices, SharedValue, Started, StreamKind, StreamState, SystemClock,
     VmServices, WasmParams, WasmResults,
 };
 // What the codec names in a signature an embedder writes.
@@ -124,7 +124,9 @@ fn the_versioned_module_exports_the_names_listed_here() {
             "pub use context::{ ContextId, ContextProblem, ContextState, ContextType, InvalidContextId, StreamKind, };",
             "pub use guest::Guest;",
             "pub use guest::identity::GuestId;",
+            "pub use guest::start::Started;",
             "pub use guest_error::GuestError;",
+            "pub use guest_spec::GuestSpec;",
             "pub use host::Host;",
             "pub use plugin_config::PluginConfig;",
             "pub use services::{Clock, LogSink, SystemClock, VmServices};",

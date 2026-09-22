@@ -13,11 +13,32 @@ impl Guest {
     /// Whether an earlier failure unwound a guest call.
     ///
     /// A poisoned guest refuses every later call.
-    /// To recover, build a new guest from the same module.
+    /// To recover, build a new guest with
+    /// [`GuestSpec`](crate::abi::v0_2_1::GuestSpec).
     /// You keep the compiled code, and you lose the context table and the
     /// queue and metric identifiers this guest obtained.
     pub fn is_poisoned(&self) -> bool {
         self.instance.is_poisoned()
+    }
+
+    /// Whether the guest can serve a request.
+    ///
+    /// Sometimes you keep a pool of guests and replace the ones that can no
+    /// longer serve.
+    /// A guest is out of service when it is poisoned and when its VM start
+    /// refused, because every later callback of that guest answers
+    /// [`GuestError::GuestRejected`].
+    /// [`Guest::is_poisoned`] answers false for a refused VM start, so check
+    /// this method in a pool.
+    pub fn is_serving(&self) -> bool {
+        !self.is_poisoned()
+            && self
+                .instance
+                .state()
+                .abi()
+                .contexts()
+                .vm_rejected()
+                .is_none()
     }
 
     /// Refuses a poisoned guest, and poisons a guest whose last callback did
@@ -227,7 +248,7 @@ mod tests {
             &Limits::default(),
         )
         .unwrap();
-        let before = guest.is_poisoned();
+        let before = (guest.is_poisoned(), guest.is_serving());
 
         // Act
         let result = guest.call_export::<(), ()>("crash", ());
@@ -237,6 +258,7 @@ mod tests {
             result,
             Err(GuestError::Runtime(Error::Trap { .. }))
         ));
-        assert_eq!((before, guest.is_poisoned()), (false, true));
+        assert_eq!(before, (false, true));
+        assert_eq!((guest.is_poisoned(), guest.is_serving()), (true, false));
     }
 }
