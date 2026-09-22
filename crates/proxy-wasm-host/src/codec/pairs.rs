@@ -707,4 +707,30 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn a_last_value_with_no_terminator_is_truncated_value() {
+        // Arrange
+        // One pair of one byte each, where the data ends with the value and
+        // the terminator of that value is absent.
+        let input = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, b'a', 0, b'1'];
+
+        // Act
+        let decoded = decode_pairs(&input);
+
+        // Assert
+        assert_eq!(decoded, Err(DecodeError::TruncatedValue { pair: 0 }));
+    }
+
+    #[test]
+    fn a_last_key_with_no_terminator_is_truncated_key() {
+        // Arrange
+        let input = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, b'a'];
+
+        // Act
+        let decoded = decode_pairs(&input);
+
+        // Assert
+        assert_eq!(decoded, Err(DecodeError::TruncatedKey { pair: 0 }));
+    }
 }
