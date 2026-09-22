@@ -95,3 +95,7 @@ build-guests:
 # Run the benchmarks.
 bench:
     cargo bench --workspace --locked
+
+# Run docs site locally
+docs:
+    cd docs && mdbook serve
