@@ -15,6 +15,10 @@ test:
     cargo test --workspace --all-targets --locked
     cargo test --workspace --doc --locked
 
+# Run tests and show coverage report
+test-with-coverage:
+    cargo llvm-cov nextest --workspace --all-features --summary-only --ignore-filename-regex 'tests/|examples/'
+
 # Run clippy with warnings denied.
 lint:
     cargo clippy --workspace --all-targets --locked -- -D warnings
