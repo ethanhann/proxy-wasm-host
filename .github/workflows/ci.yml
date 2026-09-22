@@ -32,6 +32,8 @@ jobs:
             crates/test-guests
       - uses: extractions/setup-just@v4
       - run: just build-guests
+      - name: the tracked guest modules reproduce
+        run: git diff --exit-code -- crates/proxy-wasm-host/tests/fixtures
       - run: just check
 
   quality:
@@ -48,6 +50,8 @@ jobs:
         with:
           tool: cargo-machete,cargo-audit,cargo-deny
       - run: just build-guests
+      - name: the tracked guest modules reproduce
+        run: git diff --exit-code -- crates/proxy-wasm-host/tests/fixtures
       - run: just check-code-quality
 
   msrv:
@@ -59,6 +63,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
       - run: just build-guests
+      - name: the tracked guest modules reproduce
+        run: git diff --exit-code -- crates/proxy-wasm-host/tests/fixtures
       - run: cargo check --workspace --all-targets --locked
 
   bench:
@@ -77,6 +83,8 @@ jobs:
             crates/test-guests
       - uses: extractions/setup-just@v4
       - run: just build-guests
+      - name: the tracked guest modules reproduce
+        run: git diff --exit-code -- crates/proxy-wasm-host/tests/fixtures
       - run: just bench
       - uses: actions/upload-artifact@v7
         with:

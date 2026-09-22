@@ -60,6 +60,9 @@ pub enum DecodeError {
         count: usize,
     },
     /// The input declares more pairs than the limit allows.
+    ///
+    /// A guest that sends such a map receives `BAD_ARGUMENT`, and
+    /// `PARSE_FAILURE` from the two functions that open a gRPC callout.
     #[error("{pairs} pairs exceed the limit of {limit}")]
     PairLimit {
         /// The pair count the input declared.
@@ -68,6 +71,8 @@ pub enum DecodeError {
         limit: u32,
     },
     /// The input is longer than the limit allows.
+    ///
+    /// The guest receives the same status as for [`DecodeError::PairLimit`].
     #[error("{bytes} bytes exceed the limit of {limit}")]
     ByteLimit {
         /// The length of the input.
@@ -75,6 +80,16 @@ pub enum DecodeError {
         /// The limit in force.
         limit: usize,
     },
+}
+
+impl DecodeError {
+    /// Whether a limit refused the input rather than its shape.
+    ///
+    /// A map that breaks a limit is well formed, so an embedder that wants
+    /// to raise a limit rather than refuse a guest reads this.
+    pub fn is_limit(&self) -> bool {
+        matches!(self, Self::PairLimit { .. } | Self::ByteLimit { .. })
+    }
 }
 
 /// Why a map could not be encoded.

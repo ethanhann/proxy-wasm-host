@@ -1,6 +1,17 @@
 [workspace]
 resolver = "3"
-members = ["add-request-header", "exercise-all", "http-example"]
+members = [
+    "add-request-header",
+    "exercise-all",
+    "http-example",
+    "sdk-envoy-filter-metadata",
+    "sdk-grpc-auth-random",
+    "sdk-hello-world",
+    "sdk-http-auth-random",
+    "sdk-http-body",
+    "sdk-http-config",
+    "sdk-http-headers",
+]
 
 [profile.release]
 opt-level = "s"

@@ -15,6 +15,7 @@ use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::payload::Delivery;
 use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{ContextId, Invocation, StreamState};
+use crate::codec::pairs::{DecodeError, Pairs, decode_pairs};
 use crate::runtime::HostState;
 
 /// The call an embedder is told about, from a context, whatever callback is
@@ -29,6 +30,17 @@ pub(super) fn invocation(state: &HostState, context: ContextId) -> Invocation {
         call = call.with_callout(callout);
     }
     call
+}
+
+/// Decodes a map the guest wrote, under the limits the embedder set.
+///
+/// Every host function that reads a map from guest memory goes through this,
+/// so a new one cannot decode without a bound.
+pub(super) fn guest_pairs<'a>(
+    state: &HostState,
+    bytes: &'a [u8],
+) -> Result<Pairs<'a>, DecodeError> {
+    decode_pairs(bytes, state.pair_limits())
 }
 
 /// The effective context, refused when the guest rejected its root or the

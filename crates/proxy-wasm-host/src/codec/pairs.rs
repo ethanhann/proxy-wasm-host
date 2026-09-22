@@ -20,7 +20,8 @@ mod errors;
 mod limits;
 
 pub use errors::{DecodeError, EncodeError, Field};
-pub use limits::{DEFAULT_MAX_DECODED_MAP_BYTES, DEFAULT_MAX_DECODED_PAIRS, PairLimits};
+pub use limits::PairLimits;
+pub(crate) use limits::{DEFAULT_MAX_DECODED_MAP_BYTES, DEFAULT_MAX_DECODED_PAIRS};
 
 /// The borrowed pairs that [`decode_pairs`] returns.
 pub type Pairs<'a> = Vec<(&'a [u8], &'a [u8])>;
@@ -206,7 +207,7 @@ fn length_of(pair: usize, field: Field, bytes: &[u8]) -> Result<u32, EncodeError
 /// any point, when a key or a value is not followed by `0x00`, or when bytes
 /// remain after the last pair.
 pub fn decode_pairs(data: &[u8], limits: PairLimits) -> Result<Pairs<'_>, DecodeError> {
-    limits.check(data.len())?;
+    limits.check_bytes(data.len())?;
     if data.is_empty() || data == [TERMINATOR] {
         return Ok(Vec::new());
     }
@@ -214,7 +215,7 @@ pub fn decode_pairs(data: &[u8], limits: PairLimits) -> Result<Pairs<'_>, Decode
         .first_chunk::<COUNT_SIZE>()
         .map(|word| u32::from_le_bytes(*word))
         .ok_or(DecodeError::TruncatedCount)?;
-    limits.check_count(count)?;
+    limits.check_pairs(count)?;
     let truncated_lengths = DecodeError::TruncatedLengths { pairs: count };
     let pair_count = usize::try_from(count).map_err(|_| truncated_lengths)?;
     let table_end = pair_count
@@ -333,7 +334,7 @@ mod tests {
     fn a_map_above_the_byte_limit_is_refused_before_the_count_is_read() {
         // Arrange
         let input = vec![b'x'; 9];
-        let limits = PairLimits::new(None, 8);
+        let limits = PairLimits::unlimited().with_bytes(8);
 
         // Act
         let result = decode_pairs(&input, limits);
@@ -343,6 +344,23 @@ mod tests {
             result,
             Err(DecodeError::ByteLimit { bytes: 9, limit: 8 }),
             "a byte limit must be checked before the pair count is read"
+        );
+    }
+
+    #[test]
+    fn a_map_at_the_byte_limit_is_accepted() {
+        // Arrange
+        let input = map_of(3);
+        let limits = PairLimits::unlimited().with_bytes(input.len());
+
+        // Act
+        let result = decode_pairs(&input, limits);
+
+        // Assert
+        assert_eq!(
+            result.map(|pairs| pairs.len()),
+            Ok(3),
+            "a map whose length equals the limit must decode"
         );
     }
 

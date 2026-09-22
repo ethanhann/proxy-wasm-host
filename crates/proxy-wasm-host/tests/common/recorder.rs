@@ -19,6 +19,10 @@ use proxy_wasm_host::abi::v0_2_1::{
 };
 use proxy_wasm_host::{Buffer, HeaderMap, VecHeaderMap};
 
+use crate::common::answers::{
+    CalloutCall, CalloutRefusal, CalloutRefusals, StreamCall, StreamRefusals,
+};
+
 /// One thing that reached a service, in the order it happened.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -30,6 +34,8 @@ pub enum Event {
         status: u32,
         headers: Vec<(String, String)>,
         body: String,
+        details: String,
+        grpc_status: Option<u32>,
     },
     ForeignCall {
         name: String,
@@ -41,11 +47,13 @@ pub enum Event {
     },
     GrpcCall {
         callout: CalloutId,
+        service: String,
         method: String,
         message: String,
     },
     GrpcStream {
         callout: CalloutId,
+        service: String,
         method: String,
     },
     GrpcSend {
@@ -84,9 +92,12 @@ pub fn pairs(map: &dyn HeaderMap) -> Vec<(String, String)> {
 /// line has none of.
 pub type Recorded = (Option<Invocation>, Event);
 
-/// The shared list of events.
+/// The shared list of events, and the refusals a test asked for.
 #[derive(Clone, Default)]
-pub struct Recorder(Arc<Mutex<Vec<Recorded>>>);
+pub struct Recorder {
+    events: Arc<Mutex<Vec<Recorded>>>,
+    refusals: Arc<Mutex<CalloutRefusals>>,
+}
 
 impl Recorder {
     fn push(&self, at: Invocation, event: Event) {
@@ -94,7 +105,27 @@ impl Recorder {
     }
 
     fn entries(&self) -> std::sync::MutexGuard<'_, Vec<Recorded>> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.events.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Makes `call` report `refusal` in place of accepting.
+    ///
+    /// The entry stays until [`Recorder::clear`], so every call of that
+    /// method is refused.
+    /// A method with no entry answers as it does without this call.
+    pub fn refuse(&self, call: CalloutCall, refusal: CalloutRefusal) {
+        self.refusals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(call, refusal);
+    }
+
+    fn refusal(&self, call: CalloutCall) -> Option<CalloutRefusal> {
+        self.refusals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&call)
+            .copied()
     }
 
     /// Every event so far, with its invocation.
@@ -134,9 +165,14 @@ impl Recorder {
             .collect()
     }
 
-    /// Empties the list, so a test sees only what its Act section causes.
+    /// Empties the list and the refusals, so a test sees only what its Act
+    /// section causes and every method answers as it does by default.
     pub fn clear(&self) {
         self.entries().clear();
+        self.refusals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
     /// The shared services, forwarding to an in-memory store that reports
@@ -168,6 +204,11 @@ impl Callouts for Recorder {
         callout: CalloutId,
         request: HttpCall<'_>,
     ) -> Result<(), HttpCallRefusal> {
+        match self.refusal(CalloutCall::HttpCall) {
+            Some(CalloutRefusal::Http(refusal)) => return Err(refusal),
+            Some(other) => panic!("http_call cannot answer {other:?}"),
+            None => {}
+        }
         let upstream = text(&request.upstream);
         self.push(at, Event::HttpCall { callout, upstream });
         Ok(())
@@ -179,10 +220,17 @@ impl Callouts for Recorder {
         callout: CalloutId,
         request: GrpcCall<'_>,
     ) -> Result<(), GrpcOpenRefusal> {
+        match self.refusal(CalloutCall::GrpcCall) {
+            Some(CalloutRefusal::GrpcOpen(refusal)) => return Err(refusal),
+            Some(other) => panic!("grpc_call cannot answer {other:?}"),
+            None => {}
+        }
+        let service = text(&request.service);
         let method = text(&request.method);
         let message = text(&request.message);
         let event = Event::GrpcCall {
             callout,
+            service,
             method,
             message,
         };
@@ -196,8 +244,21 @@ impl Callouts for Recorder {
         callout: CalloutId,
         request: GrpcStream<'_>,
     ) -> Result<(), GrpcOpenRefusal> {
+        match self.refusal(CalloutCall::GrpcStream) {
+            Some(CalloutRefusal::GrpcOpen(refusal)) => return Err(refusal),
+            Some(other) => panic!("grpc_stream cannot answer {other:?}"),
+            None => {}
+        }
+        let service = text(&request.service);
         let method = text(&request.method);
-        self.push(at, Event::GrpcStream { callout, method });
+        self.push(
+            at,
+            Event::GrpcStream {
+                callout,
+                service,
+                method,
+            },
+        );
         Ok(())
     }
 
@@ -330,8 +391,10 @@ impl SharedServices for RecordingShared {
 /// A request or a connection that holds every map and buffer a stream
 /// callback reads, and records each operation on the stream.
 #[derive(Default)]
-pub struct RecordingStream {
+pub struct StreamDouble {
     recorder: Recorder,
+    /// The refusals this double reports in place of its usual answer.
+    pub refusals: StreamRefusals,
     pub request_headers: VecHeaderMap,
     pub request_trailers: VecHeaderMap,
     pub response_headers: VecHeaderMap,
@@ -343,7 +406,15 @@ pub struct RecordingStream {
     pub properties: BTreeMap<Vec<String>, String>,
 }
 
-impl RecordingStream {
+impl StreamDouble {
+    /// The refusal a test asked for on `call`, as an error to report.
+    fn refused(&self, call: StreamCall) -> Result<(), Status> {
+        match self.refusals.get(&call) {
+            Some(status) => Err(*status),
+            None => Ok(()),
+        }
+    }
+
     /// A stream whose events go to `recorder`, with the request path
     /// property `/exercise`.
     pub fn new(recorder: &Recorder) -> Self {
@@ -367,19 +438,29 @@ impl RecordingStream {
             .collect();
         self
     }
+
+    /// The same for the response map, which a response callback reads.
+    pub fn with_response_headers(mut self, headers: &[(&str, &str)]) -> Self {
+        self.response_headers = headers
+            .iter()
+            .map(|(key, value)| (key.as_bytes().to_vec(), value.as_bytes().to_vec()))
+            .collect();
+        self
+    }
 }
 
 fn path(path: &[&[u8]]) -> Vec<String> {
     path.iter().map(|segment| text(segment)).collect()
 }
 
-impl StreamState for RecordingStream {
+impl StreamState for StreamDouble {
     fn header_map(
         &mut self,
         _: Invocation,
         _: Access,
         map: MapType,
     ) -> Result<&mut dyn HeaderMap, Status> {
+        self.refused(StreamCall::HeaderMap)?;
         match map {
             MapType::HttpRequestHeaders => Ok(&mut self.request_headers),
             MapType::HttpRequestTrailers => Ok(&mut self.request_trailers),
@@ -395,6 +476,7 @@ impl StreamState for RecordingStream {
         _: Access,
         buffer: BufferType,
     ) -> Result<&mut dyn Buffer, Status> {
+        self.refused(StreamCall::Buffer)?;
         match buffer {
             BufferType::HttpRequestBody => Ok(&mut self.request_body),
             BufferType::HttpResponseBody => Ok(&mut self.response_body),
@@ -405,11 +487,13 @@ impl StreamState for RecordingStream {
     }
 
     fn continue_stream(&mut self, at: Invocation, stream: StreamType) -> Result<(), Status> {
+        self.refused(StreamCall::ContinueStream)?;
         self.recorder.push(at, Event::ContinueStream(stream));
         Ok(())
     }
 
     fn close_stream(&mut self, at: Invocation, stream: StreamType) -> Result<(), Status> {
+        self.refused(StreamCall::CloseStream)?;
         self.recorder.push(at, Event::CloseStream(stream));
         Ok(())
     }
@@ -419,6 +503,7 @@ impl StreamState for RecordingStream {
         at: Invocation,
         response: LocalResponse<'_>,
     ) -> Result<(), Status> {
+        self.refused(StreamCall::SendLocalResponse)?;
         let headers = response
             .headers
             .iter()
@@ -428,12 +513,15 @@ impl StreamState for RecordingStream {
             status: response.status_code,
             headers,
             body: text(&response.body),
+            details: text(&response.status_code_details),
+            grpc_status: response.grpc_status,
         };
         self.recorder.push(at, event);
         Ok(())
     }
 
     fn property(&mut self, _: Invocation, segments: &[&[u8]]) -> Result<Vec<u8>, Status> {
+        self.refused(StreamCall::Property)?;
         self.properties
             .get(&path(segments))
             .map(|value| value.as_bytes().to_vec())
@@ -446,6 +534,7 @@ impl StreamState for RecordingStream {
         segments: &[&[u8]],
         value: &[u8],
     ) -> Result<(), Status> {
+        self.refused(StreamCall::SetProperty)?;
         let event = Event::SetProperty(path(segments), text(value));
         self.recorder.push(at, event);
         self.properties.insert(path(segments), text(value));
@@ -457,6 +546,7 @@ impl StreamState for RecordingStream {
         at: Invocation,
         request: ForeignCall<'_>,
     ) -> Result<Vec<u8>, Status> {
+        self.refused(StreamCall::CallForeignFunction)?;
         let event = Event::ForeignCall {
             name: text(&request.name),
             arguments: text(&request.arguments),

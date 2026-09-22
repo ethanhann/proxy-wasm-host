@@ -7,6 +7,16 @@
 //! a [`CallScope`].
 //! You lend a request to a scope as a [`StreamState`].
 //!
+//! # Return pointers
+//!
+//! A host function that answers a value takes the address to write it to,
+//! and the crate treats that address as an ordinary one.
+//! The address zero is a legal address for every host function but
+//! `proxy_call_foreign_function`, where the ABI document calls the return
+//! values optional and the crate reads zero as "I do not want this value".
+//! A guest cannot lose a value that way, because the toolchains leave the
+//! first page of memory unused so that a null pointer traps.
+//!
 //! # The surface
 //!
 //! You link the host functions once with [`Host`].

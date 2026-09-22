@@ -47,13 +47,24 @@ pub(crate) fn instance_with(
     module: &Module,
     services: VmServices,
 ) -> Result<Instance, Error> {
+    instance_with_limits(engine, module, services, &Limits::default())
+}
+
+/// An instance of `module` with the host functions linked, the given
+/// services, and the limits an embedder chose.
+pub(crate) fn instance_with_limits(
+    engine: &Engine,
+    module: &Module,
+    services: VmServices,
+    limits: &Limits,
+) -> Result<Instance, Error> {
     let host = Host::new(engine)?;
     Instance::new(
         engine,
         host.linker(),
         module,
         crate::abi::v0_2_1::state(services),
-        &Limits::default(),
+        limits,
     )
 }
 
@@ -112,15 +123,7 @@ pub(crate) fn hosted_with_limits(
     limits: &Limits,
 ) -> (Instance, ContextId) {
     let module = Module::new(engine, &wat_bytes(wat)).unwrap();
-    let host = Host::new(engine).unwrap();
-    let mut instance = Instance::new(
-        engine,
-        host.linker(),
-        &module,
-        crate::abi::v0_2_1::state(services()),
-        limits,
-    )
-    .unwrap();
+    let mut instance = instance_with_limits(engine, &module, services(), limits).unwrap();
     let state = instance.state_mut();
     let root = state.abi_mut().contexts_mut().create(None).unwrap();
     state.abi_mut().contexts_mut().set_effective(root);

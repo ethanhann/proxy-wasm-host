@@ -10,11 +10,10 @@ use wasmtime::AsContextMut;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::callout::Callout;
 use crate::abi::v0_2_1::host_functions::Failure;
-use crate::abi::v0_2_1::host_functions::call::{context, invocation};
+use crate::abi::v0_2_1::host_functions::call::{context, guest_pairs, invocation};
 use crate::abi::v0_2_1::payload::Delivery;
 use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{CalloutId, CalloutKind, Callouts, HeaderPairs, HttpCall, Invocation};
-use crate::codec::pairs::decode_pairs;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
 
 /// The header names an HTTP call must have, which the ABI requires.
@@ -57,12 +56,11 @@ pub(super) fn proxy_http_call(
     let id_ptr = GuestPtr::try_from(return_call_id)?;
     let timeout = Duration::from_millis(u64::from(timeout.cast_unsigned()));
     let (mut memory, state) = split(ctx)?;
-    let limits = state.pair_limits();
     memory.read_u32(id_ptr)?;
     let request = HttpCall::new(Cow::Borrowed(memory.read(upstream)?))
-        .with_headers(borrowed(decode_pairs(memory.read(headers)?, limits)?))
+        .with_headers(borrowed(guest_pairs(state, memory.read(headers)?)?))
         .with_body(Cow::Borrowed(memory.read(body)?))
-        .with_trailers(borrowed(decode_pairs(memory.read(trailers)?, limits)?))
+        .with_trailers(borrowed(guest_pairs(state, memory.read(trailers)?)?))
         .with_timeout(timeout);
     let named = |name: &[u8]| request.headers.iter().any(|(key, _)| key.as_ref() == name);
     if !REQUIRED_HEADERS.into_iter().all(named) {

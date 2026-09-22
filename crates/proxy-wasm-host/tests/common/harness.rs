@@ -10,7 +10,7 @@ use proxy_wasm_host::abi::v0_2_1::{
 };
 use proxy_wasm_host::{Engine, Limits, Module};
 
-use super::recorder::{Recorder, RecordingStream};
+use super::recorder::{Recorder, StreamDouble};
 
 pub const EXERCISE_ALL: &[u8] = include_bytes!("../fixtures/exercise-all.wasm");
 
@@ -21,7 +21,9 @@ pub const NOW: u64 = 1_000_000_000;
 /// clock the guest read.
 pub const MONOTONIC: u64 = 7;
 
-struct FixedClock;
+/// A clock that answers the same reading every time, so a test that reads a
+/// time can assert what the guest wrote.
+pub struct FixedClock;
 
 impl Clock for FixedClock {
     fn realtime_nanos(&self) -> u64 {
@@ -110,8 +112,8 @@ pub fn stream_of(
     guest: &mut Guest,
     root: ContextId,
     kind: StreamKind,
-    state: RecordingStream,
-) -> (ContextId, RecordingStream) {
+    state: StreamDouble,
+) -> (ContextId, StreamDouble) {
     let (created, state) = guest.with(state, |scope| {
         let stream = scope.on_context_create(Some(root))?;
         scope.expect_stream_kind(stream, kind)?;

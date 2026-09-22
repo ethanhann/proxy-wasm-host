@@ -12,7 +12,7 @@ use proxy_wasm_host::abi::v0_2_1::{CallScope, Callback, ContextId, GuestError, S
 mod common;
 
 use common::harness::{Exercise, tcp_plugin};
-use common::recorder::{Event, RecordingStream};
+use common::recorder::{Event, StreamDouble};
 
 /// Writes `data` as the whole of `buffer` before the next callback.
 fn fill(buffer: &mut Vec<u8>, data: &[u8]) {
@@ -32,7 +32,7 @@ struct Seen {
 
 /// Runs one connection from the new connection to its deletion.
 fn connection(
-    scope: &mut CallScope<'_, RecordingStream>,
+    scope: &mut CallScope<'_, StreamDouble>,
     root: ContextId,
 ) -> Result<Seen, GuestError> {
     let context = scope.on_context_create(Some(root))?;
@@ -66,7 +66,7 @@ fn a_connection_runs_from_its_start_to_both_closes() {
     // Arrange
     let exercise = Exercise::new();
     let (mut guest, root) = exercise.started(tcp_plugin());
-    let state = RecordingStream::new(&exercise.recorder);
+    let state = StreamDouble::new(&exercise.recorder);
     exercise.recorder.clear();
 
     // Act
@@ -94,7 +94,7 @@ fn the_guest_changes_the_data_in_each_direction() {
     // Arrange
     let exercise = Exercise::new();
     let (mut guest, root) = exercise.started(tcp_plugin());
-    let state = RecordingStream::new(&exercise.recorder);
+    let state = StreamDouble::new(&exercise.recorder);
     exercise.recorder.clear();
 
     // Act

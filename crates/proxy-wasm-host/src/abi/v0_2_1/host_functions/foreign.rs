@@ -3,7 +3,22 @@
 //! This is the one host function whose return pointers are optional, which
 //! the ABI document states.
 //! A guest that passes the address zero for one of them asks the host not to
-//! write that value.
+//! write that value, and these are the four cases.
+//!
+//! | Condition | What happens |
+//! |---|---|
+//! | `return_results_data` is not zero | the result is allocated in the guest and its address is written |
+//! | `return_results_data` is zero | nothing is allocated and no address is written, and the embedder still runs |
+//! | `return_results_size` is not zero | the length of the result is written |
+//! | `return_results_size` is zero | no length is written |
+//!
+//! An embedder that refuses the call leaves two zeros in the slots the guest
+//! asked for, which is what the C++ host writes.
+//!
+//! Each pointer this function will write is checked before the embedder
+//! runs, which every host function of this crate does.
+//! The C++ host checks them after the foreign function has run, so a guest
+//! that passes a bad pointer reaches the embedder there and not here.
 
 use std::borrow::Cow;
 
@@ -39,10 +54,16 @@ pub(super) fn proxy_call_foreign_function(
     let arguments = memory.read(arguments)?;
     let request = ForeignCall::new(Cow::Borrowed(name), Cow::Borrowed(arguments));
     let (call, stream) = with_stream(state, Status::NotFound)?;
-    let results = from_embedder(
+    let results = match from_embedder(
         "call_foreign_function",
         stream.call_foreign_function(call, request),
-    )?;
+    ) {
+        Ok(results) => results,
+        Err(refusal) => {
+            write_optional_return(ctx, &[], data_ptr, size_ptr)?;
+            return Err(refusal);
+        }
+    };
     write_optional_return(ctx, &results, data_ptr, size_ptr)?;
     Ok(())
 }
@@ -176,6 +197,7 @@ mod tests {
         let engine = engine();
         let stream = RecordingStream::new().with_foreign_function(b"compress", b"done");
         let (mut instance, _) = hosted(&engine, GUEST, stream);
+        write(&mut instance, RETURN_DATA, &7u32.to_le_bytes());
 
         // Act
         let result = call_returning(&mut instance, 0, RETURN_SIZE);
@@ -183,7 +205,54 @@ mod tests {
         // Assert
         assert_eq!(result, Status::Ok);
         assert_eq!(word(&mut instance, RETURN_SIZE.cast_unsigned()), 4);
-        assert_eq!(word(&mut instance, RETURN_DATA.cast_unsigned()), 0);
+        assert_eq!(
+            word(&mut instance, RETURN_DATA.cast_unsigned()),
+            7,
+            "a slot the guest did not ask for must keep its value"
+        );
+    }
+
+    #[test]
+    fn a_foreign_call_with_no_pointer_at_all_writes_nothing_and_runs_the_embedder() {
+        // Arrange
+        let engine = engine();
+        let stream = RecordingStream::new().with_foreign_function(b"compress", b"done");
+        let (mut instance, _) = hosted(&engine, COUNTING, stream);
+        write(&mut instance, RETURN_DATA, &7u32.to_le_bytes());
+
+        // Act
+        let result = call_returning(&mut instance, 0, 0);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(word(&mut instance, 8), 0, "the allocator ran");
+        assert_eq!(word(&mut instance, 0), 0, "the first word was written");
+        assert_eq!(word(&mut instance, RETURN_DATA.cast_unsigned()), 7);
+        let stream = RecordingStream::take(instance.state_mut());
+        assert_eq!(stream.foreign_calls().len(), 1, "the embedder must run");
+    }
+
+    #[test]
+    fn a_refused_foreign_call_writes_two_zeros() {
+        // Arrange
+        let engine = engine();
+        let (mut instance, _) = hosted(&engine, GUEST, RecordingStream::new());
+        write(&mut instance, RETURN_DATA, &7u32.to_le_bytes());
+        write(&mut instance, RETURN_SIZE, &9u32.to_le_bytes());
+
+        // Act
+        let result = call_returning(&mut instance, RETURN_DATA, RETURN_SIZE);
+
+        // Assert
+        assert_eq!(result, Status::NotFound);
+        assert_eq!(
+            (
+                word(&mut instance, RETURN_DATA.cast_unsigned()),
+                word(&mut instance, RETURN_SIZE.cast_unsigned())
+            ),
+            (0, 0),
+            "a refused call writes the two zeros the C++ host writes"
+        );
     }
 
     #[test]

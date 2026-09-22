@@ -92,6 +92,56 @@ build-guests:
         echo "built crates/proxy-wasm-host/tests/fixtures/$name.wasm"
     done
 
+# Compare the copied guest sources with the release of the SDK they came from.
+# Run it when a new SDK version appears, and before a release.
+# It needs the network, so it is not part of `check`.
+check-guest-sources:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag="$(sed -n 's/^The copies come from tag \([^,]*\),.*/\1/p' NOTICE)"
+    if [ -z "$tag" ]; then
+        echo "FAIL NOTICE does not name the tag the copies came from"
+        exit 1
+    fi
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    echo "fetching proxy-wasm-rust-sdk $tag"
+    git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$tag" \
+        https://github.com/proxy-wasm/proxy-wasm-rust-sdk.git "$work/sdk"
+    drift=0
+    for guest in crates/test-guests/sdk-*/; do
+        member="$(basename "$guest")"
+        upstream="$work/sdk/examples/${member#sdk-}"
+        upstream="${upstream//-/_}"
+        if [ ! -d "$upstream/src" ]; then
+            echo "FAIL $member has no example named ${upstream##*/} at $tag"
+            drift=1
+            continue
+        fi
+        if ! diff -ru "$upstream/src" "$guest/src"; then
+            echo "FAIL the sources of $member differ from $tag"
+            drift=1
+        fi
+        expected="$work/$member.toml"
+        awk -v member="$member" '
+            /^\[profile\.release\]$/ { stop = 1 }
+            stop { next }
+            !named && /^name = / { print "name = \"" member "\""; named = 1; next }
+            { print }
+        ' "$upstream/Cargo.toml" \
+            | sed 's|proxy-wasm = { path = "../../" }|proxy-wasm = "=0.2.5"|' \
+            | awk 'NF { blank = 0; print; next } { blank++ } END {}' > "$expected"
+        if ! diff -u "$expected" <(awk 'NF' "$guest/Cargo.toml"); then
+            echo "FAIL the manifest of $member differs from $tag by more than the three changes"
+            drift=1
+        fi
+    done
+    if [ "$drift" -ne 0 ]; then
+        echo "the copied guest sources differ from $tag"
+        exit 1
+    fi
+    echo "every copied guest source matches $tag"
+
 # Run the benchmarks.
 bench:
     cargo bench --workspace --locked

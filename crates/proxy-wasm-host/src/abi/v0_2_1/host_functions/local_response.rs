@@ -6,9 +6,8 @@ use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::LocalResponse;
 use crate::abi::v0_2_1::host_functions::Failure;
-use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_stream};
+use crate::abi::v0_2_1::host_functions::call::{from_embedder, guest_pairs, with_stream};
 use crate::abi::v0_2_1::types::Status;
-use crate::codec::pairs::decode_pairs;
 use crate::runtime::{GuestSlice, HostState, split};
 
 /// The value every SDK sends when a response carries no gRPC status.
@@ -35,10 +34,9 @@ pub(super) fn proxy_send_local_response(
     let headers = GuestSlice::try_from((serialized_headers_data, serialized_headers_size))?;
     let grpc_status = (grpc_status != NO_GRPC_STATUS).then(|| grpc_status.cast_unsigned());
     let (memory, state) = split(ctx)?;
-    let limits = state.pair_limits();
     let details = memory.read(details)?;
     let body = memory.read(body)?;
-    let headers = decode_pairs(memory.read(headers)?, limits)?
+    let headers = guest_pairs(state, memory.read(headers)?)?
         .into_iter()
         .map(|(key, value)| (Cow::Borrowed(key), Cow::Borrowed(value)))
         .collect();

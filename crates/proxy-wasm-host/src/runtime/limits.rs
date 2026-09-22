@@ -40,7 +40,9 @@ impl Default for Limits {
 }
 
 impl Limits {
-    /// One second of CPU time per call, no fuel, and a 128 MiB memory ceiling.
+    /// One second of CPU time per call, no fuel, a 128 MiB memory ceiling,
+    /// and the two decode limits of the C++ host, which are 1024 pairs and
+    /// 1 MiB for one map a guest sends.
     pub fn new() -> Self {
         Self::default()
     }
@@ -71,6 +73,7 @@ impl Limits {
     /// Sets the most pairs one map a guest sends may declare, or removes the
     /// limit with `None`.
     ///
+    /// The default is 1024, which is the value the C++ host uses.
     /// A guest that sends a larger map receives `BAD_ARGUMENT`, and
     /// `PARSE_FAILURE` from the two functions that open a gRPC callout.
     #[must_use]
@@ -82,6 +85,7 @@ impl Limits {
     /// Sets the most bytes one map a guest sends may hold, or removes the
     /// limit with `None`.
     ///
+    /// The default is 1 MiB, which is the value the C++ host uses.
     /// A guest that sends a longer map receives the same status as one that
     /// declares too many pairs.
     #[must_use]
@@ -118,8 +122,15 @@ impl Limits {
         self.max_decoded_map_bytes
     }
 
-    pub(crate) fn pair_limits(&self) -> PairLimits {
-        PairLimits::new(self.max_decoded_pairs, self.max_decoded_map_bytes)
+    /// The two decode limits as one value, which
+    /// [`decode_pairs`](crate::codec::pairs::decode_pairs) takes.
+    ///
+    /// Pass it when you decode a map of your own, so your rule and the rule
+    /// the crate applies to a guest are the same one.
+    pub fn pair_limits(&self) -> PairLimits {
+        PairLimits::unlimited()
+            .with_pairs(self.max_decoded_pairs)
+            .with_bytes(self.max_decoded_map_bytes)
     }
 }
 

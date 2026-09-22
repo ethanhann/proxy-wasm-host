@@ -15,13 +15,13 @@ use proxy_wasm_host::abi::v0_2_1::{
 mod common;
 
 use common::harness::{Exercise, http_plugin, stream_of};
-use common::recorder::{Event, RecordingStream};
+use common::recorder::{Event, StreamDouble};
 
 /// A started guest whose request headers panicked.
 fn panicked(exercise: &Exercise) -> (Guest, Result<Action, GuestError>) {
     let (mut guest, root) = exercise.started(http_plugin("exercise"));
     let state =
-        RecordingStream::new(&exercise.recorder).with_request_headers(&[("x-exercise", "panic")]);
+        StreamDouble::new(&exercise.recorder).with_request_headers(&[("x-exercise", "panic")]);
     let (stream, state) = stream_of(&mut guest, root, StreamKind::Http, state);
     let (answer, _) = guest.with(state, |scope| scope.on_request_headers(stream, 1, false));
     (guest, answer)
@@ -41,7 +41,7 @@ fn a_panic_in_a_request_poisons_the_guest() {
     let exercise = Exercise::new();
     let (mut guest, answer) = panicked(&exercise);
     let stream = ContextId::try_from(2).unwrap();
-    let state = RecordingStream::default();
+    let state = StreamDouble::default();
 
     // Act
     let later = guest.enter(state).on_log(stream);
@@ -72,6 +72,54 @@ fn the_panic_text_reaches_the_log_sink() {
         critical[0].contains("exercise panic in request headers"),
         "{critical:?}"
     );
+}
+
+#[test]
+fn a_request_that_holds_a_callout_survives_the_trap_of_another_request() {
+    // The embedder holds an outbound request that will answer, so it must
+    // still be able to end that callout after the guest trapped.
+    // The guest panics only in the callback that opens a callout, so the
+    // trap needs a second request.
+    // Arrange
+    let exercise = Exercise::new();
+    let (mut guest, root) = exercise.started(http_plugin("exercise"));
+    let first = StreamDouble::new(&exercise.recorder);
+    let (open_context, first) = stream_of(&mut guest, root, StreamKind::Http, first);
+    let (opened, _) = guest.with(first, |scope| {
+        scope.on_request_headers(open_context, 0, false)
+    });
+    let second =
+        StreamDouble::new(&exercise.recorder).with_request_headers(&[("x-exercise", "panic")]);
+    let (trap_context, second) = stream_of(&mut guest, root, StreamKind::Http, second);
+
+    // Act
+    let (trapped, _) = guest.with(second, |scope| {
+        scope.on_request_headers(trap_context, 1, false)
+    });
+
+    // Assert
+    assert_eq!(opened.unwrap(), Action::Pause, "the first request waits");
+    assert!(trapped.is_err(), "the second request traps");
+    assert!(guest.is_poisoned());
+    let held: Vec<_> = guest
+        .open_callouts()
+        .into_iter()
+        .filter(|callout| callout.kind == CalloutKind::HttpCall)
+        .collect();
+    assert_eq!(held.len(), 1, "the callout of the first request is held");
+    assert_eq!(held[0].caller, open_context);
+    assert_eq!(held[0].root, root);
+
+    let (mut rebuilt, next_root) = exercise.started(http_plugin("exercise"));
+    let state = StreamDouble::new(&exercise.recorder);
+    let (next, state) = stream_of(&mut rebuilt, next_root, StreamKind::Http, state);
+    let (served, _) = rebuilt.with(state, |scope| scope.on_request_headers(next, 0, false));
+    assert_eq!(
+        served.unwrap(),
+        Action::Pause,
+        "a guest built again from the same spec serves the next request"
+    );
+    assert!(!rebuilt.is_poisoned());
 }
 
 #[test]
@@ -195,7 +243,7 @@ fn a_new_guest_from_the_same_guest_spec_serves_the_next_request() {
     let mut guest = exercise.spec.build().unwrap();
     let started = guest.start(http_plugin("exercise")).unwrap();
     let root = started.root();
-    let state = RecordingStream::new(&exercise.recorder);
+    let state = StreamDouble::new(&exercise.recorder);
     let (stream, state) = stream_of(&mut guest, root, StreamKind::Http, state);
 
     // Act

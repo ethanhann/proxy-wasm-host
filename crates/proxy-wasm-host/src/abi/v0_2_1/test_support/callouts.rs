@@ -3,12 +3,12 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::abi::v0_2_1::AbiAccess;
-use crate::abi::v0_2_1::test_support::{RecordingSink, instance_with, wat_bytes};
+use crate::abi::v0_2_1::test_support::{RecordingSink, instance_with_limits, wat_bytes};
 use crate::abi::v0_2_1::{
     Callback, CalloutId, Callouts, ContextId, GrpcCall, GrpcOpenRefusal, GrpcStream, HttpCall,
     HttpCallRefusal, Invocation, VmServices,
 };
-use crate::runtime::{Engine, Instance, Module};
+use crate::runtime::{Engine, Instance, Limits, Module};
 
 /// What the crate asked the service to do with a gRPC callout.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,8 +140,18 @@ pub(crate) fn callout_hosted(
     wat: &str,
     services: VmServices,
 ) -> (Instance, ContextId) {
+    callout_hosted_with_limits(engine, wat, services, &Limits::default())
+}
+
+/// The same, with the limits an embedder chose.
+pub(crate) fn callout_hosted_with_limits(
+    engine: &Engine,
+    wat: &str,
+    services: VmServices,
+    limits: &Limits,
+) -> (Instance, ContextId) {
     let module = Module::new(engine, &wat_bytes(wat)).unwrap();
-    let mut instance = instance_with(engine, &module, services).unwrap();
+    let mut instance = instance_with_limits(engine, &module, services, limits).unwrap();
     let state = instance.state_mut();
     let root = state.abi_mut().contexts_mut().create(None).unwrap();
     state.abi_mut().contexts_mut().set_effective(root);

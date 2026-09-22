@@ -16,7 +16,7 @@ use proxy_wasm_host::abi::v0_2_1::{
 mod common;
 
 use common::harness::{Exercise, http_plugin, pair, stream_of};
-use common::recorder::{Event, RecordingStream, pairs};
+use common::recorder::{Event, StreamDouble, pairs};
 
 /// The sizes the callbacks after the request headers announce.
 struct Script {
@@ -27,7 +27,7 @@ struct Script {
 
 /// Runs the callbacks after the request headers, up to the response trailers.
 fn rest_of_request(
-    scope: &mut CallScope<'_, RecordingStream>,
+    scope: &mut CallScope<'_, StreamDouble>,
     stream: ContextId,
     script: &Script,
 ) -> Result<Vec<Action>, GuestError> {
@@ -46,7 +46,7 @@ struct Request {
     guest: Guest,
     root: ContextId,
     stream: ContextId,
-    state: RecordingStream,
+    state: StreamDouble,
     count: u32,
 }
 
@@ -55,7 +55,7 @@ impl Request {
     fn created(request_headers: &[(&str, &str)]) -> Self {
         let exercise = Exercise::new();
         let (mut guest, root) = exercise.started(http_plugin("exercise"));
-        let state = RecordingStream::new(&exercise.recorder).with_request_headers(request_headers);
+        let state = StreamDouble::new(&exercise.recorder).with_request_headers(request_headers);
         let count = u32::try_from(pairs(&state.request_headers).len()).unwrap();
         let (stream, state) = stream_of(&mut guest, root, StreamKind::Http, state);
         exercise.recorder.clear();
@@ -171,7 +171,7 @@ fn the_second_request_reads_the_shared_data_of_the_first() {
         root,
         ..
     } = Request::with_headers(&[]);
-    let state = RecordingStream::new(&exercise.recorder);
+    let state = StreamDouble::new(&exercise.recorder);
     let (second, state) = stream_of(&mut guest, root, StreamKind::Http, state);
     exercise.recorder.clear();
 
@@ -379,7 +379,9 @@ fn a_local_response_reaches_the_stream_state() {
         [Event::LocalResponse {
             status: 403,
             headers: vec![("x-local".into(), "yes".into())],
-            body: "denied".into()
+            body: "denied".into(),
+            details: String::new(),
+            grpc_status: None
         }]
     );
     assert_eq!(

@@ -35,8 +35,8 @@ use proxy_wasm_host::abi::v0_2_1::types::{
     PeerType, UnknownValue, WasiClockId, WasiErrno, WasiFdId,
 };
 use proxy_wasm_host::codec::pairs::{
-    COUNT_SIZE, DecodeError, Field, PairSource, decode_pairs, encode_pairs, encode_visited,
-    encoded_size, pair_encoded_size, total_size,
+    COUNT_SIZE, DecodeError, Field, PairLimits, PairSource, decode_pairs, encode_pairs,
+    encode_visited, encoded_size, pair_encoded_size, total_size,
 };
 use proxy_wasm_host::codec::path::{decode_path, encode_path};
 

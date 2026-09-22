@@ -77,16 +77,7 @@ pub(crate) fn write_return(
     return_data: GuestPtr,
     return_size: GuestPtr,
 ) -> Result<(), Error> {
-    {
-        let (memory, _) = split(ctx)?;
-        memory.read_u32(return_data)?;
-        memory.read_u32(return_size)?;
-    }
-    let slice = write_to_guest(ctx, bytes)?;
-    let (mut memory, _) = split(ctx)?;
-    memory.write_u32(return_data, slice.ptr().address())?;
-    memory.write_u32(return_size, slice.len())?;
-    Ok(())
+    write_optional_return(ctx, bytes, Some(return_data), Some(return_size))
 }
 
 /// Writes `bytes` into the guest only when the guest asked for them, and

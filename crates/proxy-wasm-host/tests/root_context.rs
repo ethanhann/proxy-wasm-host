@@ -133,11 +133,13 @@ fn the_http_root_registers_a_queue_defines_metrics_and_opens_two_grpc_callouts()
             Event::DefineMetric(MetricType::Gauge, "exercise_gauge".into()),
             Event::GrpcCall {
                 callout: callout(1),
+                service: "exercise.Echo".into(),
                 method: "Say".into(),
                 message: "hello".into()
             },
             Event::GrpcStream {
                 callout: callout(2),
+                service: "exercise.Echo".into(),
                 method: "Chat".into()
             },
             Event::GrpcSend {

@@ -8,3 +8,12 @@ https://github.com/mosn/proxy-wasm-go-host
 The test fixture crates/proxy-wasm-host/tests/fixtures/add-request-header-tinygo.wasm
 is a copy of internal/e2e/testdata/add-req-header-v2/main.wasm from proxy-wasm-go-host,
 built by the MOSN authors from a TinyGo guest that uses the proxy-wasm-go-sdk.
+
+The seven guest crates under crates/test-guests/sdk-* hold copies of the example
+plugins of the proxy-wasm-rust-sdk,
+Copyright (c) 2020 Google LLC, licensed under the Apache License, Version 2.0.
+https://github.com/proxy-wasm/proxy-wasm-rust-sdk
+The copies come from tag v0.2.5, commit 4930296ed8e3601f062196ede46603ae755d565c.
+Each source file is unchanged. Each Cargo.toml has a package name that matches
+its directory, depends on the published proxy-wasm crate, and carries no profile
+section, because a workspace member inherits the profile of its workspace.
