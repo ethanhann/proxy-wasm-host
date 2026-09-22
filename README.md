@@ -1,6 +1,6 @@
 # proxy-wasm-host
 
-[![CI](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/snakewayhq/snakeway/actions/workflows/build.yml)
+[![CI](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 
