@@ -5,7 +5,7 @@ exclude = ["crates/test-guests"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.96"
 license = "Apache-2.0"
 repository = "https://github.com/ethanhann/proxy-wasm-host"
 authors = ["Ethan Hann"]

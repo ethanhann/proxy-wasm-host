@@ -17,8 +17,8 @@ The embedder drives each callback and supplies the state a guest reads.
 When it is published, the facts below decide whether you can use it.
 
 - ABI: Proxy-Wasm v0.2.1, with v0.2.0 guests accepted.
-- Runtime: wasmtime 48.
-- Minimum supported Rust version: 1.95.
+- Runtime: wasmtime 49.
+- Minimum supported Rust version: 1.96.
   The minimum follows the `rust-version` that wasmtime declares, so it moves when the wasmtime dependency moves.
 
 ## Build and test
