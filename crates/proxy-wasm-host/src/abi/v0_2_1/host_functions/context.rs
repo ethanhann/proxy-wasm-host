@@ -224,4 +224,35 @@ mod tests {
             Some(under_mine)
         );
     }
+
+    #[test]
+    fn the_effective_context_never_moves_to_a_context_the_guest_refused() {
+        // Arrange
+        let engine = engine();
+        let mut instance = instance(&engine, CALLERS).unwrap();
+        let contexts = instance.state_mut().abi_mut().contexts_mut();
+        let root = contexts.create(None).unwrap();
+        let first = contexts.create(Some(root)).unwrap();
+        let second = contexts.create(Some(root)).unwrap();
+        contexts.set_effective(first);
+        contexts.reject(root);
+
+        // Act
+        let result = outcome(proxy_set_effective_context(
+            instance.store_mut(),
+            second.wire(),
+        ));
+
+        // Assert
+        assert_eq!(
+            result,
+            Status::BadArgument,
+            "a refused root serves no context"
+        );
+        assert_eq!(
+            instance.state().abi().contexts().effective(),
+            Some(first),
+            "the effective context did not move"
+        );
+    }
 }
