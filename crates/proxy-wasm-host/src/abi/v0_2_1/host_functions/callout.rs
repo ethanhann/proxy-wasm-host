@@ -57,11 +57,12 @@ pub(super) fn proxy_http_call(
     let id_ptr = GuestPtr::try_from(return_call_id)?;
     let timeout = Duration::from_millis(u64::from(timeout.cast_unsigned()));
     let (mut memory, state) = split(ctx)?;
+    let limits = state.pair_limits();
     memory.read_u32(id_ptr)?;
     let request = HttpCall::new(Cow::Borrowed(memory.read(upstream)?))
-        .with_headers(borrowed(decode_pairs(memory.read(headers)?)?))
+        .with_headers(borrowed(decode_pairs(memory.read(headers)?, limits)?))
         .with_body(Cow::Borrowed(memory.read(body)?))
-        .with_trailers(borrowed(decode_pairs(memory.read(trailers)?)?))
+        .with_trailers(borrowed(decode_pairs(memory.read(trailers)?, limits)?))
         .with_timeout(timeout);
     let named = |name: &[u8]| request.headers.iter().any(|(key, _)| key.as_ref() == name);
     if !REQUIRED_HEADERS.into_iter().all(named) {
@@ -221,6 +222,71 @@ mod tests {
             a[8],
             a[9],
         ))
+    }
+
+    /// The three required headers and enough filler to reach `count` pairs.
+    fn padded_headers(count: usize) -> Vec<u8> {
+        let mut pairs: Vec<(Vec<u8>, Vec<u8>)> = REQUEST
+            .iter()
+            .map(|(key, value)| (key.to_vec(), value.to_vec()))
+            .collect();
+        while pairs.len() < count {
+            pairs.push((vec![b'k'], vec![b'v']));
+        }
+        encode_pairs(&pairs).unwrap()
+    }
+
+    fn big_map(count: usize) -> Vec<u8> {
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..count).map(|_| (vec![b'k'], vec![b'v'])).collect();
+        encode_pairs(&pairs).unwrap()
+    }
+
+    #[test]
+    fn callout_headers_above_the_pair_limit_are_a_bad_argument() {
+        // Arrange
+        let engine = engine();
+        let service = Arc::new(RecordingCallouts::new());
+        let (mut instance, _) = callout_hosted(&engine, GUEST, services_with(service.clone()));
+        let upstream = write(&mut instance, UPSTREAM, b"authz");
+        let headers = write(&mut instance, 20_000, &padded_headers(1025));
+        let arguments = Arguments([
+            upstream.0, upstream.1, headers.0, headers.1, BODY, 0, TRAILERS, 0, 250, RETURN_ID,
+        ]);
+
+        // Act
+        let result = http_call(&mut instance, &arguments);
+
+        // Assert
+        assert_eq!(result, Status::BadArgument);
+        assert!(
+            service.http_calls().is_empty(),
+            "the service must not receive a call whose headers were refused"
+        );
+    }
+
+    #[test]
+    fn callout_trailers_above_the_pair_limit_are_a_bad_argument() {
+        // Arrange
+        let engine = engine();
+        let service = Arc::new(RecordingCallouts::new());
+        let (mut instance, _) = callout_hosted(&engine, GUEST, services_with(service.clone()));
+        let upstream = write(&mut instance, UPSTREAM, b"authz");
+        let headers = write(&mut instance, HEADERS, &encode_pairs(&REQUEST).unwrap());
+        let trailers = write(&mut instance, 20_000, &big_map(1025));
+        let arguments = Arguments([
+            upstream.0, upstream.1, headers.0, headers.1, BODY, 0, trailers.0, trailers.1, 250,
+            RETURN_ID,
+        ]);
+
+        // Act
+        let result = http_call(&mut instance, &arguments);
+
+        // Assert
+        assert_eq!(result, Status::BadArgument);
+        assert!(
+            service.http_calls().is_empty(),
+            "the service must not receive a call whose trailers were refused"
+        );
     }
 
     fn written_id(instance: &mut Instance) -> u32 {

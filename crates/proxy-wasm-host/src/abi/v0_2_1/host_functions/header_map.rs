@@ -111,8 +111,9 @@ pub(super) fn proxy_set_header_map_pairs(
     let map_type = MapType::try_from(map_id)?;
     let slice = GuestSlice::try_from((serialized_pairs_data, serialized_pairs_size))?;
     let (memory, state) = split(ctx)?;
+    let limits = state.pair_limits();
     let bytes = memory.read(slice)?;
-    let pairs = decode_pairs(bytes)?;
+    let pairs = decode_pairs(bytes, limits)?;
     map(state, map_type, Access::Write)?.replace_all(&pairs)?;
     Ok(())
 }
@@ -198,11 +199,12 @@ mod tests {
     use crate::abi::v0_2_1::HeaderPairs;
     use crate::abi::v0_2_1::payload::Delivery;
     use crate::abi::v0_2_1::test_support::{
-        RecordingStream, engine, hosted, instance, outcome, status, write,
+        RecordingStream, engine, hosted, hosted_with_limits, instance, outcome, status, write,
     };
     use crate::abi::v0_2_1::{Callback, CalloutId, ContextId, HttpCallResponse};
+    use crate::codec::pairs::PairLimits;
     use crate::codec::pairs::encode_pairs;
-    use crate::runtime::{Engine, Instance};
+    use crate::runtime::{Engine, Instance, Limits};
 
     const REQUEST: i32 = MapType::HttpRequestHeaders as i32;
     const RESPONSE: i32 = MapType::HttpResponseHeaders as i32;
@@ -339,7 +341,7 @@ mod tests {
         let (data, size) = return_slots(&mut instance);
         assert_eq!(data, 4096);
         let bytes = read(&mut instance, data, size);
-        let decoded = decode_pairs(&bytes).unwrap();
+        let decoded = decode_pairs(&bytes, PairLimits::unlimited()).unwrap();
         assert_eq!(
             decoded,
             vec![(b"a".as_slice(), b"1".as_slice()), (b"b", b"22")]
@@ -361,6 +363,55 @@ mod tests {
         assert_eq!(result.unwrap(), Status::Ok);
         assert_eq!(return_slots(&mut instance), (0, 0));
         assert_eq!(allocator_calls(&mut instance), 0);
+    }
+
+    /// An encoded map of `count` pairs, each one byte of key and value.
+    fn big_map(count: usize) -> Vec<u8> {
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..count).map(|_| (vec![b'k'], vec![b'v'])).collect();
+        encode_pairs(&pairs).unwrap()
+    }
+
+    #[test]
+    fn a_header_map_above_the_pair_limit_is_a_bad_argument() {
+        // Arrange
+        let (_engine, mut instance, _) = setup(two_pairs());
+        let encoded = big_map(1025);
+        let (data, size) = write(&mut instance, KEY, &encoded);
+
+        // Act
+        let result = instance
+            .call::<(i32, i32, i32), i32>("set_pairs", (REQUEST, data, size))
+            .map(status);
+
+        // Assert
+        assert_eq!(result.unwrap(), Status::BadArgument);
+        assert_eq!(
+            RecordingStream::pairs_in(instance.state_mut()),
+            vec![
+                ("a".to_owned(), "1".to_owned()),
+                ("b".to_owned(), "22".to_owned())
+            ],
+            "the map must not change"
+        );
+    }
+
+    #[test]
+    fn an_embedder_that_raises_the_limit_accepts_the_larger_map() {
+        // Arrange
+        let engine = engine();
+        let limits = Limits::new().with_max_decoded_pairs(2048);
+        let (mut instance, _) = hosted_with_limits(&engine, GUEST, two_pairs(), &limits);
+        let encoded = big_map(1025);
+        let (data, size) = write(&mut instance, KEY, &encoded);
+
+        // Act
+        let result = instance
+            .call::<(i32, i32, i32), i32>("set_pairs", (REQUEST, data, size))
+            .map(status);
+
+        // Assert
+        assert_eq!(result.unwrap(), Status::Ok);
+        assert_eq!(RecordingStream::pairs_in(instance.state_mut()).len(), 1025);
     }
 
     #[test]

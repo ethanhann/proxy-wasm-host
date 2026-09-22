@@ -35,9 +35,10 @@ pub(super) fn proxy_send_local_response(
     let headers = GuestSlice::try_from((serialized_headers_data, serialized_headers_size))?;
     let grpc_status = (grpc_status != NO_GRPC_STATUS).then(|| grpc_status.cast_unsigned());
     let (memory, state) = split(ctx)?;
+    let limits = state.pair_limits();
     let details = memory.read(details)?;
     let body = memory.read(body)?;
-    let headers = decode_pairs(memory.read(headers)?)?
+    let headers = decode_pairs(memory.read(headers)?, limits)?
         .into_iter()
         .map(|(key, value)| (Cow::Borrowed(key), Cow::Borrowed(value)))
         .collect();
@@ -83,6 +84,34 @@ mod tests {
     fn headers(instance: &mut Instance) -> (i32, i32) {
         let encoded = encode_pairs(&[(b"a".as_slice(), b"1".as_slice())]).unwrap();
         write(instance, HEADERS, &encoded)
+    }
+
+    #[test]
+    fn a_local_response_above_the_pair_limit_is_a_bad_argument() {
+        // Arrange
+        let engine = engine();
+        let (mut instance, _) = hosted(&engine, GUEST, RecordingStream::new());
+        let (details, details_len) = write(&mut instance, DETAILS, b"denied");
+        let big: Vec<(Vec<u8>, Vec<u8>)> = (0..1025).map(|_| (vec![b'k'], vec![b'v'])).collect();
+        let encoded = encode_pairs(&big).unwrap();
+        let (pairs, pairs_len) = write(&mut instance, 4096, &encoded);
+
+        // Act
+        let result = instance
+            .call::<(i32, i32, i32, i32, i32, i32, i32, i32), i32>(
+                "send",
+                (403, details, details_len, BODY, 0, pairs, pairs_len, -1),
+            )
+            .map(status);
+
+        // Assert
+        assert_eq!(result.unwrap(), Status::BadArgument);
+        assert!(
+            RecordingStream::take(instance.state_mut())
+                .local_response()
+                .is_none(),
+            "the embedder must not receive a response it cannot trust"
+        );
     }
 
     #[test]

@@ -103,6 +103,34 @@ pub(crate) fn hosted(engine: &Engine, wat: &str, stream: RecordingStream) -> (In
     (instance, root)
 }
 
+/// An instance of `wat` with `stream` installed and the limits given, for a
+/// test of a limit an embedder chose.
+pub(crate) fn hosted_with_limits(
+    engine: &Engine,
+    wat: &str,
+    stream: RecordingStream,
+    limits: &Limits,
+) -> (Instance, ContextId) {
+    let module = Module::new(engine, &wat_bytes(wat)).unwrap();
+    let host = Host::new(engine).unwrap();
+    let mut instance = Instance::new(
+        engine,
+        host.linker(),
+        &module,
+        crate::abi::v0_2_1::state(services()),
+        limits,
+    )
+    .unwrap();
+    let state = instance.state_mut();
+    let root = state.abi_mut().contexts_mut().create(None).unwrap();
+    state.abi_mut().contexts_mut().set_effective(root);
+    state
+        .abi_mut()
+        .set_current_callback(Some(Callback::RequestHeaders));
+    state.abi_mut().set_stream_state(Box::new(stream));
+    (instance, root)
+}
+
 /// An instance of `wat` with a root context, an effective context, and no
 /// stream state.
 pub(crate) fn unhosted(engine: &Engine, wat: &str) -> (Instance, ContextId) {

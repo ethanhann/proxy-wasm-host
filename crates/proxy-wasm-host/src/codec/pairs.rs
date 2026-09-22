@@ -17,8 +17,10 @@
 use std::ops::ControlFlow;
 
 mod errors;
+mod limits;
 
 pub use errors::{DecodeError, EncodeError, Field};
+pub use limits::{DEFAULT_MAX_DECODED_MAP_BYTES, DEFAULT_MAX_DECODED_PAIRS, PairLimits};
 
 /// The borrowed pairs that [`decode_pairs`] returns.
 pub type Pairs<'a> = Vec<(&'a [u8], &'a [u8])>;
@@ -35,6 +37,17 @@ pub const COUNT_SIZE: usize = 4;
 
 const LENGTH_SIZE: usize = 4;
 const TERMINATOR: u8 = 0;
+
+/// How many pairs to reserve for a map that declares `pair_count`.
+///
+/// The data section that follows the length table holds at least two bytes
+/// for each pair, which are the two terminators, so a map that declares more
+/// pairs than the remaining bytes allow cannot decode them all.
+/// The reserve follows the pairs that can decode rather than the number the
+/// guest wrote.
+fn reserve_for(pair_count: usize, data_len: usize, table_end: usize) -> usize {
+    pair_count.min(data_len.saturating_sub(table_end) / 2)
+}
 
 /// The encoded size of one pair with the given key and value lengths.
 ///
@@ -179,15 +192,21 @@ fn length_of(pair: usize, field: Field, bytes: &[u8]) -> Result<u32, EncodeError
 /// Decodes an encoded map into pairs that borrow from `data`.
 ///
 /// No bytes and a single `0x00` byte both decode to an empty map.
-/// The length table is checked before any allocation, so the capacity of the
-/// result is bounded by the input length.
+/// `limits` bounds the work one call can ask for, and
+/// [`PairLimits::unlimited`] removes both bounds.
+/// The byte length is checked first, then the declared pair count, and both
+/// before the call allocates anything.
 ///
 /// # Errors
 ///
-/// Returns [`DecodeError`] when the input is truncated at any point, when a
-/// key or a value is not followed by `0x00`, or when bytes remain after the
-/// last pair.
-pub fn decode_pairs(data: &[u8]) -> Result<Pairs<'_>, DecodeError> {
+/// Returns [`DecodeError::ByteLimit`] when the input is longer than the limit
+/// allows, and [`DecodeError::PairLimit`] when it declares more pairs than
+/// the limit allows.
+/// Returns the other [`DecodeError`] values when the input is truncated at
+/// any point, when a key or a value is not followed by `0x00`, or when bytes
+/// remain after the last pair.
+pub fn decode_pairs(data: &[u8], limits: PairLimits) -> Result<Pairs<'_>, DecodeError> {
+    limits.check(data.len())?;
     if data.is_empty() || data == [TERMINATOR] {
         return Ok(Vec::new());
     }
@@ -195,6 +214,7 @@ pub fn decode_pairs(data: &[u8]) -> Result<Pairs<'_>, DecodeError> {
         .first_chunk::<COUNT_SIZE>()
         .map(|word| u32::from_le_bytes(*word))
         .ok_or(DecodeError::TruncatedCount)?;
+    limits.check_count(count)?;
     let truncated_lengths = DecodeError::TruncatedLengths { pairs: count };
     let pair_count = usize::try_from(count).map_err(|_| truncated_lengths)?;
     let table_end = pair_count
@@ -203,7 +223,7 @@ pub fn decode_pairs(data: &[u8]) -> Result<Pairs<'_>, DecodeError> {
         .filter(|&end| end <= data.len())
         .ok_or(truncated_lengths)?;
 
-    let mut pairs = Vec::with_capacity(pair_count);
+    let mut pairs = Vec::with_capacity(reserve_for(pair_count, data.len(), table_end));
     let mut cursor = Cursor {
         data,
         pos: table_end,
@@ -273,6 +293,86 @@ mod tests {
 
     type OwnedPairs = Vec<(Vec<u8>, Vec<u8>)>;
 
+    /// A map of `count` pairs whose keys and values are one byte each.
+    fn map_of(count: usize) -> Vec<u8> {
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..count).map(|_| (vec![b'k'], vec![b'v'])).collect();
+        encode_pairs(&pairs).unwrap()
+    }
+
+    #[test]
+    fn a_map_above_the_pair_limit_is_refused_before_it_is_built() {
+        // Arrange
+        let input = map_of(1025);
+
+        // Act
+        let result = decode_pairs(&input, PairLimits::default());
+
+        // Assert
+        assert_eq!(
+            result,
+            Err(DecodeError::PairLimit {
+                pairs: 1025,
+                limit: DEFAULT_MAX_DECODED_PAIRS,
+            })
+        );
+    }
+
+    #[test]
+    fn a_map_at_the_pair_limit_is_accepted() {
+        // Arrange
+        let input = map_of(1024);
+
+        // Act
+        let result = decode_pairs(&input, PairLimits::default());
+
+        // Assert
+        assert_eq!(result.map(|pairs| pairs.len()), Ok(1024));
+    }
+
+    #[test]
+    fn a_map_above_the_byte_limit_is_refused_before_the_count_is_read() {
+        // Arrange
+        let input = vec![b'x'; 9];
+        let limits = PairLimits::new(None, 8);
+
+        // Act
+        let result = decode_pairs(&input, limits);
+
+        // Assert
+        assert_eq!(
+            result,
+            Err(DecodeError::ByteLimit { bytes: 9, limit: 8 }),
+            "a byte limit must be checked before the pair count is read"
+        );
+    }
+
+    #[test]
+    fn an_unlimited_decode_accepts_a_map_above_both_limits() {
+        // Arrange
+        let input = map_of(2000);
+
+        // Act
+        let result = decode_pairs(&input, PairLimits::unlimited());
+
+        // Assert
+        assert_eq!(result.map(|pairs| pairs.len()), Ok(2000));
+    }
+
+    #[test]
+    fn the_reserve_grows_with_the_pairs_that_decode() {
+        // Arrange
+        let declared = 100_000usize;
+        let table_end = COUNT_SIZE + declared * 2 * LENGTH_SIZE;
+        let data_len = table_end + 20;
+
+        // Act
+        let reserve = reserve_for(declared, data_len, table_end);
+
+        // Assert
+        assert_eq!(reserve, 10, "the reserve must follow the bytes that remain");
+        assert_eq!(reserve_for(3, COUNT_SIZE + 24 + 12, COUNT_SIZE + 24), 3);
+    }
+
     fn owned(pairs: &[(&[u8], &[u8])]) -> OwnedPairs {
         pairs
             .iter()
@@ -281,7 +381,8 @@ mod tests {
     }
 
     fn round_trip(map: &[(Vec<u8>, Vec<u8>)]) -> Result<OwnedPairs, DecodeError> {
-        decode_pairs(&encode_pairs(map).unwrap()).map(|pairs| owned(&pairs))
+        decode_pairs(&encode_pairs(map).unwrap(), PairLimits::unlimited())
+            .map(|pairs| owned(&pairs))
     }
 
     /// A small deterministic generator, so the generated tests need no
@@ -416,7 +517,7 @@ mod tests {
         let outcomes: Vec<Option<Vec<u8>>> = inputs
             .iter()
             .map(|input| {
-                decode_pairs(input)
+                decode_pairs(input, PairLimits::unlimited())
                     .ok()
                     .map(|pairs| encode_pairs(&pairs).unwrap())
             })
@@ -542,7 +643,10 @@ mod tests {
         let inputs: [&[u8]; 2] = [&[], &[0x00]];
 
         // Act
-        let decoded: Vec<_> = inputs.iter().map(|input| decode_pairs(input)).collect();
+        let decoded: Vec<_> = inputs
+            .iter()
+            .map(|input| decode_pairs(input, PairLimits::unlimited()))
+            .collect();
 
         // Assert
         assert_eq!(decoded, vec![Ok(Vec::new()), Ok(Vec::new())]);
@@ -554,7 +658,10 @@ mod tests {
         let inputs: [&[u8]; 3] = [&[0x01], &[0x00, 0x00], &[0x2a, 0x2b]];
 
         // Act
-        let decoded: Vec<_> = inputs.iter().map(|input| decode_pairs(input)).collect();
+        let decoded: Vec<_> = inputs
+            .iter()
+            .map(|input| decode_pairs(input, PairLimits::unlimited()))
+            .collect();
 
         // Assert
         assert_eq!(decoded, vec![Err(DecodeError::TruncatedCount); 3]);
@@ -566,7 +673,7 @@ mod tests {
         let input = [3, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
 
         // Act
-        let decoded = decode_pairs(&input);
+        let decoded = decode_pairs(&input, PairLimits::unlimited());
 
         // Assert
         assert_eq!(decoded, Err(DecodeError::TruncatedLengths { pairs: 3 }));
@@ -578,7 +685,7 @@ mod tests {
         let input = [1, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, b'a', 0, 0];
 
         // Act
-        let decoded = decode_pairs(&input);
+        let decoded = decode_pairs(&input, PairLimits::unlimited());
 
         // Assert
         assert_eq!(decoded, Err(DecodeError::TruncatedKey { pair: 0 }));
@@ -592,7 +699,7 @@ mod tests {
         let input = [1, 0, 0, 0, 1, 0, 0, 0, 9, 0, 0, 0, b'a', 0, b'1', 0];
 
         // Act
-        let decoded = decode_pairs(&input);
+        let decoded = decode_pairs(&input, PairLimits::unlimited());
 
         // Assert
         assert_eq!(decoded, Err(DecodeError::TruncatedValue { pair: 0 }));
@@ -608,7 +715,7 @@ mod tests {
         let input = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, b'a', 0x30, b'1', 0x30];
 
         // Act
-        let decoded = decode_pairs(&input);
+        let decoded = decode_pairs(&input, PairLimits::unlimited());
 
         // Assert
         assert_eq!(
@@ -626,7 +733,7 @@ mod tests {
         let input = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, b'a', 0x00, b'1', 0x30];
 
         // Act
-        let decoded = decode_pairs(&input);
+        let decoded = decode_pairs(&input, PairLimits::unlimited());
 
         // Assert
         assert_eq!(
@@ -645,7 +752,7 @@ mod tests {
         input.push(0xff);
 
         // Act
-        let decoded = decode_pairs(&input);
+        let decoded = decode_pairs(&input, PairLimits::unlimited());
 
         // Assert
         assert_eq!(decoded, Err(DecodeError::TrailingBytes { count: 1 }));
@@ -659,7 +766,7 @@ mod tests {
         input.extend_from_slice(&[0, 0, 0, 0, b'a', 0, 0]);
 
         // Act
-        let decoded = decode_pairs(&input);
+        let decoded = decode_pairs(&input, PairLimits::unlimited());
 
         // Assert
         assert_eq!(decoded, Err(DecodeError::TruncatedKey { pair: 0 }));
@@ -671,7 +778,7 @@ mod tests {
         let input = u32::MAX.to_le_bytes();
 
         // Act
-        let decoded = decode_pairs(&input);
+        let decoded = decode_pairs(&input, PairLimits::unlimited());
 
         // Assert
         assert_eq!(
@@ -716,7 +823,7 @@ mod tests {
         let input = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, b'a', 0, b'1'];
 
         // Act
-        let decoded = decode_pairs(&input);
+        let decoded = decode_pairs(&input, PairLimits::unlimited());
 
         // Assert
         assert_eq!(decoded, Err(DecodeError::TruncatedValue { pair: 0 }));
@@ -728,7 +835,7 @@ mod tests {
         let input = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, b'a'];
 
         // Act
-        let decoded = decode_pairs(&input);
+        let decoded = decode_pairs(&input, PairLimits::unlimited());
 
         // Assert
         assert_eq!(decoded, Err(DecodeError::TruncatedKey { pair: 0 }));

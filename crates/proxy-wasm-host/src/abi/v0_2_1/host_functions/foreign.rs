@@ -1,4 +1,9 @@
 //! `proxy_call_foreign_function`.
+//!
+//! This is the one host function whose return pointers are optional, which
+//! the ABI document states.
+//! A guest that passes the address zero for one of them asks the host not to
+//! write that value.
 
 use std::borrow::Cow;
 
@@ -8,7 +13,7 @@ use crate::abi::v0_2_1::ForeignCall;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_stream};
 use crate::abi::v0_2_1::types::Status;
-use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
+use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_optional_return};
 
 pub(super) fn proxy_call_foreign_function(
     ctx: &mut impl AsContextMut<Data = HostState>,
@@ -21,11 +26,15 @@ pub(super) fn proxy_call_foreign_function(
 ) -> Result<(), Failure> {
     let name = GuestSlice::try_from((name_data, name_size))?;
     let arguments = GuestSlice::try_from((arguments_data, arguments_size))?;
-    let data_ptr = GuestPtr::try_from(return_results_data)?;
-    let size_ptr = GuestPtr::try_from(return_results_size)?;
+    let data_ptr = wanted(return_results_data)?;
+    let size_ptr = wanted(return_results_size)?;
     let (memory, state) = split(ctx)?;
-    memory.read_u32(data_ptr)?;
-    memory.read_u32(size_ptr)?;
+    if let Some(pointer) = data_ptr {
+        memory.read_u32(pointer)?;
+    }
+    if let Some(pointer) = size_ptr {
+        memory.read_u32(pointer)?;
+    }
     let name = memory.read(name)?;
     let arguments = memory.read(arguments)?;
     let request = ForeignCall::new(Cow::Borrowed(name), Cow::Borrowed(arguments));
@@ -34,8 +43,19 @@ pub(super) fn proxy_call_foreign_function(
         "call_foreign_function",
         stream.call_foreign_function(call, request),
     )?;
-    write_return(ctx, &results, data_ptr, size_ptr)?;
+    write_optional_return(ctx, &results, data_ptr, size_ptr)?;
     Ok(())
+}
+
+/// The return pointer the guest gave, or `None` when it wants no value.
+///
+/// The ABI document calls the return values of this function optional, and
+/// the address zero is how a guest says so.
+fn wanted(pointer: i32) -> Result<Option<GuestPtr>, Failure> {
+    if pointer == 0 {
+        return Ok(None);
+    }
+    Ok(Some(GuestPtr::try_from(pointer)?))
 }
 
 #[cfg(test)]
@@ -52,6 +72,17 @@ mod tests {
     const RETURN_DATA: i32 = 2000;
     const RETURN_SIZE: i32 = 2004;
     const PAST_END: i32 = 65_534;
+
+    /// The same guest, with an allocator that counts its calls at address 8.
+    const COUNTING: &str = r#"(module
+        (import "env" "proxy_call_foreign_function"
+            (func $call (param i32 i32 i32 i32 i32 i32) (result i32)))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32)
+            (i32.store8 (i32.const 8) (i32.add (i32.load8_u (i32.const 8)) (i32.const 1)))
+            i32.const 4096)
+        (func (export "call") (param i32 i32 i32 i32 i32 i32) (result i32)
+            local.get 0 local.get 1 local.get 2 local.get 3 local.get 4 local.get 5 call $call))"#;
 
     const GUEST: &str = r#"(module
         (import "env" "proxy_call_foreign_function"
@@ -79,6 +110,114 @@ mod tests {
                 )
                 .unwrap(),
         )
+    }
+
+    /// The `u32` in guest memory at `at`.
+    fn word(instance: &mut Instance, at: u32) -> u32 {
+        instance
+            .memory()
+            .unwrap()
+            .read_u32(crate::runtime::GuestPtr::from_address(at))
+            .unwrap()
+    }
+
+    /// Calls the foreign function with the two return pointers given.
+    fn call_returning(instance: &mut Instance, data_ptr: i32, size_ptr: i32) -> Status {
+        let (_, name_len) = write(instance, NAME, b"compress");
+        let (_, argument_len) = write(instance, ARGUMENTS, b"payload");
+        status(
+            instance
+                .call::<(i32, i32, i32, i32, i32, i32), i32>(
+                    "call",
+                    (NAME, name_len, ARGUMENTS, argument_len, data_ptr, size_ptr),
+                )
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_foreign_call_with_no_data_pointer_allocates_nothing_in_the_guest() {
+        // Arrange
+        let engine = engine();
+        let stream = RecordingStream::new().with_foreign_function(b"compress", b"done");
+        let (mut instance, _) = hosted(&engine, COUNTING, stream);
+
+        // Act
+        let result = call_returning(&mut instance, 0, RETURN_SIZE);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(word(&mut instance, 8), 0, "the allocator ran");
+        assert_eq!(word(&mut instance, 0), 0, "the first word was written");
+    }
+
+    #[test]
+    fn a_foreign_call_with_no_data_pointer_still_runs_the_embedder() {
+        // Arrange
+        let engine = engine();
+        let stream = RecordingStream::new().with_foreign_function(b"compress", b"done");
+        let (mut instance, root) = hosted(&engine, GUEST, stream);
+
+        // Act
+        let result = call_returning(&mut instance, 0, RETURN_SIZE);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        let stream = RecordingStream::take(instance.state_mut());
+        let (call, request) = &stream.foreign_calls()[0];
+        assert_eq!(call.context, root);
+        assert_eq!(request.name.as_ref(), b"compress");
+        assert_eq!(request.arguments.as_ref(), b"payload");
+    }
+
+    #[test]
+    fn a_foreign_call_with_no_data_pointer_still_writes_the_size() {
+        // Arrange
+        let engine = engine();
+        let stream = RecordingStream::new().with_foreign_function(b"compress", b"done");
+        let (mut instance, _) = hosted(&engine, GUEST, stream);
+
+        // Act
+        let result = call_returning(&mut instance, 0, RETURN_SIZE);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(word(&mut instance, RETURN_SIZE.cast_unsigned()), 4);
+        assert_eq!(word(&mut instance, RETURN_DATA.cast_unsigned()), 0);
+    }
+
+    #[test]
+    fn a_foreign_call_with_no_size_pointer_writes_the_address_alone() {
+        // Arrange
+        let engine = engine();
+        let stream = RecordingStream::new().with_foreign_function(b"compress", b"done");
+        let (mut instance, _) = hosted(&engine, COUNTING, stream);
+
+        // Act
+        let result = call_returning(&mut instance, RETURN_DATA, 0);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(word(&mut instance, 8), 1, "the allocator did not run once");
+        assert_eq!(word(&mut instance, RETURN_DATA.cast_unsigned()), 4096);
+        assert_eq!(word(&mut instance, 0), 0, "the first word was written");
+    }
+
+    #[test]
+    fn a_foreign_call_with_both_pointers_writes_both() {
+        // Arrange
+        let engine = engine();
+        let stream = RecordingStream::new().with_foreign_function(b"compress", b"done");
+        let (mut instance, _) = hosted(&engine, GUEST, stream);
+
+        // Act
+        let result = call_returning(&mut instance, RETURN_DATA, RETURN_SIZE);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(word(&mut instance, RETURN_DATA.cast_unsigned()), 4096);
+        assert_eq!(word(&mut instance, RETURN_SIZE.cast_unsigned()), 4);
+        assert_eq!(returned(&mut instance, 2000, 2004), b"done");
     }
 
     #[test]

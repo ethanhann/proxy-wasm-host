@@ -59,6 +59,22 @@ pub enum DecodeError {
         /// How many bytes remain.
         count: usize,
     },
+    /// The input declares more pairs than the limit allows.
+    #[error("{pairs} pairs exceed the limit of {limit}")]
+    PairLimit {
+        /// The pair count the input declared.
+        pairs: u32,
+        /// The limit in force.
+        limit: u32,
+    },
+    /// The input is longer than the limit allows.
+    #[error("{bytes} bytes exceed the limit of {limit}")]
+    ByteLimit {
+        /// The length of the input.
+        bytes: usize,
+        /// The limit in force.
+        limit: usize,
+    },
 }
 
 /// Why a map could not be encoded.

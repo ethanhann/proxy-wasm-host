@@ -4,6 +4,8 @@ use std::any::Any;
 
 use wasmtime::{Memory, StoreLimits, TypedFunc};
 
+use crate::codec::pairs::PairLimits;
+
 /// The store data of one instance.
 ///
 /// The runtime keeps the cached memory handle, the guest allocator, the store
@@ -15,6 +17,7 @@ use wasmtime::{Memory, StoreLimits, TypedFunc};
 /// poison flag or replace the cached handles.
 pub(crate) struct HostState {
     store_limits: StoreLimits,
+    pair_limits: PairLimits,
     memory: Option<Memory>,
     allocator: Option<TypedFunc<i32, i32>>,
     poisoned: bool,
@@ -25,6 +28,7 @@ impl HostState {
     pub(crate) fn new(abi: Box<dyn Any + Send>) -> Self {
         Self {
             store_limits: StoreLimits::default(),
+            pair_limits: PairLimits::default(),
             memory: None,
             allocator: None,
             poisoned: false,
@@ -46,6 +50,15 @@ impl HostState {
 
     pub(crate) fn store_limits(&mut self) -> &mut StoreLimits {
         &mut self.store_limits
+    }
+
+    /// What one map a guest sends may hold.
+    pub(crate) fn pair_limits(&self) -> PairLimits {
+        self.pair_limits
+    }
+
+    pub(crate) fn set_pair_limits(&mut self, pair_limits: PairLimits) {
+        self.pair_limits = pair_limits;
     }
 
     pub(crate) fn set_memory(&mut self, memory: Memory) {

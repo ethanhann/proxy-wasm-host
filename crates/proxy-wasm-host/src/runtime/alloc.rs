@@ -89,6 +89,58 @@ pub(crate) fn write_return(
     Ok(())
 }
 
+/// Writes `bytes` into the guest only when the guest asked for them, and
+/// stores the address and the size at the return pointers it gave.
+///
+/// A `None` pointer is one the guest passed as the address zero, which the
+/// ABI reads as "I do not want this value" for the one host function that
+/// calls this. Every other host function reads the address zero as an
+/// ordinary address and calls [`write_return`].
+///
+/// The guest allocation follows `return_data`, so a call that wants no data
+/// allocates nothing in the guest and still reports the size it would have
+/// written. Each pointer that the call will write is checked before the
+/// allocator runs.
+///
+/// # Errors
+///
+/// The errors of [`write_return`], for the pointers that are not `None`.
+pub(crate) fn write_optional_return(
+    ctx: &mut impl AsContextMut<Data = HostState>,
+    bytes: &[u8],
+    return_data: Option<GuestPtr>,
+    return_size: Option<GuestPtr>,
+) -> Result<(), Error> {
+    {
+        let (memory, _) = split(ctx)?;
+        if let Some(pointer) = return_data {
+            memory.read_u32(pointer)?;
+        }
+        if let Some(pointer) = return_size {
+            memory.read_u32(pointer)?;
+        }
+    }
+    let address = match return_data {
+        Some(pointer) => {
+            let slice = write_to_guest(ctx, bytes)?;
+            let (mut memory, _) = split(ctx)?;
+            memory.write_u32(pointer, slice.ptr().address())?;
+            Some(slice.len())
+        }
+        None => None,
+    };
+    if let Some(pointer) = return_size {
+        let len = match address {
+            Some(len) => len,
+            None => u32::try_from(bytes.len())
+                .map_err(|_| Error::ValueTooLarge { size: bytes.len() })?,
+        };
+        let (mut memory, _) = split(ctx)?;
+        memory.write_u32(pointer, len)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +402,55 @@ mod tests {
             Err(Error::Memory(MemoryError::OutOfBounds { .. }))
         ));
         assert_eq!(allocator_calls(&mut instance), 0);
+    }
+
+    #[test]
+    fn the_seven_other_return_writers_treat_address_zero_as_an_address() {
+        // Arrange
+        let engine = engine();
+        let mut instance = instance(&engine, COUNTING).unwrap();
+        let (data_ptr, size_ptr) = (GuestPtr::from_address(0), GuestPtr::from_address(4));
+
+        // Act
+        let result = write_return(instance.store_mut(), b"abc", data_ptr, size_ptr);
+
+        // Assert
+        assert!(result.is_ok());
+        let memory = instance.memory().unwrap();
+        assert_eq!(memory.read_u32(data_ptr), Ok(1024));
+        assert_eq!(memory.read_u32(size_ptr), Ok(3));
+    }
+
+    #[test]
+    fn an_optional_return_with_no_data_pointer_writes_the_size_alone() {
+        // Arrange
+        let engine = engine();
+        let mut instance = instance(&engine, COUNTING).unwrap();
+        let size_ptr = GuestPtr::from_address(104);
+
+        // Act
+        let result = write_optional_return(instance.store_mut(), b"abc", None, Some(size_ptr));
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(allocator_calls(&mut instance), 0);
+        assert_eq!(instance.memory().unwrap().read_u32(size_ptr), Ok(3));
+    }
+
+    #[test]
+    fn an_optional_return_with_no_pointer_at_all_writes_nothing() {
+        // Arrange
+        let engine = engine();
+        let mut instance = instance(&engine, COUNTING).unwrap();
+        let untouched = GuestPtr::from_address(104);
+
+        // Act
+        let result = write_optional_return(instance.store_mut(), b"abc", None, None);
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(allocator_calls(&mut instance), 0);
+        assert_eq!(instance.memory().unwrap().read_u32(untouched), Ok(0));
     }
 
     #[test]

@@ -30,7 +30,7 @@ use crate::abi::v0_2_1::host_functions::call::{context, invocation};
 use crate::abi::v0_2_1::host_functions::callout::open_callout;
 use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{CalloutId, CalloutKind, GrpcCall, GrpcStream, HeaderPairs};
-use crate::codec::pairs::decode_pairs;
+use crate::codec::pairs::{PairLimits, decode_pairs};
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split};
 
 /// The metadata of a gRPC callout, which answers `PARSE_FAILURE` when it does
@@ -38,8 +38,8 @@ use crate::runtime::{GuestPtr, GuestSlice, HostState, split};
 ///
 /// The `From<DecodeError>` of this crate gives `BAD_ARGUMENT`, which the two
 /// opening functions do not accept, so this conversion is made here.
-fn metadata(bytes: &[u8]) -> Result<HeaderPairs<'_>, Failure> {
-    let pairs = decode_pairs(bytes).map_err(|_| Status::ParseFailure)?;
+fn metadata(bytes: &[u8], limits: PairLimits) -> Result<HeaderPairs<'_>, Failure> {
+    let pairs = decode_pairs(bytes, limits).map_err(|_| Status::ParseFailure)?;
     Ok(pairs
         .into_iter()
         .map(|(key, value)| (Cow::Borrowed(key), Cow::Borrowed(value)))
@@ -77,13 +77,14 @@ pub(super) fn proxy_grpc_call(
     let id_ptr = GuestPtr::try_from(return_call_id)?;
     let timeout = Duration::from_millis(u64::from(timeout.cast_unsigned()));
     let (mut memory, state) = split(ctx)?;
+    let limits = state.pair_limits();
     memory.read_u32(id_ptr)?;
     let request = GrpcCall::new(
         Cow::Borrowed(memory.read(upstream)?),
         Cow::Borrowed(memory.read(service)?),
         Cow::Borrowed(memory.read(method)?),
     )
-    .with_initial_metadata(metadata(memory.read(initial)?)?)
+    .with_initial_metadata(metadata(memory.read(initial)?, limits)?)
     .with_message(Cow::Borrowed(memory.read(message)?))
     .with_timeout(timeout);
     let callout = open_callout(state, CalloutKind::GrpcCall, |service, call, id| {
@@ -119,13 +120,14 @@ pub(super) fn proxy_grpc_stream(
     ))?;
     let id_ptr = GuestPtr::try_from(return_stream_id)?;
     let (mut memory, state) = split(ctx)?;
+    let limits = state.pair_limits();
     memory.read_u32(id_ptr)?;
     let request = GrpcStream::new(
         Cow::Borrowed(memory.read(upstream)?),
         Cow::Borrowed(memory.read(service)?),
         Cow::Borrowed(memory.read(method)?),
     )
-    .with_initial_metadata(metadata(memory.read(initial)?)?);
+    .with_initial_metadata(metadata(memory.read(initial)?, limits)?);
     let callout = open_callout(state, CalloutKind::GrpcStream, |service, call, id| {
         service.grpc_stream(call, id, request).map_err(Status::from)
     })?;
@@ -337,6 +339,61 @@ mod tests {
             a[7],
             a[11],
         ))
+    }
+
+    /// An encoded map of `count` pairs, each one byte of key and value.
+    fn big_metadata(count: usize) -> Vec<u8> {
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = (0..count).map(|_| (vec![b'k'], vec![b'v'])).collect();
+        encode_pairs(&pairs).unwrap()
+    }
+
+    /// The arguments of a call whose initial metadata sits clear of the
+    /// other values.
+    fn oversized(instance: &mut Instance) -> Call {
+        let upstream = write(instance, UPSTREAM, b"authz");
+        let service = write(instance, SERVICE, b"example.Authz");
+        let method = write(instance, METHOD, b"Check");
+        let initial = write(instance, 20_000, &big_metadata(1025));
+        Call([
+            upstream.0, upstream.1, service.0, service.1, method.0, method.1, initial.0, initial.1,
+            MESSAGE, 0, 250, RETURN_ID,
+        ])
+    }
+
+    #[test]
+    fn grpc_metadata_above_the_pair_limit_is_a_parse_failure() {
+        // Arrange
+        let engine = engine();
+        let service = Arc::new(RecordingCallouts::new());
+        let (mut instance, _) = callout_hosted(&engine, GUEST, services_with(service.clone()));
+        let call = oversized(&mut instance);
+
+        // Act
+        let result = grpc_call(&mut instance, &call);
+
+        // Assert
+        assert_eq!(
+            result,
+            Status::ParseFailure,
+            "the ABI lists no BAD_ARGUMENT for the two functions that open a gRPC callout"
+        );
+        assert!(service.grpc_calls().is_empty());
+    }
+
+    #[test]
+    fn a_grpc_stream_refuses_metadata_above_the_pair_limit() {
+        // Arrange
+        let engine = engine();
+        let service = Arc::new(RecordingCallouts::new());
+        let (mut instance, _) = callout_hosted(&engine, GUEST, services_with(service.clone()));
+        let call = oversized(&mut instance);
+
+        // Act
+        let result = grpc_stream(&mut instance, &call);
+
+        // Assert
+        assert_eq!(result, Status::ParseFailure);
+        assert!(service.grpc_calls().is_empty());
     }
 
     fn written_id(instance: &mut Instance) -> u32 {

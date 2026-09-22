@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::codec::pairs::{DEFAULT_MAX_DECODED_MAP_BYTES, DEFAULT_MAX_DECODED_PAIRS, PairLimits};
+
 const DEFAULT_CPU_TIME: Duration = Duration::from_secs(1);
 const DEFAULT_MEMORY_BYTES: usize = 128 * 1024 * 1024;
 
@@ -11,6 +13,8 @@ const DEFAULT_MEMORY_BYTES: usize = 128 * 1024 * 1024;
 /// before every call.
 /// The memory ceiling applies to the instance's linear memory.
 /// A guest that grows past it sees `memory.grow` fail.
+/// The two decode limits apply to each map a guest sends to the host, which
+/// a guest writes and therefore sizes.
 /// The struct is non exhaustive, so build it with [`Limits::new`] and the
 /// `with_*` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +23,8 @@ pub struct Limits {
     cpu_time: Duration,
     fuel: Option<u64>,
     memory_bytes: Option<usize>,
+    max_decoded_pairs: Option<u32>,
+    max_decoded_map_bytes: Option<usize>,
 }
 
 impl Default for Limits {
@@ -27,6 +33,8 @@ impl Default for Limits {
             cpu_time: DEFAULT_CPU_TIME,
             fuel: None,
             memory_bytes: Some(DEFAULT_MEMORY_BYTES),
+            max_decoded_pairs: Some(DEFAULT_MAX_DECODED_PAIRS),
+            max_decoded_map_bytes: Some(DEFAULT_MAX_DECODED_MAP_BYTES),
         }
     }
 }
@@ -60,6 +68,31 @@ impl Limits {
         self
     }
 
+    /// Sets the most pairs one map a guest sends may declare, or removes the
+    /// limit with `None`.
+    ///
+    /// A guest that sends a larger map receives `BAD_ARGUMENT`, and
+    /// `PARSE_FAILURE` from the two functions that open a gRPC callout.
+    #[must_use]
+    pub fn with_max_decoded_pairs(mut self, max_decoded_pairs: impl Into<Option<u32>>) -> Self {
+        self.max_decoded_pairs = max_decoded_pairs.into();
+        self
+    }
+
+    /// Sets the most bytes one map a guest sends may hold, or removes the
+    /// limit with `None`.
+    ///
+    /// A guest that sends a longer map receives the same status as one that
+    /// declares too many pairs.
+    #[must_use]
+    pub fn with_max_decoded_map_bytes(
+        mut self,
+        max_decoded_map_bytes: impl Into<Option<usize>>,
+    ) -> Self {
+        self.max_decoded_map_bytes = max_decoded_map_bytes.into();
+        self
+    }
+
     /// The CPU time each guest call may use.
     pub fn cpu_time(&self) -> Duration {
         self.cpu_time
@@ -74,11 +107,72 @@ impl Limits {
     pub fn memory_bytes(&self) -> Option<usize> {
         self.memory_bytes
     }
+
+    /// The most pairs one map a guest sends may declare.
+    pub fn max_decoded_pairs(&self) -> Option<u32> {
+        self.max_decoded_pairs
+    }
+
+    /// The most bytes one map a guest sends may hold.
+    pub fn max_decoded_map_bytes(&self) -> Option<usize> {
+        self.max_decoded_map_bytes
+    }
+
+    pub(crate) fn pair_limits(&self) -> PairLimits {
+        PairLimits::new(self.max_decoded_pairs, self.max_decoded_map_bytes)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_limits_are_the_values_of_the_cpp_host() {
+        // Arrange
+        let limits = Limits::default();
+
+        // Act
+        let observed = (limits.max_decoded_pairs(), limits.max_decoded_map_bytes());
+
+        // Assert
+        assert_eq!(observed, (Some(1024), Some(1024 * 1024)));
+        assert_eq!(limits.pair_limits(), PairLimits::default());
+    }
+
+    #[test]
+    fn a_limit_removed_with_none_reads_back_as_none() {
+        // Arrange
+        let limits = Limits::new();
+
+        // Act
+        let observed = limits
+            .with_max_decoded_pairs(None)
+            .with_max_decoded_map_bytes(None);
+
+        // Assert
+        assert_eq!(observed.max_decoded_pairs(), None);
+        assert_eq!(observed.max_decoded_map_bytes(), None);
+        assert_eq!(observed.pair_limits(), PairLimits::unlimited());
+    }
+
+    #[test]
+    fn a_raised_limit_reaches_the_pair_limits() {
+        // Arrange
+        let limits = Limits::new();
+
+        // Act
+        let observed = limits.with_max_decoded_pairs(4096);
+
+        // Assert
+        assert_eq!(observed.max_decoded_pairs(), Some(4096));
+        assert_eq!(observed.pair_limits().pairs(), Some(4096));
+        assert_eq!(
+            observed.pair_limits().bytes(),
+            Some(1024 * 1024),
+            "the byte limit must not change"
+        );
+    }
 
     #[test]
     fn default_bounds_cpu_and_memory_and_not_fuel() {

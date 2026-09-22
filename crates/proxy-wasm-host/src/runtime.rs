@@ -25,7 +25,7 @@ pub use limits::Limits;
 pub(crate) use memory::{GuestMemory, GuestPtr, GuestSlice};
 pub use module::Module;
 
-pub(crate) use alloc::write_return;
+pub(crate) use alloc::{write_optional_return, write_return};
 pub(crate) use host_state::HostState;
 pub(crate) use memory::split;
 
