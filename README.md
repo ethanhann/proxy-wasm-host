@@ -36,6 +36,22 @@ Run `just` with no arguments to list every recipe.
 It needs rustup, and it installs the pinned toolchain and the `wasm32-wasip1` target on first use.
 `just bench` runs the benchmarks.
 
+## Examples
+
+```sh
+cargo run --example http_server
+curl http://127.0.0.1:2045/
+```
+
+```text
+INFO http_server: listening on 127.0.0.1:2045 with the plugin .../add-request-header.wasm
+INFO request{path="/"}: http_server: GET /
+INFO request{path="/"}: guest: adding header
+```
+
+The answer lists the headers, and it carries the header the plugin added.
+`cargo run --example http_workers` runs the same request through a pool of workers, where each worker has its own guest.
+
 ## License
 
 Apache License, Version 2.0.

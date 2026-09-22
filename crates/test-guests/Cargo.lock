@@ -46,6 +46,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-example"
+version = "0.0.0"
+dependencies = [
+ "proxy-wasm",
+]
+
+[[package]]
 name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"

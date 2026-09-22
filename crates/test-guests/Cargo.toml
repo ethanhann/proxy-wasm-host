@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["add-request-header", "exercise-all"]
+members = ["add-request-header", "exercise-all", "http-example"]
 
 [profile.release]
 opt-level = "s"

@@ -11,6 +11,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+autoexamples = false
+
 [lints]
 workspace = true
 
@@ -22,8 +24,18 @@ wasmtime.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+tiny_http.workspace = true
+tracing-subscriber.workspace = true
 wat.workspace = true
 
 [[bench]]
 name = "lifecycle"
 harness = false
+
+[[example]]
+name = "http_server"
+test = true
+
+[[example]]
+name = "http_workers"
+test = true
