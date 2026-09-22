@@ -149,6 +149,7 @@ impl<H: StreamState> CallScope<'_, H> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::v0_2_1::AbiAccess;
     use crate::abi::v0_2_1::call_scope::stream::tests::{answer, guest_of, with_stream, word};
     use crate::abi::v0_2_1::test_support::RecordingStream;
     use crate::abi::v0_2_1::{ContextProblem, GuestError};
@@ -430,5 +431,184 @@ mod tests {
             "is a TCP stream and took a callback of an HTTP stream"
         );
         assert_eq!(StreamKind::Http.to_string(), "an HTTP stream");
+    }
+
+    #[test]
+    fn a_connection_close_is_refused_on_a_root_an_unknown_context_and_a_poisoned_guest() {
+        // Arrange
+        let (mut guest, root, stream) = with_stream(TCP);
+        let unknown = ContextId::try_from(99).unwrap();
+        let mut scope = guest.enter(RecordingStream::new());
+        let refusals = [
+            scope.on_downstream_connection_close(root, PeerType::Local),
+            scope.on_downstream_connection_close(unknown, PeerType::Local),
+        ];
+        drop(scope.finish());
+        guest.instance_mut().state_mut().poison();
+        let mut scope = guest.enter(RecordingStream::new());
+
+        // Act
+        let poisoned = scope.on_upstream_connection_close(stream, PeerType::Local);
+
+        // Assert
+        assert!(
+            matches!(
+                refusals[0],
+                Err(GuestError::Context {
+                    problem: ContextProblem::NotStream,
+                    ..
+                })
+            ),
+            "{refusals:?}"
+        );
+        assert!(
+            matches!(
+                refusals[1],
+                Err(GuestError::Context {
+                    problem: ContextProblem::Unknown,
+                    ..
+                })
+            ),
+            "{refusals:?}"
+        );
+        assert!(
+            matches!(poisoned, Err(GuestError::Runtime(crate::Error::Poisoned))),
+            "{poisoned:?}"
+        );
+    }
+
+    #[test]
+    fn a_connection_close_is_refused_under_a_refused_root_and_for_the_other_family() {
+        // Arrange
+        let (mut guest, root, stream) = with_stream(TCP);
+        let mut scope = guest.enter(RecordingStream::new());
+        scope.on_request_headers(stream, 0, false).unwrap();
+        let wrong_family = scope.on_downstream_connection_close(stream, PeerType::Local);
+        drop(scope.finish());
+        let (mut other, other_root, other_stream) = with_stream(TCP);
+        other
+            .instance_mut()
+            .state_mut()
+            .abi_mut()
+            .contexts_mut()
+            .reject(other_root);
+        let mut scope = other.enter(RecordingStream::new());
+
+        // Act
+        let refused_root = scope.on_upstream_connection_close(other_stream, PeerType::Remote);
+
+        // Assert
+        assert!(
+            matches!(
+                wrong_family,
+                Err(GuestError::Context {
+                    problem: ContextProblem::WrongStreamKind {
+                        recorded: StreamKind::Http,
+                        attempted: StreamKind::Tcp
+                    },
+                    ..
+                })
+            ),
+            "{wrong_family:?}"
+        );
+        assert!(
+            matches!(refused_root, Err(GuestError::GuestRejected { .. })),
+            "{refused_root:?}"
+        );
+        assert_eq!(root, other_root, "both guests number their roots the same");
+    }
+
+    #[test]
+    fn a_connection_close_names_one_stream_context_for_each_scope() {
+        // Arrange
+        let (mut guest, root, first) = with_stream(TCP);
+        let second = guest.enter_root().on_context_create(Some(root)).unwrap();
+        let mut scope = guest.enter(RecordingStream::new());
+        scope.on_new_connection(first).unwrap();
+
+        // Act
+        let answer = scope.on_downstream_connection_close(second, PeerType::Local);
+
+        // Assert
+        assert!(
+            matches!(
+                answer,
+                Err(GuestError::Context {
+                    problem: ContextProblem::OtherStream { lent },
+                    ..
+                }) if lent == first
+            ),
+            "{answer:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_peer_reaches_the_guest_and_a_size_above_the_maximum_is_refused() {
+        // Arrange
+        let (mut guest, _, stream) = with_stream(TCP);
+        let too_large = i32::MAX.cast_unsigned() + 1;
+        let mut scope = guest.enter(RecordingStream::new());
+        scope
+            .on_downstream_connection_close(stream, PeerType::Unknown)
+            .unwrap();
+
+        // Act
+        let refused = scope.on_downstream_data(stream, too_large, false);
+
+        // Assert
+        assert!(
+            matches!(
+                refused,
+                Err(GuestError::Runtime(crate::Error::ValueTooLarge { .. }))
+            ),
+            "{refused:?}"
+        );
+        drop(scope.finish());
+        assert_eq!(word(&mut guest, 404), 0, "the unknown peer is zero");
+        assert_eq!(word(&mut guest, 212), 0, "the data callback did not run");
+    }
+
+    #[test]
+    fn an_answer_of_a_tcp_callback_that_is_not_an_action_is_an_unexpected_return() {
+        // Arrange
+        let (mut guest, _, stream) = with_stream(TCP);
+        answer(&mut guest, 9);
+        let mut scope = guest.enter(RecordingStream::new());
+
+        // Act
+        let answer = scope.on_upstream_data(stream, 0, false);
+
+        // Assert
+        assert!(
+            matches!(
+                answer,
+                Err(GuestError::UnexpectedReturn {
+                    callback: Callback::UpstreamData,
+                    value: 9
+                })
+            ),
+            "{answer:?}"
+        );
+    }
+
+    #[test]
+    fn a_declaration_is_refused_on_a_poisoned_guest() {
+        // Arrange
+        let (mut guest, _, stream) = with_stream(TCP);
+        guest.instance_mut().state_mut().poison();
+
+        // Act
+        let answer = guest.expect_stream_kind(stream, StreamKind::Tcp);
+
+        // Assert
+        assert!(
+            matches!(answer, Err(GuestError::Runtime(crate::Error::Poisoned))),
+            "{answer:?}"
+        );
+        assert_eq!(
+            guest.context_stream_kind(stream),
+            None,
+            "nothing was written"
+        );
     }
 }

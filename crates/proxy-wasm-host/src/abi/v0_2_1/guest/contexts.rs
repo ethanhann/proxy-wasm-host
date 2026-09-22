@@ -61,6 +61,9 @@ impl Guest {
     /// context, and with `WrongStreamKind` for a context that already serves
     /// the other family.
     /// A declaration that repeats the family of the context answers `Ok`.
+    /// Returns [`GuestError::Runtime`] with
+    /// [`Error::Poisoned`](crate::Error::Poisoned) on a guest that failed,
+    /// as every callback does.
     pub fn expect_stream_kind(
         &mut self,
         context: ContextId,
@@ -70,31 +73,26 @@ impl Guest {
             id: context,
             problem,
         };
+        self.require_live()?;
         match self.context_type(context) {
             None => return Err(problem(ContextProblem::Unknown)),
             Some(ContextType::Root) => return Err(problem(ContextProblem::NotStream)),
             Some(ContextType::Stream) => {}
         }
-        let had = self
-            .instance
+        if let Some(recorded) = self.context_stream_kind(context)
+            && recorded != kind
+        {
+            return Err(problem(ContextProblem::WrongStreamKind {
+                recorded,
+                attempted: kind,
+            }));
+        }
+        self.instance
             .state_mut()
             .abi_mut()
             .contexts_mut()
             .set_stream_kind(context, kind);
-        match had {
-            Some(recorded) if recorded != kind => {
-                self.instance
-                    .state_mut()
-                    .abi_mut()
-                    .contexts_mut()
-                    .set_stream_kind(context, recorded);
-                Err(problem(ContextProblem::WrongStreamKind {
-                    recorded,
-                    attempted: kind,
-                }))
-            }
-            _ => Ok(()),
-        }
+        Ok(())
     }
 
     /// Whether `context` is a root context or a stream context.

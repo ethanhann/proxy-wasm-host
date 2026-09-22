@@ -132,8 +132,13 @@ impl<H: StreamState> CallScope<'_, H> {
 /// The fields travel in one value, because the argument list would otherwise
 /// pass the limit that clippy sets.
 pub(super) struct Delivered<P: WasmParams> {
-    /// The root of the caller, which the guest gets as the plugin context.
-    pub(super) root: ContextId,
+    /// The context the guest gets as its first argument.
+    ///
+    /// A callout delivery passes the root of the caller, which a guest SDK
+    /// requires.
+    /// A foreign function call passes the context the embedder named, which
+    /// the ABI calls the plugin context and a guest SDK ignores.
+    pub(super) context: ContextId,
     /// The callout the delivery answers, which a foreign function call has
     /// none of.
     pub(super) callout: Option<CalloutId>,
@@ -174,7 +179,14 @@ pub(super) fn deliver<P: WasmParams>(
         None => None,
     };
     abi.set_delivery(Some(call.delivery));
-    let result = prologue::run(guest, call.root, call.callback, call.func, call.params, ());
+    let result = prologue::run(
+        guest,
+        call.context,
+        call.callback,
+        call.func,
+        call.params,
+        (),
+    );
     let poisoned = guest.is_poisoned();
     let abi = guest.instance_mut().state_mut().abi_mut();
     abi.set_delivery(None);
@@ -203,7 +215,7 @@ pub(super) fn deliver_http_response(
     deliver(
         guest,
         Delivered {
-            root,
+            context: root,
             callout: Some(callout),
             delivery: Delivery::http_call_response(callout, response),
             callback: Callback::HttpCallResponse,
@@ -238,7 +250,7 @@ pub(super) fn deliver_grpc_close(
     deliver(
         guest,
         Delivered {
-            root,
+            context: root,
             callout: Some(callout),
             delivery: Delivery::grpc_close(callout, status),
             callback: Callback::GrpcClose,

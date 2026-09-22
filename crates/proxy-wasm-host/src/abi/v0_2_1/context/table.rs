@@ -554,4 +554,48 @@ mod tests {
         assert!(table.plugin(root).is_none());
         assert_eq!(table.tick_period(root), None);
     }
+
+    #[test]
+    fn the_family_of_a_stream_context_is_recorded_and_answered() {
+        // Arrange
+        let mut table = ContextTable::new();
+        let root = table.create(None).unwrap();
+        let stream = table.create(Some(root)).unwrap();
+
+        // Act
+        let had = table.set_stream_kind(stream, StreamKind::Http);
+
+        // Assert
+        assert_eq!(had, None, "the context had no family");
+        assert_eq!(table.stream_kind(stream), Some(StreamKind::Http));
+        assert_eq!(table.stream_kind(root), None, "a root serves no stream");
+        assert_eq!(
+            table.set_stream_kind(stream, StreamKind::Tcp),
+            Some(StreamKind::Http),
+            "the answer names the family the context had"
+        );
+    }
+
+    #[test]
+    fn the_family_ends_with_its_context_and_no_identifier_returns() {
+        // Arrange
+        let mut table = ContextTable::new();
+        let root = table.create(None).unwrap();
+        let stream = table.create(Some(root)).unwrap();
+        table.set_stream_kind(stream, StreamKind::Tcp);
+        table.remove(stream);
+
+        // Act
+        let next = table.create(Some(root)).unwrap();
+
+        // Assert
+        assert_ne!(next, stream);
+        assert_eq!(table.stream_kind(stream), None);
+        assert_eq!(table.stream_kind(next), None);
+        assert_eq!(
+            table.set_stream_kind(stream, StreamKind::Tcp),
+            None,
+            "a context that is gone takes no family"
+        );
+    }
 }

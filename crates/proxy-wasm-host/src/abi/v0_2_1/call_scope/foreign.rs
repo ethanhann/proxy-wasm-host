@@ -52,7 +52,7 @@ impl<H: StreamState> CallScope<'_, H> {
         deliver(
             self.guest,
             Delivered {
-                root: context,
+                context,
                 callout: None,
                 delivery: Delivery::foreign_arguments(arguments),
                 callback: Callback::ForeignFunction,
@@ -266,6 +266,64 @@ mod tests {
         assert!(
             calls.iter().all(|call| call.0.callout.is_none()),
             "{calls:?}"
+        );
+    }
+
+    #[test]
+    fn the_callback_is_refused_on_a_poisoned_guest() {
+        // Arrange
+        let (mut guest, _, stream) = with_stream(FOREIGN);
+        guest.instance_mut().state_mut().poison();
+        let mut scope = guest.enter(RecordingStream::new());
+
+        // Act
+        let answer = scope.on_foreign_function(stream, 1, arguments());
+
+        // Assert
+        assert!(
+            matches!(answer, Err(GuestError::Runtime(crate::Error::Poisoned))),
+            "{answer:?}"
+        );
+    }
+
+    #[test]
+    fn every_write_of_the_arguments_is_not_found_and_the_stream_state_is_not_asked() {
+        // Arrange
+        let writer = r#"(module
+            (import "env" "proxy_set_buffer_bytes" (func $set (param i32 i32 i32 i32 i32) (result i32)))
+            (import "env" "proxy_get_buffer_status" (func $buffer (param i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 900) "new")
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 8192)
+            (func (export "proxy_abi_version_0_2_1"))
+            (func (export "proxy_on_foreign_function") (param i32 i32 i32)
+                (i32.store (i32.const 0)
+                    (call $set (i32.const 8) (i32.const 0) (i32.const 0)
+                        (i32.const 900) (i32.const 3)))
+                (i32.store (i32.const 4) (call $buffer (i32.const 8) (i32.const 8) (i32.const 12)))))"#;
+        let (mut guest, _, stream) = with_stream(writer);
+        let state = RecordingStream::new().with_buffer(
+            crate::abi::v0_2_1::types::BufferType::ForeignFunctionArguments,
+            b"old",
+        );
+        let mut scope = guest.enter(state);
+
+        // Act
+        let answer = scope.on_foreign_function(stream, 1, arguments());
+
+        // Assert
+        assert!(answer.is_ok(), "{answer:?}");
+        let stream_state = scope.finish();
+        assert_eq!(status(word(&mut guest, 0).cast_signed()), Status::NotFound);
+        assert_eq!(
+            status(word(&mut guest, 4).cast_signed()),
+            Status::Ok,
+            "the read answers the arguments of the crate"
+        );
+        assert_eq!(word(&mut guest, 8), 5, "the arguments of the call");
+        assert!(
+            stream_state.buffer_calls().is_empty(),
+            "the stream state was not asked"
         );
     }
 }

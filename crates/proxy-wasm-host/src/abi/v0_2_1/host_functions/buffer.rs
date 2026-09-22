@@ -123,7 +123,7 @@ fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<
             }
         }
         Served::Embedder => {
-            let announced = state.abi().announced(buffer_type);
+            let announced = state.abi_mut().take_announced(buffer_type);
             let (call, stream) = with_stream(state, Status::NotFound)?;
             let buffer = from_embedder("buffer", stream.buffer(call, Access::Read, buffer_type))?;
             report_announced(buffer_type, announced, buffer.len());
@@ -139,6 +139,8 @@ fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<
 /// gives the guest a short read with an `OK` status and a size that is too
 /// small hides bytes.
 /// Neither answer names the mistake, so the crate names it here.
+/// The caller takes the record, so one callback reports at most one
+/// difference.
 fn report_announced(buffer_type: BufferType, announced: Option<u32>, length: usize) {
     let Some(announced) = announced else {
         return;
@@ -248,7 +250,8 @@ mod tests {
         RecordingSink, RecordingStream, bare, engine, hosted, instance_with, outcome, status,
         unhosted, wat_bytes, write,
     };
-    use crate::abi::v0_2_1::{Access, CalloutId, HttpCallResponse, PluginConfig};
+    use crate::abi::v0_2_1::types::PeerType;
+    use crate::abi::v0_2_1::{Access, CalloutId, ContextId, HttpCallResponse, PluginConfig};
     use crate::runtime::{GuestSlice, Instance, Module};
 
     const BODY: i32 = BufferType::HttpRequestBody as i32;
@@ -1183,5 +1186,172 @@ mod tests {
         // Assert
         assert_eq!(counted, 0);
         assert_eq!(returned(&mut instance), b"four".to_vec());
+    }
+
+    /// A guest that reads the downstream data buffer twice and reads it
+    /// again in a connection close callback.
+    const TWICE: &str = r#"(module
+        (import "env" "proxy_get_buffer_bytes" (func $get (param i32 i32 i32 i32 i32) (result i32)))
+        (import "env" "proxy_get_buffer_status" (func $size (param i32 i32 i32) (result i32)))
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 8192)
+        (func (export "proxy_abi_version_0_2_1"))
+        (func $read
+            (i32.store (i32.const 0) (call $size (i32.const 2) (i32.const 8) (i32.const 12)))
+            (i32.store (i32.const 4)
+                (call $get (i32.const 2) (i32.const 0) (i32.const 2147483647)
+                    (i32.const 100) (i32.const 104))))
+        (func (export "proxy_on_downstream_data") (param i32 i32 i32) (result i32)
+            call $read
+            i32.const 0)
+        (func (export "proxy_on_downstream_connection_close") (param i32 i32)
+            call $read))"#;
+
+    /// A guest, its stream context, and a stream state that holds `bytes`.
+    fn data_guest(bytes: &'static [u8]) -> (crate::abi::v0_2_1::Guest, ContextId) {
+        let engine = engine();
+        let host = crate::abi::v0_2_1::Host::new(&engine).unwrap();
+        let module = Module::new(&engine, &wat_bytes(TWICE)).unwrap();
+        let mut guest = crate::abi::v0_2_1::Guest::new(
+            &host,
+            &module,
+            crate::abi::v0_2_1::test_support::services(),
+            &crate::runtime::Limits::default(),
+        )
+        .unwrap();
+        let root = guest.enter_root().on_context_create(None).unwrap();
+        let stream = guest.enter_root().on_context_create(Some(root)).unwrap();
+        let _ = bytes;
+        (guest, stream)
+    }
+
+    #[test]
+    fn one_data_callback_reports_one_warning_however_often_the_guest_reads() {
+        // Arrange
+        use crate::abi::v0_2_1::test_support::events::warnings;
+        let (mut guest, stream) = data_guest(b"four");
+        let state = RecordingStream::new().with_buffer(BufferType::DownstreamData, b"four");
+
+        // Act
+        let counted = warnings(|| {
+            let mut scope = guest.enter(state);
+            let _ = scope.on_downstream_data(stream, 4096, false);
+            drop(scope.finish());
+        });
+
+        // Assert
+        assert_eq!(counted, 1, "the guest read the buffer twice");
+    }
+
+    #[test]
+    fn a_size_no_guest_read_ends_with_its_callback() {
+        // Arrange
+        use crate::abi::v0_2_1::test_support::events::warnings;
+        let quiet = r#"(module
+            (import "env" "proxy_get_buffer_bytes" (func $get (param i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 8192)
+            (func (export "proxy_abi_version_0_2_1"))
+            (func (export "proxy_on_downstream_data") (param i32 i32 i32) (result i32) i32.const 0)
+            (func (export "proxy_on_downstream_connection_close") (param i32 i32)
+                (i32.store (i32.const 0)
+                    (call $get (i32.const 2) (i32.const 0) (i32.const 2147483647)
+                        (i32.const 100) (i32.const 104)))))"#;
+        let engine = engine();
+        let host = crate::abi::v0_2_1::Host::new(&engine).unwrap();
+        let module = Module::new(&engine, &wat_bytes(quiet)).unwrap();
+        let mut guest = crate::abi::v0_2_1::Guest::new(
+            &host,
+            &module,
+            crate::abi::v0_2_1::test_support::services(),
+            &crate::runtime::Limits::default(),
+        )
+        .unwrap();
+        let root = guest.enter_root().on_context_create(None).unwrap();
+        let stream = guest.enter_root().on_context_create(Some(root)).unwrap();
+        let first = RecordingStream::new().with_buffer(BufferType::DownstreamData, b"four");
+        let second = RecordingStream::new().with_buffer(BufferType::DownstreamData, b"four");
+        let mut scope = guest.enter(first);
+        let _ = scope.on_downstream_data(stream, 4096, false);
+        drop(scope.finish());
+
+        // Act
+        let later = warnings(|| {
+            let mut scope = guest.enter(second);
+            let _ = scope.on_downstream_connection_close(stream, PeerType::Local);
+            drop(scope.finish());
+        });
+
+        // Assert
+        assert_eq!(
+            later, 0,
+            "the record of the data callback ended with that callback"
+        );
+    }
+
+    #[test]
+    fn the_record_of_a_size_ends_with_its_callback() {
+        // Arrange
+        use crate::abi::v0_2_1::test_support::events::warnings;
+        let (mut guest, stream) = data_guest(b"four");
+        let first = RecordingStream::new().with_buffer(BufferType::DownstreamData, b"four");
+        let second = RecordingStream::new().with_buffer(BufferType::DownstreamData, b"four");
+        let counted = warnings(|| {
+            let mut scope = guest.enter(first);
+            let _ = scope.on_downstream_data(stream, 4096, false);
+            drop(scope.finish());
+        });
+
+        // Act
+        let later = warnings(|| {
+            let mut scope = guest.enter(second);
+            let _ = scope.on_downstream_connection_close(stream, PeerType::Local);
+            drop(scope.finish());
+        });
+
+        // Assert
+        assert_eq!(counted, 1, "the data callback reported the difference");
+        assert_eq!(later, 0, "the close callback announced no size");
+    }
+
+    #[test]
+    fn a_read_of_another_buffer_inside_a_data_callback_reports_nothing() {
+        // Arrange
+        use crate::abi::v0_2_1::test_support::events::warnings;
+        let reader = r#"(module
+            (import "env" "proxy_get_buffer_bytes" (func $get (param i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 8192)
+            (func (export "proxy_abi_version_0_2_1"))
+            (func (export "proxy_on_downstream_data") (param i32 i32 i32) (result i32)
+                (i32.store (i32.const 0)
+                    (call $get (i32.const 3) (i32.const 0) (i32.const 2147483647)
+                        (i32.const 100) (i32.const 104)))
+                i32.const 0))"#;
+        let engine = engine();
+        let host = crate::abi::v0_2_1::Host::new(&engine).unwrap();
+        let module = Module::new(&engine, &wat_bytes(reader)).unwrap();
+        let mut guest = crate::abi::v0_2_1::Guest::new(
+            &host,
+            &module,
+            crate::abi::v0_2_1::test_support::services(),
+            &crate::runtime::Limits::default(),
+        )
+        .unwrap();
+        let root = guest.enter_root().on_context_create(None).unwrap();
+        let stream = guest.enter_root().on_context_create(Some(root)).unwrap();
+        let state = RecordingStream::new()
+            .with_buffer(BufferType::DownstreamData, b"four")
+            .with_buffer(BufferType::UpstreamData, b"other");
+
+        // Act
+        let counted = warnings(|| {
+            let mut scope = guest.enter(state);
+            let _ = scope.on_downstream_data(stream, 4096, false);
+            drop(scope.finish());
+        });
+
+        // Assert
+        assert_eq!(counted, 0, "the guest read the buffer of the other side");
     }
 }

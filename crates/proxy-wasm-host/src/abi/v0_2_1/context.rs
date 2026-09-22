@@ -94,6 +94,8 @@ pub enum ContextType {
 /// family you serve with
 /// [`Guest::expect_stream_kind`](crate::abi::v0_2_1::Guest::expect_stream_kind)
 /// before the first callback of a context.
+/// The ABI names two families and no more, so this enumeration is closed
+/// and you match it with two arms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StreamKind {
     /// A TCP stream, which takes the connection callbacks and the two data
@@ -141,6 +143,12 @@ pub enum ContextProblem {
     NotDone,
     /// The root context still has stream contexts under it.
     HasChildren,
+    /// The scope serves another stream context, and its stream state
+    /// belongs to that one.
+    OtherStream {
+        /// The stream context that the scope serves.
+        lent: ContextId,
+    },
     /// The context serves one family of stream, and the callback belongs to
     /// the other family.
     WrongStreamKind {
@@ -160,6 +168,9 @@ impl fmt::Display for ContextProblem {
             Self::NotStream => f.write_str("is not a stream context"),
             Self::NotDone => f.write_str("is not done"),
             Self::HasChildren => f.write_str("still has stream contexts"),
+            Self::OtherStream { lent } => {
+                write!(f, "is not the stream context {lent} that this scope serves")
+            }
             Self::WrongStreamKind {
                 recorded,
                 attempted,

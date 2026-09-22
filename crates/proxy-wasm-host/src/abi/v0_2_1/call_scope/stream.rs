@@ -11,9 +11,48 @@ use wasmtime::{TypedFunc, WasmParams};
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
 use crate::abi::v0_2_1::types::{Action, BufferType};
-use crate::abi::v0_2_1::{Callback, ContextId, GuestError, StreamKind, StreamState};
+use crate::abi::v0_2_1::{
+    Callback, ContextId, ContextProblem, GuestError, StreamKind, StreamState,
+};
 
 impl<H: StreamState> CallScope<'_, H> {
+    /// Refuses a stream callback that names another context than the one
+    /// this scope serves, and records the context of the first one.
+    ///
+    /// The stream state you lent belongs to one request, and a callback of
+    /// another request would give the guest the data of the wrong one.
+    fn require_served(&mut self, context: ContextId) -> Result<(), GuestError> {
+        match self.served {
+            Some(lent) if lent != context => Err(GuestError::Context {
+                id: context,
+                problem: ContextProblem::OtherStream { lent },
+            }),
+            _ => {
+                self.served = Some(context);
+                Ok(())
+            }
+        }
+    }
+
+    /// Declares the family of stream that `context` serves, as
+    /// [`Guest::expect_stream_kind`](crate::abi::v0_2_1::Guest::expect_stream_kind)
+    /// does.
+    ///
+    /// You create a stream context and declare its family in one scope, so
+    /// the record holds from the first callback of that context.
+    ///
+    /// # Errors
+    ///
+    /// The errors of
+    /// [`Guest::expect_stream_kind`](crate::abi::v0_2_1::Guest::expect_stream_kind).
+    pub fn expect_stream_kind(
+        &mut self,
+        context: ContextId,
+        kind: StreamKind,
+    ) -> Result<(), GuestError> {
+        self.guest.expect_stream_kind(context, kind)
+    }
+
     /// Runs one stream callback that answers an action.
     ///
     /// The checks run in the order every callback of a context uses, and the
@@ -34,6 +73,7 @@ impl<H: StreamState> CallScope<'_, H> {
         prologue::require_stream(self.guest, context)?;
         prologue::accepted(self.guest, context)?;
         prologue::require_stream_kind(self.guest, context, kind)?;
+        self.require_served(context)?;
         prologue::record_stream_kind(self.guest, context, kind);
         let default = i32::from(Action::Continue);
         self.guest
@@ -64,6 +104,7 @@ impl<H: StreamState> CallScope<'_, H> {
         prologue::require_stream(self.guest, context)?;
         prologue::accepted(self.guest, context)?;
         prologue::require_stream_kind(self.guest, context, kind)?;
+        self.require_served(context)?;
         prologue::record_stream_kind(self.guest, context, kind);
         prologue::run(self.guest, context, callback, func, params, ())?;
         Ok(())
@@ -239,12 +280,13 @@ impl<H: StreamState> CallScope<'_, H> {
 
 #[cfg(test)]
 pub(super) mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::Error;
-    use crate::abi::v0_2_1::test_support::{RecordingStream, engine, wat_bytes};
-    use crate::abi::v0_2_1::{ContextProblem, Guest, Host, VmServices};
+    use crate::abi::v0_2_1::test_support::{RecordingSink, RecordingStream, engine, wat_bytes};
+    use crate::abi::v0_2_1::{Guest, Host, VmServices};
     use crate::runtime::{GuestPtr, Limits, Module};
-    use std::sync::Arc;
 
     /// A guest that records each HTTP callback it gets.
     ///
@@ -290,9 +332,7 @@ pub(super) mod tests {
         let engine = engine();
         let host = Host::new(&engine).unwrap();
         let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
-        let services = VmServices::new(Arc::new(
-            crate::abi::v0_2_1::test_support::RecordingSink::default(),
-        ));
+        let services = VmServices::new(Arc::new(RecordingSink::default()));
         Guest::new(&host, &module, services, &Limits::default()).unwrap()
     }
 
@@ -560,6 +600,8 @@ pub(super) mod tests {
         let second = guest.enter_root().on_context_create(Some(root)).unwrap();
         let mut scope = guest.enter(RecordingStream::new());
         scope.on_request_headers(first, 0, false).unwrap();
+        drop(scope.finish());
+        let mut scope = guest.enter(RecordingStream::new());
 
         // Act
         let answer = scope.on_new_connection(second);
@@ -569,5 +611,82 @@ pub(super) mod tests {
         drop(scope.finish());
         assert_eq!(guest.context_stream_kind(first), Some(StreamKind::Http));
         assert_eq!(guest.context_stream_kind(second), Some(StreamKind::Tcp));
+    }
+
+    #[test]
+    fn a_scope_serves_the_stream_context_of_its_first_callback_alone() {
+        // Arrange
+        let (mut guest, root, first) = with_stream(HTTP);
+        let second = guest.enter_root().on_context_create(Some(root)).unwrap();
+        let mut scope = guest.enter(RecordingStream::new());
+        scope.on_request_headers(first, 0, false).unwrap();
+
+        // Act
+        let answer = scope.on_request_body(second, 0, false);
+
+        // Assert
+        assert!(
+            matches!(
+                answer,
+                Err(GuestError::Context {
+                    problem: ContextProblem::OtherStream { lent },
+                    ..
+                }) if lent == first
+            ),
+            "{answer:?}"
+        );
+        drop(scope.finish());
+        assert_eq!(word(&mut guest, 212), 0, "the guest did not run");
+        assert_eq!(
+            guest.context_stream_kind(second),
+            None,
+            "the refused callback recorded no family"
+        );
+    }
+
+    #[test]
+    fn a_new_scope_serves_a_new_stream_context() {
+        // Arrange
+        let (mut guest, root, first) = with_stream(HTTP);
+        let second = guest.enter_root().on_context_create(Some(root)).unwrap();
+        let mut scope = guest.enter(RecordingStream::new());
+        scope.on_request_headers(first, 0, false).unwrap();
+        drop(scope.finish());
+        let mut scope = guest.enter(RecordingStream::new());
+
+        // Act
+        let answer = scope.on_request_headers(second, 0, false);
+
+        // Assert
+        assert!(matches!(answer, Ok(Action::Continue)), "{answer:?}");
+        drop(scope.finish());
+        assert_eq!(word(&mut guest, 112), 2, "both contexts reached the guest");
+    }
+
+    #[test]
+    fn a_scope_declares_the_family_of_the_context_it_creates() {
+        // Arrange
+        let (mut guest, root, _) = with_stream(HTTP);
+        let mut scope = guest.enter(RecordingStream::new());
+        let stream = scope.on_context_create(Some(root)).unwrap();
+
+        // Act
+        let declared = scope.expect_stream_kind(stream, StreamKind::Http);
+
+        // Assert
+        assert!(declared.is_ok(), "{declared:?}");
+        let refused = scope.on_new_connection(stream);
+        assert!(
+            matches!(
+                refused,
+                Err(GuestError::Context {
+                    problem: ContextProblem::WrongStreamKind { .. },
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+        drop(scope.finish());
+        assert_eq!(guest.context_stream_kind(stream), Some(StreamKind::Http));
     }
 }

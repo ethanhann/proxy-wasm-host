@@ -14,15 +14,16 @@ type HttpCallResponseFn = TypedFunc<(i32, i32, i32, i32, i32), ()>;
 /// count, size, or code.
 type GrpcFn = TypedFunc<(i32, i32, i32), ()>;
 
-/// A stream callback that takes a count and an end of stream flag and
-/// answers an action.
-type DataFn = TypedFunc<(i32, i32, i32), i32>;
+/// A stream callback, which takes the context, a count, and an end of
+/// stream flag, and answers an action.
+type StreamFn = TypedFunc<(i32, i32, i32), i32>;
 
-/// A stream callback that takes one count and answers an action.
+/// A stream callback, which takes the context and one count, and answers an
+/// action.
 type CountFn = TypedFunc<(i32, i32), i32>;
 
-/// A callback that closes one side of a connection, which takes the peer
-/// type and answers nothing.
+/// A callback that closes one side of a connection, which takes the context
+/// and the peer type, and answers nothing.
 type CloseFn = TypedFunc<(i32, i32), ()>;
 
 /// `proxy_on_foreign_function`, which takes the context, the function, and
@@ -35,17 +36,16 @@ pub(crate) struct Callbacks {
     pub(crate) vm_start: Option<TypedFunc<(i32, i32), i32>>,
     pub(crate) configure: Option<TypedFunc<(i32, i32), i32>>,
     pub(crate) new_connection: Option<TypedFunc<i32, i32>>,
-    pub(crate) downstream_data: Option<DataFn>,
+    pub(crate) downstream_data: Option<StreamFn>,
     pub(crate) downstream_connection_close: Option<CloseFn>,
-    pub(crate) upstream_data: Option<DataFn>,
+    pub(crate) upstream_data: Option<StreamFn>,
     pub(crate) upstream_connection_close: Option<CloseFn>,
-    pub(crate) request_headers: Option<DataFn>,
-    pub(crate) request_body: Option<DataFn>,
+    pub(crate) request_headers: Option<StreamFn>,
+    pub(crate) request_body: Option<StreamFn>,
     pub(crate) request_trailers: Option<CountFn>,
-    pub(crate) response_headers: Option<DataFn>,
-    pub(crate) response_body: Option<DataFn>,
+    pub(crate) response_headers: Option<StreamFn>,
+    pub(crate) response_body: Option<StreamFn>,
     pub(crate) response_trailers: Option<CountFn>,
-    pub(crate) foreign_function: Option<ForeignFn>,
     pub(crate) http_call_response: Option<HttpCallResponseFn>,
     pub(crate) grpc_receive_initial_metadata: Option<GrpcFn>,
     pub(crate) grpc_receive: Option<GrpcFn>,
@@ -56,6 +56,7 @@ pub(crate) struct Callbacks {
     pub(crate) delete: Option<TypedFunc<i32, ()>>,
     pub(crate) tick: Option<TypedFunc<i32, ()>>,
     pub(crate) queue_ready: Option<TypedFunc<(i32, i32), ()>>,
+    pub(crate) foreign_function: Option<ForeignFn>,
 }
 
 impl Callbacks {
@@ -77,7 +78,6 @@ impl Callbacks {
             response_headers: instance.typed_func(Callback::ResponseHeaders.export_name())?,
             response_body: instance.typed_func(Callback::ResponseBody.export_name())?,
             response_trailers: instance.typed_func(Callback::ResponseTrailers.export_name())?,
-            foreign_function: instance.typed_func(Callback::ForeignFunction.export_name())?,
             http_call_response: instance.typed_func(Callback::HttpCallResponse.export_name())?,
             grpc_receive_initial_metadata: instance
                 .typed_func(Callback::GrpcReceiveInitialMetadata.export_name())?,
@@ -90,6 +90,7 @@ impl Callbacks {
             delete: instance.typed_func(Callback::Delete.export_name())?,
             tick: instance.typed_func(Callback::Tick.export_name())?,
             queue_ready: instance.typed_func(Callback::QueueReady.export_name())?,
+            foreign_function: instance.typed_func(Callback::ForeignFunction.export_name())?,
         })
     }
 
@@ -109,7 +110,6 @@ impl Callbacks {
             Callback::ResponseHeaders => self.response_headers.is_some(),
             Callback::ResponseBody => self.response_body.is_some(),
             Callback::ResponseTrailers => self.response_trailers.is_some(),
-            Callback::ForeignFunction => self.foreign_function.is_some(),
             Callback::HttpCallResponse => self.http_call_response.is_some(),
             Callback::GrpcReceiveInitialMetadata => self.grpc_receive_initial_metadata.is_some(),
             Callback::GrpcReceive => self.grpc_receive.is_some(),
@@ -120,6 +120,7 @@ impl Callbacks {
             Callback::Delete => self.delete.is_some(),
             Callback::Tick => self.tick.is_some(),
             Callback::QueueReady => self.queue_ready.is_some(),
+            Callback::ForeignFunction => self.foreign_function.is_some(),
         }
     }
 }

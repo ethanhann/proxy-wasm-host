@@ -1,5 +1,7 @@
 //! The state the ABI layer keeps in the wasmtime store.
 
+mod serving;
+
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -198,21 +200,6 @@ impl AbiState {
         &mut self.callouts
     }
 
-    /// Records the buffer and the size that the running data callback
-    /// announced, or clears the record.
-    ///
-    /// A guest that reads that buffer inside the callback gets what the
-    /// stream state holds, and the crate reports a length that differs.
-    pub(crate) fn set_announced(&mut self, announced: Option<(BufferType, u32)>) {
-        self.announced = announced;
-    }
-
-    /// The size the running data callback announced for `buffer`.
-    pub(crate) fn announced(&self, buffer: BufferType) -> Option<u32> {
-        self.announced
-            .and_then(|(kind, size)| (kind == buffer).then_some(size))
-    }
-
     /// Marks the context whose deletion is running, or clears the mark.
     ///
     /// A guest runs plugin code in the failure deliveries of a deletion, and
@@ -225,22 +212,6 @@ impl AbiState {
     /// Whether the deletion of `context` is running.
     pub(crate) fn is_deleting(&self, context: ContextId) -> bool {
         self.deleting == Some(context)
-    }
-
-    /// The result the running callback delivers, which is `None` outside a
-    /// delivery.
-    pub(crate) fn delivery(&self) -> Option<&Delivery> {
-        self.delivery.as_ref()
-    }
-
-    /// The delivered result as a header map read needs it.
-    pub(crate) fn delivery_mut(&mut self) -> Option<&mut Delivery> {
-        self.delivery.as_mut()
-    }
-
-    /// Installs the result of a delivery, or clears it with `None`.
-    pub(crate) fn set_delivery(&mut self, delivery: Option<Delivery>) {
-        self.delivery = delivery;
     }
 
     /// Records that this guest defined a metric.

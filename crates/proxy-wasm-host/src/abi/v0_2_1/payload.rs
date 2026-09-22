@@ -277,10 +277,11 @@ mod tests {
         let answers = [
             delivery.buffer(DeliveredBuffer::GrpcCallMessage),
             delivery.buffer(DeliveredBuffer::HttpCallResponseBody),
+            delivery.buffer(DeliveredBuffer::ForeignFunctionArguments),
         ];
 
         // Assert
-        assert_eq!(answers, [Some(b"hello".as_slice()), None]);
+        assert_eq!(answers, [Some(b"hello".as_slice()), None, None]);
         assert_eq!(delivery.status(), Some((0, "")));
     }
 
