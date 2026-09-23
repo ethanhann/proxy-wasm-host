@@ -71,7 +71,7 @@ The engine burns one unit of fuel for each Wasm instruction.
 When the fuel runs out, Wasmtime stops the guest with a trap.
 This gives the host a deterministic bound on how much work a guest can do in a single call.
 
-This is different from CPU time because the exact instruction count depends on the underlying hardware.
+This is different from CPU time because the instruction count does not depend on the underlying hardware, so a guest call burns the same amount of fuel on every machine.
 It is also, generally speaking, slower than epochs.
 By default, guests have unlimited fuel and are only bound by CPU time and memory ceiling.
 
