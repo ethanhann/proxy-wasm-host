@@ -4,6 +4,7 @@
 //! guest built with an SDK imports most of them whether or not it calls them.
 //! Every function has a body.
 
+mod bounds;
 mod buffer;
 mod call;
 mod callout;

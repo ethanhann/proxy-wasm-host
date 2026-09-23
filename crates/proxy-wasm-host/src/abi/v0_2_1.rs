@@ -95,13 +95,16 @@
 //! # What the crate bounds
 //!
 //! A guest chooses how much work it asks for, so the crate bounds the work
-//! one call can cost.
+//! one call can cost and what one guest may keep.
 //!
 //! | Bound | Default | Where you change it |
 //! |---|---|---|
 //! | The pairs one map a guest sends may declare | 1024 | [`Limits::with_max_decoded_pairs`](crate::Limits::with_max_decoded_pairs) |
 //! | The bytes one map a guest sends may hold | 1 MiB | [`Limits::with_max_decoded_map_bytes`](crate::Limits::with_max_decoded_map_bytes) |
 //! | The callouts one guest may hold open | 1024 | [`VmServices::with_max_open_callouts`] |
+//! | The shared queues and metrics one guest may hold | 1024 | [`Limits::with_max_shared_names`](crate::Limits::with_max_shared_names) |
+//! | The bytes of one name or key a guest sends | 4096 | [`Limits::with_max_name_bytes`](crate::Limits::with_max_name_bytes) |
+//! | The bytes of one message a guest logs | 1 MiB | [`Limits::with_max_log_bytes`](crate::Limits::with_max_log_bytes) |
 //! | The bytes of one shared value | 64 KiB | [`InMemoryStore::with_limits`] |
 //! | The keys of the shared store | 4096 | [`InMemoryStore::with_limits`] |
 //! | The items of one shared queue | 1024 | [`InMemoryStore::with_limits`] |
@@ -109,10 +112,19 @@
 //! | The memory of one instance | 128 MiB | [`Limits::with_memory_bytes`](crate::Limits::with_memory_bytes) |
 //! | The WASI functions a guest may import | the eight the ABI names | fixed |
 //!
-//! The first three come from the C++ host that Envoy runs, so a guest that
-//! host accepts is accepted here.
-//! The store rows and the two instance rows are limits of this crate.
+//! The first three rows come from the C++ host that Envoy runs, so a guest
+//! that host accepts is accepted here.
+//! The three rows after them, the store rows, and the two instance rows are
+//! limits of this crate.
 //! No other host applies them.
+//!
+//! A guest over the shared name limit or the name byte limit receives
+//! `INTERNAL_FAILURE` from the call it made, and the service is not asked.
+//! A guest of the Rust SDK stops on that status, which poisons the instance
+//! and leaves the recovery of [`GuestSpec`] to you.
+//! A message over the log limit reaches the sink cut to the limit, and the
+//! guest receives the answer of a message that fits, because a guest reports
+//! its own failures through that call.
 //!
 //! The WASI surface is fixed.
 //! The crate registers the eight functions the ABI document names, which are

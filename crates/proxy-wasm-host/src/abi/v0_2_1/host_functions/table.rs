@@ -145,7 +145,7 @@ mod tests {
     use crate::abi::v0_2_1::types::Status;
     use crate::abi::v0_2_1::wasi::WASI_FUNCTIONS;
     use crate::codec::pairs::{DEFAULT_MAX_DECODED_MAP_BYTES, DEFAULT_MAX_DECODED_PAIRS};
-    use crate::runtime::Module;
+    use crate::runtime::{Limits, Module};
 
     /// The module rustdoc that documents this table.
     const MODULE: &str = include_str!("../../v0_2_1.rs");
@@ -246,6 +246,7 @@ mod tests {
     fn the_rustdoc_bounds_hold_the_values_the_code_uses() {
         // Arrange
         let store = InMemoryStoreLimits::default();
+        let limits = Limits::default();
         let expected = [
             (
                 "The pairs one map a guest sends may declare",
@@ -259,6 +260,15 @@ mod tests {
                 "The callouts one guest may hold open",
                 DEFAULT_MAX_OPEN_CALLOUTS.to_string(),
             ),
+            (
+                "The shared queues and metrics one guest may hold",
+                limits.max_shared_names().unwrap().to_string(),
+            ),
+            (
+                "The bytes of one name or key a guest sends",
+                limits.max_name_bytes().unwrap().to_string(),
+            ),
+            ("The bytes of one message a guest logs", "1 MiB".to_owned()),
             ("The bytes of one shared value", "64 KiB".to_owned()),
             ("The keys of the shared store", store.keys().to_string()),
             (
@@ -272,6 +282,7 @@ mod tests {
 
         // Assert
         assert_eq!(DEFAULT_MAX_DECODED_MAP_BYTES, 1024 * 1024);
+        assert_eq!(limits.max_log_bytes(), Some(1024 * 1024));
         assert_eq!(store.value_bytes(), 64 * 1024);
         for (label, value) in expected {
             let row = rows

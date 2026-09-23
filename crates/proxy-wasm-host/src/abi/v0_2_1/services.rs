@@ -26,6 +26,10 @@ pub trait LogSink: Send + Sync {
     /// `context` says where the line came from.
     /// The value borrows from the call that wrote the line, so a sink that
     /// keeps its lines calls [`LogContext::into_owned`] first.
+    /// A message longer than
+    /// [`Limits::with_max_log_bytes`](crate::Limits::with_max_log_bytes)
+    /// arrives cut to that length, so `message` is not always the whole line
+    /// the guest wrote.
     fn log(&self, context: LogContext<'_>, level: LogLevel, message: &[u8]);
 }
 
@@ -108,6 +112,8 @@ impl VmServices {
     ///
     /// The ABI document says these must be configured per guest.
     /// They are never read from the process environment.
+    /// The guest reads every variable you set here with `environ_get`, so a
+    /// plugin you did not write receives whatever you put in one.
     #[must_use]
     pub fn with_environment(mut self, variables: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
         self.environment = variables;

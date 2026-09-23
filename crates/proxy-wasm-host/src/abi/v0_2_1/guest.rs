@@ -2,16 +2,19 @@
 
 mod callbacks;
 mod contexts;
+mod counting;
 mod exports;
 pub(crate) mod identity;
 mod recovery;
 pub(crate) mod start;
 
 use std::fmt;
+use std::sync::Arc;
 
 use crate::abi::AbiVersion;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::VmServices;
+use crate::abi::v0_2_1::guest_spec::BuildCounters;
 use crate::abi::v0_2_1::{CallScope, Callback, GuestError, Host, NoStream, StreamState};
 use crate::runtime::{Instance, Limits, Module};
 use callbacks::Callbacks;
@@ -114,6 +117,9 @@ pub struct Guest {
     abi: AbiVersion,
     id: GuestId,
     callbacks: Callbacks,
+    /// The counters of the spec that built this guest, which a guest built
+    /// by [`Guest::new`] does not have.
+    counters: Option<Arc<BuildCounters>>,
 }
 
 impl fmt::Debug for Guest {
@@ -160,6 +166,7 @@ impl Guest {
             abi,
             id,
             callbacks,
+            counters: None,
         })
     }
 

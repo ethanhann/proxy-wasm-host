@@ -163,11 +163,21 @@ pub(crate) fn shared_hosted(
     wat: &str,
     shared: std::sync::Arc<dyn crate::abi::v0_2_1::SharedServices>,
 ) -> (Instance, ContextId) {
+    shared_hosted_with_limits(engine, wat, shared, &Limits::default())
+}
+
+/// The same instance as [`shared_hosted`], with the limits an embedder chose.
+pub(crate) fn shared_hosted_with_limits(
+    engine: &Engine,
+    wat: &str,
+    shared: std::sync::Arc<dyn crate::abi::v0_2_1::SharedServices>,
+    limits: &Limits,
+) -> (Instance, ContextId) {
     let module = Module::new(engine, &wat_bytes(wat)).unwrap();
     let services = VmServices::new(std::sync::Arc::new(RecordingSink::default()))
         .with_vm_id(VM_ID.to_vec())
         .with_shared(shared);
-    let mut instance = instance_with(engine, &module, services).unwrap();
+    let mut instance = instance_with_limits(engine, &module, services, limits).unwrap();
     let state = instance.state_mut();
     let root = state.abi_mut().contexts_mut().create(None).unwrap();
     state.abi_mut().contexts_mut().set_effective(root);

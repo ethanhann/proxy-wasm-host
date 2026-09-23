@@ -73,7 +73,7 @@ impl Instance {
             builder = builder.memory_size(bytes);
         }
         store.data_mut().set_store_limits(builder.build());
-        store.data_mut().set_pair_limits(limits.pair_limits());
+        store.data_mut().set_guest_limits(limits);
         store.limiter(
             |state: &mut HostState| -> &mut dyn wasmtime::ResourceLimiter { state.store_limits() },
         );

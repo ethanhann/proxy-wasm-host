@@ -7,6 +7,7 @@ use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::host_functions::bounds::within_name_bytes;
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, with_shared};
 use crate::abi::v0_2_1::types::Status;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
@@ -28,6 +29,7 @@ pub(super) fn proxy_set_shared_data(
     let (memory, state) = split(ctx)?;
     let key = memory.read(key)?;
     let value = memory.read(value)?;
+    within_name_bytes(state, key)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
     let vm_id = state.abi().services().vm_id();
     from_embedder(
@@ -53,6 +55,7 @@ pub(super) fn proxy_get_shared_data(
     memory.read_u32(size_ptr)?;
     memory.read_u32(cas_ptr)?;
     let key = memory.read(key)?;
+    within_name_bytes(state, key)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
     let vm_id = state.abi().services().vm_id();
     let value = from_embedder("get_shared_data", shared.get_shared_data(call, vm_id, key))?;
@@ -71,10 +74,11 @@ mod tests {
     use crate::abi::v0_2_1::AbiAccess;
     use crate::abi::v0_2_1::test_support::services::{RecordingServices, SharedCall};
     use crate::abi::v0_2_1::test_support::{
-        VM_ID, bare, engine, outcome, returned, shared_hosted, status, write,
+        VM_ID, bare, engine, outcome, returned, shared_hosted, shared_hosted_with_limits, status,
+        write,
     };
     use crate::abi::v0_2_1::{ContextId, GuestId, InMemoryStore, Invocation, SharedServices};
-    use crate::runtime::{GuestPtr, Instance};
+    use crate::runtime::{GuestPtr, Instance, Limits};
 
     const KEY: i32 = 1024;
     const VALUE: i32 = 1100;
@@ -404,5 +408,59 @@ mod tests {
 
         // Assert
         assert_eq!(found, Status::NotFound);
+    }
+
+    #[test]
+    fn a_shared_data_key_above_the_byte_bound_is_refused() {
+        // Arrange
+        let engine = engine();
+        let recording = Arc::new(RecordingServices::new());
+        let limits = Limits::default().with_max_name_bytes(4);
+        let (mut instance, _) =
+            shared_hosted_with_limits(&engine, GUEST, recording.clone(), &limits);
+
+        // Act
+        let result = set(&mut instance, b"fives", b"v", 0);
+
+        // Assert
+        assert_eq!(result, Status::InternalFailure);
+        assert!(
+            recording.calls().is_empty(),
+            "the service must not see a key the crate refuses"
+        );
+    }
+
+    #[test]
+    fn a_read_of_a_key_above_the_byte_bound_is_refused() {
+        // Arrange
+        let engine = engine();
+        let recording = Arc::new(RecordingServices::new());
+        let limits = Limits::default().with_max_name_bytes(4);
+        let (mut instance, _) =
+            shared_hosted_with_limits(&engine, GUEST, recording.clone(), &limits);
+
+        // Act
+        let result = get(&mut instance, b"fives");
+
+        // Assert
+        assert_eq!(result, Status::InternalFailure);
+        assert!(recording.calls().is_empty());
+    }
+
+    #[test]
+    fn a_key_at_the_byte_bound_is_written() {
+        // Arrange
+        let engine = engine();
+        let recording = Arc::new(RecordingServices::new());
+        let limits = Limits::default().with_max_name_bytes(4);
+        let (mut instance, _) =
+            shared_hosted_with_limits(&engine, GUEST, recording.clone(), &limits);
+
+        // Act
+        let result = set(&mut instance, b"four", b"v", 0);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(recording.calls().len(), 1);
     }
 }

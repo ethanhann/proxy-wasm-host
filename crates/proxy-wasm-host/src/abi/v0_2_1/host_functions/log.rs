@@ -1,4 +1,9 @@
 //! `proxy_log` and `proxy_get_log_level`.
+//!
+//! A message longer than the embedder allows reaches the sink cut to that
+//! length, and the guest receives the answer of a message that fits. A guest
+//! reports its own failures through this call, so a refusal here would trap
+//! the guest on the line that says why it is failing.
 
 use wasmtime::AsContextMut;
 
@@ -18,6 +23,10 @@ pub(super) fn proxy_log(
     let slice = GuestSlice::try_from((message_data, message_size))?;
     let (memory, state) = split(ctx)?;
     let message = memory.read(slice)?;
+    let message = match state.max_log_bytes() {
+        Some(max) if message.len() > max => &message[..max],
+        _ => message,
+    };
     state
         .abi()
         .services()
@@ -43,7 +52,8 @@ mod tests {
 
     use super::*;
     use crate::abi::v0_2_1::test_support::{
-        RecordingSink, engine, instance_with, instance_with_sink, outcome, status, wat_bytes,
+        RecordingSink, engine, instance_with, instance_with_limits, instance_with_sink, outcome,
+        status, wat_bytes,
     };
     use crate::abi::v0_2_1::types::Status;
     use std::borrow::Cow;
@@ -52,7 +62,7 @@ mod tests {
     use crate::abi::v0_2_1::{
         AbiAccess, Callback, CalloutId, ContextId, LogSink, PluginConfig, VmServices,
     };
-    use crate::runtime::{Instance, Module};
+    use crate::runtime::{Instance, Limits, Module};
 
     const LOGGER: &str = r#"(module
         (import "env" "proxy_log" (func $log (param i32 i32 i32) (result i32)))
@@ -77,6 +87,16 @@ mod tests {
             .abi_mut()
             .set_current_callback(Some(Callback::RequestHeaders));
         (instance, root, stream)
+    }
+
+    /// An instance of `LOGGER` whose sink the test keeps, with the log limit
+    /// an embedder chose.
+    fn bounded(sink: &Arc<RecordingSink>, max_log_bytes: impl Into<Option<usize>>) -> Instance {
+        let engine = engine();
+        let services = VmServices::new(Arc::clone(sink) as Arc<dyn LogSink>);
+        let module = Module::new(&engine, &wat_bytes(LOGGER)).unwrap();
+        let limits = Limits::default().with_max_log_bytes(max_log_bytes);
+        instance_with_limits(&engine, &module, services, &limits).unwrap()
     }
 
     /// The plugin the tests configure their root with.
@@ -384,5 +404,47 @@ mod tests {
             .read_u32(crate::runtime::GuestPtr::from_address(at))
             .unwrap();
         LogLevel::try_from(value.cast_signed()).unwrap()
+    }
+
+    #[test]
+    fn a_message_above_the_log_bound_reaches_the_sink_cut_to_it() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let mut instance = bounded(&sink, 3);
+
+        // Act
+        let result = log_hello(&mut instance);
+
+        // Assert
+        assert_eq!(result, Status::Ok, "a guest never traps on this limit");
+        assert_eq!(sink.entries(), vec![(LogLevel::Info, b"hel".to_vec())]);
+    }
+
+    #[test]
+    fn a_message_at_the_log_bound_reaches_the_sink_whole() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let mut instance = bounded(&sink, 5);
+
+        // Act
+        let result = log_hello(&mut instance);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(sink.entries(), vec![(LogLevel::Info, b"hello".to_vec())]);
+    }
+
+    #[test]
+    fn a_removed_log_bound_gives_the_sink_the_whole_message() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let mut instance = bounded(&sink, None);
+
+        // Act
+        let result = log_hello(&mut instance);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(sink.entries(), vec![(LogLevel::Info, b"hello".to_vec())]);
     }
 }

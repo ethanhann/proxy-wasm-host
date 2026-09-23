@@ -1,6 +1,8 @@
 //! What every guest of one VM is built from.
 
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::Error;
 use crate::abi::AbiVersion;
@@ -89,6 +91,38 @@ pub struct GuestSpec {
     module: Module,
     services: VmServices,
     limits: Limits,
+    counters: Arc<BuildCounters>,
+}
+
+/// What one spec counts, shared by every clone of it.
+///
+/// A guest tells the counters that it was poisoned when it is dropped, and
+/// the next build reads that flag.
+#[derive(Debug, Default)]
+pub(crate) struct BuildCounters {
+    builds: AtomicU64,
+    builds_after_poison: AtomicU64,
+    poison_seen: AtomicBool,
+}
+
+fn raise(counter: &AtomicU64) {
+    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+        Some(count.saturating_add(1))
+    });
+}
+
+impl BuildCounters {
+    fn record_build(&self) {
+        raise(&self.builds);
+        if self.poison_seen.swap(false, Ordering::Relaxed) {
+            raise(&self.builds_after_poison);
+        }
+    }
+
+    /// Records that a poisoned guest of this spec was dropped.
+    pub(crate) fn record_poison(&self) {
+        self.poison_seen.store(true, Ordering::Relaxed);
+    }
 }
 
 impl fmt::Debug for GuestSpec {
@@ -96,6 +130,8 @@ impl fmt::Debug for GuestSpec {
         f.debug_struct("GuestSpec")
             .field("services", &self.services)
             .field("limits", &self.limits)
+            .field("builds", &self.builds())
+            .field("builds_after_poison", &self.builds_after_poison())
             .finish_non_exhaustive()
     }
 }
@@ -129,6 +165,7 @@ impl GuestSpec {
             module: module.clone(),
             services,
             limits: limits.clone(),
+            counters: Arc::new(BuildCounters::default()),
         })
     }
 
@@ -143,12 +180,41 @@ impl GuestSpec {
     ///
     /// Returns the errors of [`Guest::new`].
     pub fn build(&self) -> Result<Guest, GuestError> {
-        Guest::new(
+        let mut guest = Guest::new(
             &self.host,
             &self.module,
             self.services.clone(),
             &self.limits,
-        )
+        )?;
+        self.counters.record_build();
+        guest.count_on(Arc::clone(&self.counters));
+        Ok(guest)
+    }
+
+    /// How many guests this spec built.
+    ///
+    /// A clone of the spec shares the count, and a guest that
+    /// [`Guest::new`] built alone is not in it.
+    /// The number stops at [`u64::MAX`].
+    pub fn builds(&self) -> u64 {
+        self.counters.builds.load(Ordering::Relaxed)
+    }
+
+    /// How many of those builds followed a poisoned guest of this spec.
+    ///
+    /// The number rises when a guest is dropped after a trap and the next
+    /// guest is built.
+    /// A plugin that traps on every request drives it up at the rate of the
+    /// traffic, and a plugin that works leaves it at the number of the
+    /// failures you already know about.
+    ///
+    /// Read it after each build, keep the value you read, and stop serving
+    /// with the plugin when the difference over your own window is larger
+    /// than you accept.
+    /// The crate applies no window of its own, because the rate you accept
+    /// belongs to your deployment.
+    pub fn builds_after_poison(&self) -> u64 {
+        self.counters.builds_after_poison.load(Ordering::Relaxed)
     }
 
     /// The services that each guest [`GuestSpec::build`] gives receives a
@@ -170,8 +236,15 @@ impl GuestSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::v0_2_1::PluginConfig;
     use crate::abi::v0_2_1::test_support::{MINIMAL_GUEST, engine, services, wat_bytes};
     use crate::abi::v0_2_1::types::LogLevel;
+
+    const TRAPS: &str = r#"(module
+        (memory (export "memory") 1)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+        (func (export "proxy_abi_version_0_2_1"))
+        (func (export "proxy_on_context_create") (param i32 i32) unreachable))"#;
 
     const MARKED: &str = r#"(module
         (memory (export "memory") 1)
@@ -301,5 +374,67 @@ mod tests {
         );
         assert!(text.contains("limits: Limits"), "{text}");
         assert!(text.ends_with(", .. }"), "{text}");
+    }
+
+    #[test]
+    fn a_spec_counts_the_guests_it_built() {
+        // Arrange
+        let spec = spec(MARKED, services());
+        let first = spec.build().unwrap();
+
+        // Act
+        let second = spec.build().unwrap();
+
+        // Assert
+        assert_eq!(spec.builds(), 2);
+        assert_eq!(spec.builds_after_poison(), 0);
+        assert_ne!(first.id(), second.id());
+    }
+
+    #[test]
+    fn a_clone_of_a_spec_counts_into_the_same_numbers() {
+        // Arrange
+        let spec = spec(MARKED, services());
+        let clone = spec.clone();
+        let _first = spec.build().unwrap();
+
+        // Act
+        let _second = clone.build().unwrap();
+
+        // Assert
+        assert_eq!(spec.builds(), 2);
+        assert_eq!(clone.builds(), 2);
+    }
+
+    #[test]
+    fn a_spec_counts_a_build_that_followed_a_poisoned_guest() {
+        // Arrange
+        let spec = spec(TRAPS, services());
+        let mut guest = spec.build().unwrap();
+        assert!(guest.start(PluginConfig::new()).is_err());
+        assert!(guest.is_poisoned());
+        drop(guest);
+
+        // Act
+        let _next = spec.build().unwrap();
+
+        // Assert
+        assert_eq!(spec.builds(), 2);
+        assert_eq!(spec.builds_after_poison(), 1);
+    }
+
+    #[test]
+    fn a_guest_that_was_never_poisoned_leaves_the_second_number_at_zero() {
+        // Arrange
+        let spec = spec(MARKED, services());
+        let guest = spec.build().unwrap();
+        drop(guest);
+
+        // Act
+        let _next = spec.build().unwrap();
+
+        // Assert
+        assert_eq!(spec.builds(), 2);
+        assert_eq!(spec.builds_after_poison(), 0);
     }
 }

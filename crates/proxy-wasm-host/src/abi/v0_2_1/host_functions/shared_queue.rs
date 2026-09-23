@@ -12,6 +12,7 @@ use wasmtime::AsContextMut;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::QueueId;
 use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::host_functions::bounds::{within_name_bytes, within_shared_names};
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, settle, with_shared};
 use crate::abi::v0_2_1::types::Status;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
@@ -27,6 +28,8 @@ pub(super) fn proxy_register_shared_queue(
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_queue_id)?;
     let name = memory.read(name)?;
+    within_name_bytes(state, name)?;
+    within_shared_names(state)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
     let vm_id = state.abi().services().vm_id();
     let queue = from_embedder(
@@ -57,6 +60,8 @@ pub(super) fn proxy_resolve_shared_queue(
     memory.read_u32(return_queue_id)?;
     let vm_id = memory.read(vm_id)?;
     let name = memory.read(name)?;
+    within_name_bytes(state, name)?;
+    within_shared_names(state)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
     let queue = from_embedder(
         "resolve_shared_queue",
@@ -121,10 +126,11 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::test_support::services::{RecordingServices, SharedCall};
     use crate::abi::v0_2_1::test_support::{
-        VM_ID, bare, engine, outcome, returned, shared_hosted, status, write,
+        VM_ID, bare, engine, outcome, returned, shared_hosted, shared_hosted_with_limits, status,
+        write,
     };
     use crate::abi::v0_2_1::{ContextId, GuestId, InMemoryStore, Invocation, SharedServices};
-    use crate::runtime::{GuestPtr, Instance};
+    use crate::runtime::{GuestPtr, Instance, Limits};
 
     const NAME: i32 = 1024;
     const VM: i32 = 1100;
@@ -545,5 +551,115 @@ mod tests {
 
         // Assert
         assert_eq!(found, Status::NotFound);
+    }
+
+    #[test]
+    fn a_guest_at_its_share_of_names_is_refused_a_new_queue() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let limits = Limits::default().with_max_shared_names(2);
+        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, shared, &limits);
+        assert_eq!(register(&mut instance, b"first"), Status::Ok);
+        assert_eq!(register(&mut instance, b"second"), Status::Ok);
+
+        // Act
+        let result = register(&mut instance, b"third");
+
+        // Assert
+        assert_eq!(result, Status::InternalFailure);
+    }
+
+    #[test]
+    fn a_queue_a_guest_already_holds_does_not_raise_its_count() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let limits = Limits::default().with_max_shared_names(2);
+        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, shared, &limits);
+        assert_eq!(register(&mut instance, b"first"), Status::Ok);
+        assert_eq!(register(&mut instance, b"first"), Status::Ok);
+
+        // Act
+        let result = register(&mut instance, b"second");
+
+        // Assert
+        assert_eq!(
+            result,
+            Status::Ok,
+            "the count is of identifiers, so the repeat spent nothing"
+        );
+    }
+
+    #[test]
+    fn a_resolved_queue_spends_a_share_of_the_names() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let other = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
+        shared
+            .register_shared_queue(other, VM_ID, b"theirs")
+            .unwrap();
+        let limits = Limits::default().with_max_shared_names(1);
+        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, shared, &limits);
+        let (_, vm_len) = write(&mut instance, VM, VM_ID);
+        let (_, name_len) = write(&mut instance, NAME, b"theirs");
+        assert_eq!(
+            status(
+                instance
+                    .call::<(i32, i32, i32, i32, i32), i32>(
+                        "resolve",
+                        (VM, vm_len, NAME, name_len, RETURN_ID)
+                    )
+                    .unwrap()
+            ),
+            Status::Ok
+        );
+
+        // Act
+        let result = register(&mut instance, b"mine");
+
+        // Assert
+        assert_eq!(result, Status::InternalFailure);
+    }
+
+    #[test]
+    fn a_queue_name_above_the_byte_bound_is_refused() {
+        // Arrange
+        let engine = engine();
+        let recording = Arc::new(RecordingServices::new());
+        let limits = Limits::default().with_max_name_bytes(4);
+        let (mut instance, _) =
+            shared_hosted_with_limits(&engine, GUEST, recording.clone(), &limits);
+
+        // Act
+        let result = register(&mut instance, b"fives");
+
+        // Assert
+        assert_eq!(result, Status::InternalFailure);
+        assert!(
+            recording.calls().is_empty(),
+            "the service must not see a name the crate refuses"
+        );
+    }
+
+    #[test]
+    fn a_queue_name_at_the_byte_bound_is_registered() {
+        // Arrange
+        let engine = engine();
+        let recording = Arc::new(RecordingServices::new());
+        let limits = Limits::default().with_max_name_bytes(4);
+        let (mut instance, _) =
+            shared_hosted_with_limits(&engine, GUEST, recording.clone(), &limits);
+
+        // Act
+        let result = register(&mut instance, b"four");
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        assert_eq!(
+            recording.calls()[0].1,
+            SharedCall::Register(VM_ID.to_vec(), b"four".to_vec())
+        );
     }
 }

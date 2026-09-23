@@ -53,6 +53,10 @@ INFO request{path="/"}: guest: adding header
 The answer lists the headers, and it carries the header the plugin added.
 `cargo run --example http_workers` runs the same request through a pool of workers, where each worker has its own guest.
 
+## Security
+
+`SECURITY.md` says how to report a vulnerability, what is in scope, and which duties stay with your embedder.
+
 ## License
 
 Apache License, Version 2.0.

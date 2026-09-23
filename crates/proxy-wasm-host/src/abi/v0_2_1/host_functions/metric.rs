@@ -13,6 +13,7 @@ use wasmtime::AsContextMut;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::MetricId;
 use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::host_functions::bounds::{within_name_bytes, within_shared_names};
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, settle, with_shared};
 use crate::abi::v0_2_1::types::{MetricType, Status};
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split};
@@ -30,6 +31,8 @@ pub(super) fn proxy_define_metric(
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_metric_id)?;
     let name = memory.read(name)?;
+    within_name_bytes(state, name)?;
+    within_shared_names(state)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
     let vm_id = state.abi().services().vm_id();
     let metric = from_embedder(
@@ -105,10 +108,10 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::test_support::services::{RecordingServices, SharedCall};
     use crate::abi::v0_2_1::test_support::{
-        VM_ID, bare, engine, outcome, shared_hosted, status, write,
+        VM_ID, bare, engine, outcome, shared_hosted, shared_hosted_with_limits, status, write,
     };
     use crate::abi::v0_2_1::{InMemoryStore, SharedServices};
-    use crate::runtime::Instance;
+    use crate::runtime::{Instance, Limits};
 
     const NAME: i32 = 1024;
     const RETURN_ID: i32 = 2000;
@@ -417,5 +420,43 @@ mod tests {
 
         // Assert
         assert_eq!(result, Status::NotFound);
+    }
+
+    #[test]
+    fn a_guest_at_its_share_of_names_is_refused_a_new_metric() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let limits = Limits::default().with_max_shared_names(1);
+        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, shared, &limits);
+        let kind = i32::from(MetricType::Counter);
+        assert_eq!(define(&mut instance, kind, b"first"), Status::Ok);
+
+        // Act
+        let result = define(&mut instance, kind, b"second");
+
+        // Assert
+        assert_eq!(result, Status::InternalFailure);
+    }
+
+    #[test]
+    fn a_metric_name_above_the_byte_bound_is_refused() {
+        // Arrange
+        let engine = engine();
+        let recording = Arc::new(RecordingServices::new());
+        let limits = Limits::default().with_max_name_bytes(4);
+        let (mut instance, _) =
+            shared_hosted_with_limits(&engine, GUEST, recording.clone(), &limits);
+        let kind = i32::from(MetricType::Counter);
+
+        // Act
+        let result = define(&mut instance, kind, b"fives");
+
+        // Assert
+        assert_eq!(result, Status::InternalFailure);
+        assert!(
+            recording.calls().is_empty(),
+            "the service must not see a name the crate refuses"
+        );
     }
 }

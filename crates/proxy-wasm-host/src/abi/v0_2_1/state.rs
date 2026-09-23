@@ -142,6 +142,14 @@ impl AbiState {
         self.queues.contains(&queue)
     }
 
+    /// How many queue and metric identifiers this guest holds.
+    ///
+    /// The two kinds share one count, because each one grows the same
+    /// bookkeeping.
+    pub(crate) fn shared_names(&self) -> usize {
+        self.queues.len().saturating_add(self.metrics.len())
+    }
+
     /// Records that a context of `root` registered `queue`, and reports it as
     /// a change the first time.
     pub(crate) fn register_queue(&mut self, queue: QueueId, root: ContextId, name: &[u8]) {

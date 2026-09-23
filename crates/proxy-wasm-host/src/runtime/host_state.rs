@@ -5,6 +5,7 @@ use std::any::Any;
 use wasmtime::{Memory, StoreLimits, TypedFunc};
 
 use crate::codec::pairs::PairLimits;
+use crate::runtime::Limits;
 
 /// The store data of one instance.
 ///
@@ -18,6 +19,9 @@ use crate::codec::pairs::PairLimits;
 pub(crate) struct HostState {
     store_limits: StoreLimits,
     pair_limits: PairLimits,
+    max_shared_names: Option<usize>,
+    max_name_bytes: Option<usize>,
+    max_log_bytes: Option<usize>,
     memory: Option<Memory>,
     allocator: Option<TypedFunc<i32, i32>>,
     poisoned: bool,
@@ -29,6 +33,9 @@ impl HostState {
         Self {
             store_limits: StoreLimits::default(),
             pair_limits: PairLimits::default(),
+            max_shared_names: None,
+            max_name_bytes: None,
+            max_log_bytes: None,
             memory: None,
             allocator: None,
             poisoned: false,
@@ -57,8 +64,27 @@ impl HostState {
         self.pair_limits
     }
 
-    pub(crate) fn set_pair_limits(&mut self, pair_limits: PairLimits) {
-        self.pair_limits = pair_limits;
+    /// How many shared queues and metrics this guest may hold.
+    pub(crate) fn max_shared_names(&self) -> Option<usize> {
+        self.max_shared_names
+    }
+
+    /// The most bytes one name or key a guest sends may hold.
+    pub(crate) fn max_name_bytes(&self) -> Option<usize> {
+        self.max_name_bytes
+    }
+
+    /// The most bytes of one message the log sink receives.
+    pub(crate) fn max_log_bytes(&self) -> Option<usize> {
+        self.max_log_bytes
+    }
+
+    /// Copies the limits a host function reads from the embedder's value.
+    pub(crate) fn set_guest_limits(&mut self, limits: &Limits) {
+        self.pair_limits = limits.pair_limits();
+        self.max_shared_names = limits.max_shared_names();
+        self.max_name_bytes = limits.max_name_bytes();
+        self.max_log_bytes = limits.max_log_bytes();
     }
 
     pub(crate) fn set_memory(&mut self, memory: Memory) {

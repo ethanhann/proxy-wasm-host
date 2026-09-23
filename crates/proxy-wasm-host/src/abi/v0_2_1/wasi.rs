@@ -1,6 +1,8 @@
 //! The eight `wasi_snapshot_preview1` functions the ABI document names.
 //!
 //! Each one has the WASI signature and the ABI document's meaning.
+//! `fd_write` cuts a message to the length the embedder allows and reports
+//! every byte as written, which is what `proxy_log` does with a long message.
 //! `fd_write` is a log call, the clock and randomness functions read the
 //! services in the host state, the environment functions serve the per guest
 //! variables, and the argument functions report no arguments.
@@ -37,7 +39,6 @@ pub(crate) const WASI_FUNCTIONS: &[&str] = &[
 ];
 const IOVEC_SIZE: u32 = 8;
 const MAX_RANDOM_BYTES: u32 = 64 * 1024;
-const MAX_LOG_BYTES: u64 = 1024 * 1024;
 
 type WasiResult = Result<(), WasiErrno>;
 
@@ -133,12 +134,13 @@ fn fd_write_impl(
         })
         .collect::<Result<Vec<GuestSlice>, WasiErrno>>()?;
     let total: u64 = entries.iter().map(|entry| u64::from(entry.len())).sum();
-    if total > MAX_LOG_BYTES {
-        return Err(WasiErrno::Inval);
-    }
-    let mut message = Vec::with_capacity(usize::try_from(total).unwrap_or(0));
+    let budget = state.max_log_bytes().unwrap_or(usize::MAX);
+    let wanted = usize::try_from(total).unwrap_or(usize::MAX);
+    let mut message = Vec::with_capacity(wanted.min(budget));
     for entry in &entries {
-        message.extend_from_slice(memory.read(*entry).map_err(fault)?);
+        let bytes = memory.read(*entry).map_err(fault)?;
+        let room = budget.saturating_sub(message.len());
+        message.extend_from_slice(&bytes[..bytes.len().min(room)]);
     }
     if message.last() == Some(&b'\n') {
         message.pop();
@@ -262,10 +264,11 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::Host;
     use crate::abi::v0_2_1::test_support::{
-        RecordingSink, engine, instance, instance_with, instance_with_sink, services, wat_bytes,
+        RecordingSink, engine, instance, instance_with, instance_with_limits, instance_with_sink,
+        services, wat_bytes,
     };
-    use crate::abi::v0_2_1::{AbiAccess, Callback, Clock, VmServices};
-    use crate::runtime::Module;
+    use crate::abi::v0_2_1::{AbiAccess, Callback, Clock, LogSink, VmServices};
+    use crate::runtime::{Limits, Module};
 
     const HEADER: &str = r#"
         (memory (export "memory") 1)
@@ -415,29 +418,77 @@ mod tests {
     }
 
     #[test]
-    fn fd_write_refuses_a_message_above_the_cap() {
+    fn fd_write_cuts_a_message_at_the_bound_the_embedder_set() {
         // Arrange
         let engine = engine();
         let sink = Arc::new(RecordingSink::default());
         let wat = guest(
             FD_WRITE_IMPORT,
-            r#"(func (export "write") (result i32)
-                 (local $i i32)
-                 (loop $fill
-                   (i32.store (i32.add (i32.const 1024) (i32.mul (local.get $i) (i32.const 8))) (i32.const 0))
-                   (i32.store (i32.add (i32.const 1028) (i32.mul (local.get $i) (i32.const 8))) (i32.const 1024))
-                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                   (br_if $fill (i32.lt_u (local.get $i) (i32.const 2048))))
-                 (call $w (i32.const 1) (i32.const 1024) (i32.const 2048) (i32.const 200)))"#,
+            r#"(data (i32.const 0) "hello, \nworld\n")
+               (func (export "write") (result i32)
+                 (i32.store (i32.const 100) (i32.const 0)) (i32.store (i32.const 104) (i32.const 8))
+                 (i32.store (i32.const 108) (i32.const 8)) (i32.store (i32.const 112) (i32.const 6))
+                 (call $w (i32.const 1) (i32.const 100) (i32.const 2) (i32.const 200)))"#,
         );
-        let mut instance = instance_with_sink(&engine, &wat, Arc::clone(&sink)).unwrap();
+        let module = Module::new(&engine, &wat_bytes(&wat)).unwrap();
+        let limits = Limits::default().with_max_log_bytes(10);
+        let mut instance = instance_with_limits(
+            &engine,
+            &module,
+            VmServices::new(Arc::clone(&sink) as Arc<dyn LogSink>),
+            &limits,
+        )
+        .unwrap();
 
         // Act
         let result = instance.call::<(), i32>("write", ()).unwrap();
 
         // Assert
-        assert_eq!(result, i32::from(WasiErrno::Inval));
-        assert!(sink.entries().is_empty());
+        assert_eq!(result, 0);
+        assert_eq!(
+            sink.entries(),
+            vec![(LogLevel::Info, b"hello, \nwo".to_vec())]
+        );
+        let memory = instance.memory().unwrap();
+        assert_eq!(
+            memory.read_u32(ptr(200)),
+            Ok(14),
+            "the guest is told that every byte it sent was written"
+        );
+    }
+
+    #[test]
+    fn fd_write_gives_the_sink_the_whole_message_when_no_bound_is_set() {
+        // Arrange
+        let engine = engine();
+        let sink = Arc::new(RecordingSink::default());
+        let wat = guest(
+            FD_WRITE_IMPORT,
+            r#"(data (i32.const 0) "hello, \nworld\n")
+               (func (export "write") (result i32)
+                 (i32.store (i32.const 100) (i32.const 0)) (i32.store (i32.const 104) (i32.const 8))
+                 (i32.store (i32.const 108) (i32.const 8)) (i32.store (i32.const 112) (i32.const 6))
+                 (call $w (i32.const 1) (i32.const 100) (i32.const 2) (i32.const 200)))"#,
+        );
+        let module = Module::new(&engine, &wat_bytes(&wat)).unwrap();
+        let limits = Limits::default().with_max_log_bytes(None);
+        let mut instance = instance_with_limits(
+            &engine,
+            &module,
+            VmServices::new(Arc::clone(&sink) as Arc<dyn LogSink>),
+            &limits,
+        )
+        .unwrap();
+
+        // Act
+        let result = instance.call::<(), i32>("write", ()).unwrap();
+
+        // Assert
+        assert_eq!(result, 0);
+        assert_eq!(
+            sink.entries(),
+            vec![(LogLevel::Info, b"hello, \nworld".to_vec())]
+        );
     }
 
     #[test]

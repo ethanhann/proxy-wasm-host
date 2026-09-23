@@ -44,6 +44,16 @@ check-code-quality: lint
     cargo audit
     cargo deny check
 
+# Count the unsafe code of the crate and of its dependency tree.
+check-unsafe:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cd crates/proxy-wasm-host
+    CARGO_TARGET_DIR=../../target/geiger cargo geiger --all-features --locked
+    status=$?
+    # One means a dependency uses unsafe, which the report is there to show.
+    [ "$status" -le 1 ]
+
 # Build the test guests for wasm32-wasip1 and copy them into the fixtures directory.
 build-guests:
     #!/usr/bin/env bash

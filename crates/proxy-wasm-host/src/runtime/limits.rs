@@ -6,6 +6,9 @@ use crate::codec::pairs::{DEFAULT_MAX_DECODED_MAP_BYTES, DEFAULT_MAX_DECODED_PAI
 
 const DEFAULT_CPU_TIME: Duration = Duration::from_secs(1);
 const DEFAULT_MEMORY_BYTES: usize = 128 * 1024 * 1024;
+const DEFAULT_MAX_SHARED_NAMES: usize = 1024;
+const DEFAULT_MAX_NAME_BYTES: usize = 4096;
+const DEFAULT_MAX_LOG_BYTES: usize = 1024 * 1024;
 
 /// The resources one instance may use.
 ///
@@ -15,6 +18,9 @@ const DEFAULT_MEMORY_BYTES: usize = 128 * 1024 * 1024;
 /// A guest that grows past it sees `memory.grow` fail.
 /// The two decode limits apply to each map a guest sends to the host, which
 /// a guest writes and therefore sizes.
+/// The last three bound what a guest asks the host to keep for it: the
+/// queues and the metrics it holds, the bytes of one name or key it sends,
+/// and the bytes of one line it logs.
 /// The struct is non exhaustive, so build it with [`Limits::new`] and the
 /// `with_*` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +31,9 @@ pub struct Limits {
     memory_bytes: Option<usize>,
     max_decoded_pairs: Option<u32>,
     max_decoded_map_bytes: Option<usize>,
+    max_shared_names: Option<usize>,
+    max_name_bytes: Option<usize>,
+    max_log_bytes: Option<usize>,
 }
 
 impl Default for Limits {
@@ -35,14 +44,18 @@ impl Default for Limits {
             memory_bytes: Some(DEFAULT_MEMORY_BYTES),
             max_decoded_pairs: Some(DEFAULT_MAX_DECODED_PAIRS),
             max_decoded_map_bytes: Some(DEFAULT_MAX_DECODED_MAP_BYTES),
+            max_shared_names: Some(DEFAULT_MAX_SHARED_NAMES),
+            max_name_bytes: Some(DEFAULT_MAX_NAME_BYTES),
+            max_log_bytes: Some(DEFAULT_MAX_LOG_BYTES),
         }
     }
 }
 
 impl Limits {
     /// One second of CPU time per call, no fuel, a 128 MiB memory ceiling,
-    /// and the two decode limits of the C++ host, which are 1024 pairs and
-    /// 1 MiB for one map a guest sends.
+    /// the two decode limits of the C++ host, which are 1024 pairs and 1 MiB
+    /// for one map a guest sends, 1024 shared names, 4096 bytes for one name
+    /// or key, and 1 MiB for one log line.
     pub fn new() -> Self {
         Self::default()
     }
@@ -97,6 +110,60 @@ impl Limits {
         self
     }
 
+    /// Sets how many shared queues and metrics one guest may hold, or removes
+    /// the limit with `None`.
+    ///
+    /// The queues and the metrics share one count, and a guest spends one of
+    /// it for each identifier it obtains.
+    /// A name the guest already holds costs nothing more, because the count
+    /// is of identifiers rather than of calls.
+    /// The default is 1024.
+    ///
+    /// A guest at the limit receives `INTERNAL_FAILURE` from
+    /// `proxy_register_shared_queue`, `proxy_resolve_shared_queue`, and
+    /// `proxy_define_metric`, and the service is not called.
+    /// A guest of the Rust SDK stops on that status, which poisons the
+    /// instance.
+    #[must_use]
+    pub fn with_max_shared_names(mut self, max_shared_names: impl Into<Option<usize>>) -> Self {
+        self.max_shared_names = max_shared_names.into();
+        self
+    }
+
+    /// Sets the most bytes one queue name, metric name, or shared data key a
+    /// guest sends may hold, or removes the limit with `None`.
+    ///
+    /// The default is 4096.
+    /// The three inputs share one limit, because a name and a key are the
+    /// same kind of guest input.
+    /// Without it a shared name count bounds nothing, because a guest puts
+    /// the bytes in the names rather than in their number.
+    ///
+    /// A guest over the limit receives `INTERNAL_FAILURE`, and the service is
+    /// not called.
+    /// A guest of the Rust SDK stops on that status, which poisons the
+    /// instance.
+    #[must_use]
+    pub fn with_max_name_bytes(mut self, max_name_bytes: impl Into<Option<usize>>) -> Self {
+        self.max_name_bytes = max_name_bytes.into();
+        self
+    }
+
+    /// Sets the most bytes of one message the log sink receives, or removes
+    /// the limit with `None`.
+    ///
+    /// The default is 1 MiB.
+    /// A longer message reaches the sink cut to the limit, and the guest
+    /// receives the answer of a message that fits.
+    /// A guest therefore never traps on this limit, which a refusal would
+    /// make it do on the call it uses to report a failure.
+    /// The limit covers `proxy_log` and the WASI `fd_write` alike.
+    #[must_use]
+    pub fn with_max_log_bytes(mut self, max_log_bytes: impl Into<Option<usize>>) -> Self {
+        self.max_log_bytes = max_log_bytes.into();
+        self
+    }
+
     /// The CPU time each guest call may use.
     pub fn cpu_time(&self) -> Duration {
         self.cpu_time
@@ -120,6 +187,22 @@ impl Limits {
     /// The most bytes one map a guest sends may hold.
     pub fn max_decoded_map_bytes(&self) -> Option<usize> {
         self.max_decoded_map_bytes
+    }
+
+    /// How many shared queues and metrics one guest may hold.
+    pub fn max_shared_names(&self) -> Option<usize> {
+        self.max_shared_names
+    }
+
+    /// The most bytes one queue name, metric name, or shared data key may
+    /// hold.
+    pub fn max_name_bytes(&self) -> Option<usize> {
+        self.max_name_bytes
+    }
+
+    /// The most bytes of one message the log sink receives.
+    pub fn max_log_bytes(&self) -> Option<usize> {
+        self.max_log_bytes
     }
 
     /// The two decode limits as one value, which
@@ -149,6 +232,39 @@ mod tests {
         // Assert
         assert_eq!(observed, (Some(1024), Some(1024 * 1024)));
         assert_eq!(limits.pair_limits(), PairLimits::default());
+    }
+
+    #[test]
+    fn the_three_guest_bounds_have_the_documented_defaults() {
+        // Arrange
+        let limits = Limits::default();
+
+        // Act
+        let observed = (
+            limits.max_shared_names(),
+            limits.max_name_bytes(),
+            limits.max_log_bytes(),
+        );
+
+        // Assert
+        assert_eq!(observed, (Some(1024), Some(4096), Some(1024 * 1024)));
+    }
+
+    #[test]
+    fn each_guest_bound_reads_back_the_value_it_was_given() {
+        // Arrange
+        let limits = Limits::new();
+
+        // Act
+        let observed = limits
+            .with_max_shared_names(4)
+            .with_max_name_bytes(8)
+            .with_max_log_bytes(None);
+
+        // Assert
+        assert_eq!(observed.max_shared_names(), Some(4));
+        assert_eq!(observed.max_name_bytes(), Some(8));
+        assert_eq!(observed.max_log_bytes(), None);
     }
 
     #[test]
