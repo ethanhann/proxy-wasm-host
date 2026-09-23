@@ -64,4 +64,4 @@ todo topics to cover:
 - InMemoryStore as the shipped implementation.
 - InMemoryStoreLimits: queue capacity, queue count, metric count, shared data count, value size.
 - Queue registration and resolution across guests.
-- How multiple Guest instances share state through a common Arc<SharedServices>.
+- How multiple Guest instances share state through a common `Arc<SharedServices>`.
