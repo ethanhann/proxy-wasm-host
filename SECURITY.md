@@ -37,13 +37,13 @@ These are not in scope.
 ## Supported versions
 
 The crate is not published yet, so no version carries a security promise.
-The first release adds a table here that names the versions that receive fixes.
+The first release adds a table here that lists the versions that receive fixes.
 
 ## What this crate defends
 
 The crate treats the guest as untrusted and your embedder as trusted.
 Every value a guest sends arrives as bytes of guest memory, and the crate reads them through bounds checks before any service of yours sees them.
-Every identifier a guest names is checked against the identifiers that guest obtained, so a small number that another virtual machine could guess reaches nothing.
+Every identifier a guest passes to the host is checked against the identifiers that guest obtained, so a small number that another virtual machine could guess reaches nothing.
 The crate uses no `unsafe` code of its own.
 
 ## What your embedder must answer
