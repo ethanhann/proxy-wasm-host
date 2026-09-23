@@ -120,7 +120,6 @@ impl<'a> GuestMemory<'a> {
     }
 
     /// The memory size in bytes.
-    #[cfg(test)]
     pub fn size(&self) -> usize {
         self.bytes.len()
     }

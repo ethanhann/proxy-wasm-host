@@ -18,9 +18,9 @@ const DEFAULT_MAX_LOG_BYTES: usize = 1024 * 1024;
 /// A guest that grows past it sees `memory.grow` fail.
 /// The two decode limits apply to each map a guest sends to the host, which
 /// a guest writes and therefore sizes.
-/// The last three bound what a guest asks the host to keep for it: the
-/// queues and the metrics it holds, the bytes of one name or key it sends,
-/// and the bytes of one line it logs.
+/// The last three bound the queues and the metrics one guest holds, the
+/// bytes of one name or key a guest sends, and the bytes of one line a guest
+/// logs.
 /// The struct is non exhaustive, so build it with [`Limits::new`] and the
 /// `with_*` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,6 +143,9 @@ impl Limits {
     /// not called.
     /// A guest of the Rust SDK stops on that status, which poisons the
     /// instance.
+    /// A read of a shared data key over the limit answers `NOT_FOUND`, because
+    /// no such key can be in the store through this crate, and the Rust SDK
+    /// reads that status as a miss.
     #[must_use]
     pub fn with_max_name_bytes(mut self, max_name_bytes: impl Into<Option<usize>>) -> Self {
         self.max_name_bytes = max_name_bytes.into();
@@ -153,11 +156,18 @@ impl Limits {
     /// the limit with `None`.
     ///
     /// The default is 1 MiB.
-    /// A longer message reaches the sink cut to the limit, and the guest
-    /// receives the answer of a message that fits.
-    /// A guest therefore never traps on this limit, which a refusal would
-    /// make it do on the call it uses to report a failure.
+    /// A longer message reaches the sink cut to the limit, and the call
+    /// answers `OK`.
+    /// A guest reports its own failures through the log, and a guest of the
+    /// Rust SDK stops on a refusal, so the crate cuts the message rather
+    /// than refuse it.
     /// The limit covers `proxy_log` and the WASI `fd_write` alike.
+    ///
+    /// With no limit, `proxy_log` gives the sink a view of guest memory, so
+    /// a message is at most the size of that memory.
+    /// `fd_write` joins the regions a guest lists, and a guest can list one
+    /// region many times, so the crate stops the copy at the size of the
+    /// guest memory.
     #[must_use]
     pub fn with_max_log_bytes(mut self, max_log_bytes: impl Into<Option<usize>>) -> Self {
         self.max_log_bytes = max_log_bytes.into();
