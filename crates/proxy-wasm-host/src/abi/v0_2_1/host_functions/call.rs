@@ -75,7 +75,7 @@ pub(super) fn settle(state: &mut HostState) {
 
 /// The call to report and the shared services to ask.
 ///
-/// The grants are settled first, so a guest never names an identifier that a
+/// The grants are settled first, so a guest never passes an identifier that a
 /// store the embedder has since replaced handed out.
 pub(super) fn with_shared(
     state: &mut HostState,

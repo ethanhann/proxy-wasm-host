@@ -45,13 +45,13 @@ pub enum Error {
     /// The module exports neither `proxy_on_memory_allocate` nor `malloc`.
     #[error("the module exports neither proxy_on_memory_allocate nor malloc")]
     MissingAllocator,
-    /// A named export is absent.
+    /// The export the caller asked for is absent.
     #[error("the module does not export {name}")]
     MissingExport {
         /// The export name.
         name: String,
     },
-    /// A named export exists with another type than the caller expected.
+    /// The export the caller asked for has another type than it expected.
     #[error("the export {name} does not have the expected type")]
     ExportTypeMismatch {
         /// The export name.

@@ -24,7 +24,7 @@ pub(super) fn proxy_done(ctx: &mut impl AsContextMut<Data = HostState>) -> Resul
 
 /// Moves the effective context inside the root the callback is serving.
 ///
-/// A guest may name only a context under that root, because the crate serves
+/// A guest may pass only a context under that root, because the crate serves
 /// the plugin configuration and the tick period of a root from the effective
 /// context, and one instance can hold a root per plugin.
 pub(super) fn proxy_set_effective_context(

@@ -12,7 +12,7 @@
 /// of a family share it, and the rule is written once per family rather than
 /// once per direction.
 ///
-/// The crate arm names which resource, so a body that resolves it stays
+/// The crate arm identifies the resource, so a body that resolves it stays
 /// exhaustive and the compiler reports a family that gains a resource the
 /// body does not answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

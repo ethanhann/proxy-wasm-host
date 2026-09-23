@@ -23,9 +23,9 @@
 //! The crate registers every one of them for every guest.
 //! The table says who answers each call.
 //!
-//! The second column names who answers.
+//! The second column shows who answers.
 //! "The crate" means that no method of yours runs.
-//! The third column names the method that answers the call.
+//! The third column shows the method that answers the call.
 //! Most are trait methods you implement.
 //! `proxy_get_log_level` answers from the value you set with
 //! [`VmServices::with_log_level`].
@@ -34,7 +34,7 @@
 //! rows at once.
 //! A guest that passes an address the crate cannot read or write receives
 //! `INVALID_MEMORY_ACCESS`.
-//! A guest that passes a value outside the enum an argument names receives
+//! A guest that passes a value outside the enum of an argument receives
 //! `BAD_ARGUMENT`.
 //! A guest whose allocator answers null receives `INTERNAL_FAILURE`, which
 //! reaches every function that gives the guest a value.
@@ -112,7 +112,7 @@
 //! | The metrics of the shared store | 4096 | [`InMemoryStore::with_limits`] |
 //! | The CPU time of one guest call | one second | [`Limits::with_cpu_time`](crate::Limits::with_cpu_time) |
 //! | The memory of one instance | 128 MiB | [`Limits::with_memory_bytes`](crate::Limits::with_memory_bytes) |
-//! | The WASI functions a guest may import | the eight the ABI names | fixed |
+//! | The WASI functions a guest may import | the eight the ABI defines | fixed |
 //!
 //! The first three rows come from the C++ host that Envoy runs, so a guest
 //! that host accepts is accepted here.
@@ -131,7 +131,7 @@
 //! call.
 //!
 //! The WASI surface is fixed.
-//! The crate registers the eight functions the ABI document names, which are
+//! The crate registers the eight functions the ABI document defines, which are
 //! `fd_write`, `clock_time_get`, `random_get`, `environ_sizes_get`,
 //! `environ_get`, `args_sizes_get`, `args_get`, and `proc_exit`.
 //! A guest that imports any other name from `wasi_snapshot_preview1` fails to
@@ -158,7 +158,7 @@
 //!    refused with `BAD_ARGUMENT`. The ABI document requires that check of
 //!    the host, and that host leaves it to the proxy.
 //! 4. `proxy_get_buffer_bytes` refuses a start past the end of the buffer
-//!    with `BAD_ARGUMENT`, which the ABI document names for an invalid
+//!    with `BAD_ARGUMENT`, which the ABI document specifies for an invalid
 //!    start. That host clamps the length to zero and answers `OK`.
 //!
 //! Three more answers differ.
@@ -179,7 +179,7 @@
 //!
 //! You link the host functions once with [`Host`].
 //! You run a guest with [`Guest`], [`CallScope`], and [`PluginConfig`], and
-//! [`Callback`] names the callback a report is about.
+//! [`Callback`] identifies the callback a report is about.
 //! You build a guest again with [`GuestSpec`], and [`Guest::start`] answers
 //! [`Started`] for each root.
 //! You read why a guest or a callback failed through [`GuestError`], which
@@ -195,10 +195,10 @@
 //! You give the result back as an [`HttpCallResponse`] or as a
 //! [`GrpcStatus`], and [`CalloutProblem`] and [`InvalidCalloutId`] tell you
 //! why a callout was refused.
-//! [`GuestId`] names the guest a callout belongs to.
+//! [`GuestId`] identifies the guest a callout belongs to.
 //! [`Guest::open_callouts`] gives an [`OpenCallout`] for each open callout,
 //! with its [`CalloutKind`].
-//! You learn what a guest changed through [`Changes`], which names each
+//! You learn what a guest changed through [`Changes`], which lists each
 //! [`QueueRegistration`], and an
 //! [`InMemoryStore`] tells you of a queue item through [`QueueEnqueued`],
 //! with [`QueueProblem`] as the refusal of a queue callback.

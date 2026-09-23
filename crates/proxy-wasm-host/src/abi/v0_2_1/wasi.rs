@@ -1,4 +1,4 @@
-//! The eight `wasi_snapshot_preview1` functions the ABI document names.
+//! The eight `wasi_snapshot_preview1` functions the ABI document defines.
 //!
 //! Each one has the WASI signature and the ABI document's meaning.
 //! `fd_write` cuts a message to the length the embedder allows, as

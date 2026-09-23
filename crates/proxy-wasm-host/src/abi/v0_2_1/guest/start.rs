@@ -57,7 +57,7 @@ impl Guest {
     /// This method runs them in one call.
     /// The method returns the guest to you whether the start succeeded or
     /// failed.
-    /// After a refusal or a failure, [`Guest::open_callouts`] still names the
+    /// After a refusal or a failure, [`Guest::open_callouts`] still lists the
     /// callouts the root opened.
     /// A plugin with a second root calls `start` again with the
     /// [`PluginConfig`] of that root.
@@ -109,7 +109,7 @@ impl Guest {
     }
 }
 
-/// Runs the two callbacks of a start, and names the callback of a failure.
+/// Runs the two callbacks of a start, and reports the callback of a failure.
 fn run(
     scope: &mut CallScope<'_, NoStream>,
     root: ContextId,

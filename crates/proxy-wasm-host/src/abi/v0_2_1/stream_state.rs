@@ -60,7 +60,7 @@ pub trait StreamState: Any + Send {
     /// You can apply them by matching on `call.callback` and `access`,
     /// and you can refuse a write by returning `Err(NotAllowed)` from the
     /// map's write method, which the guest sees as [`Status::BadArgument`].
-    /// `call.context` may name a context this stream does not serve, and
+    /// `call.context` may refer to a context this stream does not serve, and
     /// then you should return `Err(Status::NotFound)`.
     /// The default body reports [`Status::BadArgument`], the status for a
     /// map that is not available.
@@ -116,7 +116,7 @@ pub trait StreamState: Any + Send {
 
     /// The buffer the guest asked for, or the status to report instead.
     ///
-    /// The ABI allows each buffer only in named callbacks.
+    /// The ABI allows each buffer only in the callbacks it lists.
     /// `HttpRequestBody` and `HttpResponseBody` are read and written in the
     /// body callback of their own direction, or while that direction is
     /// paused from it.
@@ -156,11 +156,11 @@ pub trait StreamState: Any + Send {
 
     /// Resumes the stream the guest paused.
     ///
-    /// The stream type names which half of the exchange the guest means, and
+    /// The stream type says which half of the exchange the guest means, and
     /// a guest resumes the half it paused from a callback that returned
     /// [`Action::Pause`](crate::abi::v0_2_1::types::Action::Pause).
     /// The default body reports [`Status::Unimplemented`], which is the
-    /// status the ABI names for a stream a host cannot resume.
+    /// status the ABI specifies for a stream a host cannot resume.
     ///
     /// # Errors
     ///
@@ -174,7 +174,7 @@ pub trait StreamState: Any + Send {
 
     /// Closes or resets the stream.
     ///
-    /// The stream type names which half of the exchange the guest means.
+    /// The stream type says which half of the exchange the guest means.
     /// The default body reports [`Status::Unimplemented`].
     ///
     /// # Errors

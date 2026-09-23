@@ -13,10 +13,10 @@ pub enum Access {
 
 /// What the guest is doing when it calls a host function.
 ///
-/// The ABI allows each map and each buffer only in named callbacks, and only
+/// The ABI allows each map and each buffer only in the callbacks it lists, and only
 /// the crate knows which callback is running.
 /// A [`StreamState`] method receives this so that you can apply those rules.
-/// The two methods that name a resource the guest can read or write receive
+/// The two methods that take a resource the guest can read or write receive
 /// an [`Access`] beside it.
 /// Build one with [`Invocation::new`] when you test your own stream state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

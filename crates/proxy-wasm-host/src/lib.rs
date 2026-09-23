@@ -14,7 +14,7 @@
 //!
 //! # The surface
 //!
-//! What no ABI version owns is named here, at the crate root.
+//! What no ABI version owns is exported here, at the crate root.
 //! You build and configure with [`Engine`], [`EngineConfig`], [`Module`], and
 //! [`Limits`].
 //! You lend your own storage through [`Buffer`], [`HeaderMap`], and
@@ -24,7 +24,7 @@
 //! You ask which ABI a module speaks with [`AbiVersion`], and
 //! [`abi::UnsupportedAbi`] is the refusal.
 //!
-//! Everything an ABI version defines is named on that version's module, so a
+//! Everything an ABI version defines is exported from that version's module, so a
 //! later version can define its own without a rename here.
 //! For v0.2.1 that is [`abi::v0_2_1`], which groups its own surface the same
 //! way.
@@ -44,7 +44,7 @@ pub use runtime::{Engine, EngineConfig, Limits, Module};
 
 /// The embedder refused a write to a header map or a buffer.
 ///
-/// The ABI allows a write to each map and buffer only from named callbacks.
+/// The ABI allows a write to each map and buffer only from the callbacks the ABI lists.
 /// If you enforce that rule in your [`HeaderMap`] or [`Buffer`]
 /// implementation, return this error from the write.
 /// The host function then reports the status that the ABI section for that

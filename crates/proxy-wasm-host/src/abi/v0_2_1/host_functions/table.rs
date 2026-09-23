@@ -58,7 +58,7 @@ macro_rules! host_function {
 
 /// Defines the table and the registration from one entry per function.
 ///
-/// An entry names the function, its parameters with their `WasmType`
+/// An entry holds the name of the function, its parameters with their `WasmType`
 /// variants, and in brackets the path of the body that serves it.
 /// The brackets let `host_function!` receive the path as one token tree.
 macro_rules! host_functions {

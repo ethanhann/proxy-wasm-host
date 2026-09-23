@@ -4,7 +4,7 @@
 //! get two metrics.
 //! A guest reaches only a metric it defined, because an identifier is a small
 //! number that another VM can guess and the ABI gives the guest no VM id on
-//! the three calls that name one.
+//! the three calls that take one.
 //! The value keeps its full width in every direction, which the Go
 //! host does not do.
 
@@ -283,7 +283,7 @@ mod tests {
     fn a_grant_does_not_survive_a_replacement_of_the_shared_services() {
         // Arrange
         // Both stores hand out small numbers from their own counter, so the
-        // identifier this guest was granted names a metric of another VM
+        // identifier this guest was granted refers to a metric of another VM
         // inside the replacement.
         let engine = engine();
         let first: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());

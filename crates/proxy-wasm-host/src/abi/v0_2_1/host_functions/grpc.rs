@@ -5,7 +5,7 @@
 //! The crate keeps the record of what is open, and the embedder answers
 //! through the four gRPC callbacks.
 //!
-//! The three functions that name an open callout answer `OK` for a callout
+//! The three functions that take an open callout answer `OK` for a callout
 //! that this guest opened and that has ended.
 //! A guest of the Rust SDK stops with a panic on any other status from them,
 //! and a plugin that closes its own stream inside `proxy_on_grpc_close` is
@@ -134,7 +134,7 @@ pub(super) fn proxy_grpc_stream(
     Ok(())
 }
 
-/// What an open callout of this guest is, for the three functions that name
+/// What an open callout of this guest is, for the three functions that take
 /// one.
 enum Found {
     /// The callout is open, with its identifier and its entry.
@@ -148,10 +148,10 @@ enum Found {
 ///
 /// The effective context must be the context that opened the callout, so one
 /// request cannot feed or end the callout of another request, and the
-/// context the service hears is the context every delivery names.
+/// context the service hears is the context every delivery passes.
 ///
 /// An identifier that this guest opened and that has ended answers `Ended`
-/// before the context is read, because the entry that named its context is
+/// before the context is read, because the entry that recorded its context is
 /// gone.
 /// A guest can therefore learn that a number was given out, which the
 /// rustdoc of the three functions states.
@@ -234,7 +234,7 @@ pub(super) fn proxy_grpc_close(
     match entry.kind {
         CalloutKind::HttpCall => return Err(Status::NotFound.into()),
         // A call takes no more from either side, so it ends here and the
-        // service hears the one method that names a callout with no
+        // service hears the one method that takes a callout with no
         // delivery.
         CalloutKind::GrpcCall => end_callout(state, callout),
         CalloutKind::GrpcStream if !entry.closed_by_guest => {

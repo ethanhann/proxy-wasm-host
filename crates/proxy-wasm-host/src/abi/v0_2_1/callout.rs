@@ -1,4 +1,4 @@
-//! The callouts a guest has open, and the identifiers that name them.
+//! The callouts a guest has open, and the identifiers that refer to them.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -89,7 +89,7 @@ impl fmt::Display for CalloutKind {
 pub enum CalloutProblem {
     /// No open callout has the identifier.
     NotOpen,
-    /// Another context made the callout, and this is the context you named.
+    /// Another context made the callout, and this is the context you passed.
     NotMadeBy(ContextId),
     /// The response you gave arrived and has no header.
     /// The ABI reads a header count of zero as a call that failed, so give
@@ -136,7 +136,7 @@ pub(crate) struct Callout {
     pub(crate) kind: CalloutKind,
     /// The context that made the call.
     pub(crate) caller: ContextId,
-    /// The root of the caller, which a callback names as the plugin context.
+    /// The root of the caller, which a callback passes as the plugin context.
     pub(crate) root: ContextId,
     /// Whether the guest closed its side of a gRPC stream, which it does
     /// with `proxy_grpc_close` or with a send that ends the stream.

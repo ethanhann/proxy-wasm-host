@@ -78,7 +78,7 @@ shared_id!(
 #[non_exhaustive]
 pub enum QueueProblem {
     /// No context of this root registered the queue, and this is the root you
-    /// named.
+    /// passed.
     NotRegisteredBy(ContextId),
 }
 

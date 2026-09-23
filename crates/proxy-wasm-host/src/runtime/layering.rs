@@ -3,7 +3,7 @@
 //! The runtime compiles and runs a guest and bounds its resources.
 //! It does that the same way whichever ABI version the guest speaks.
 //! The ABI layer supplies the linker and the state of each instance, so the
-//! runtime names nothing under `abi`, in its code and in its tests.
+//! runtime refers to nothing under `abi`, in its code and in its tests.
 //!
 //! This is a text search, so it finds a name only where a name is written.
 //! A dependency held by a type alias, by a macro that builds the path, or by
@@ -14,7 +14,7 @@
 mod tests {
     use std::path::{Path, PathBuf};
 
-    /// A file that may name the ABI layer, and the reason it may.
+    /// A file that may refer to the ABI layer, and the reason it may.
     struct Allowed {
         file: &'static str,
         reason: &'static str,
@@ -60,7 +60,7 @@ mod tests {
         source.contains("v0_2_1") || source.contains("abi::")
     }
 
-    /// The path a listing and a message name a source by.
+    /// The path a listing and a message use to identify a source.
     fn listed(path: &Path) -> String {
         path.strip_prefix(src_root())
             .unwrap_or(path)
@@ -68,7 +68,7 @@ mod tests {
             .replace('\\', "/")
     }
 
-    /// Every line of `sources` that names the ABI layer in a file the list
+    /// Every line of `sources` that refers to the ABI layer in a file the list
     /// does not allow.
     fn offenders(sources: &[(String, String)]) -> Vec<String> {
         sources

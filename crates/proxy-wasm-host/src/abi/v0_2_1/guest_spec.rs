@@ -22,7 +22,7 @@ use crate::runtime::{Limits, Module};
 /// steps:
 ///
 /// 1. End the requests that wait for a callout of the old guest.
-///    [`Guest::open_callouts`] names each one, and it answers on a poisoned
+///    [`Guest::open_callouts`] lists each one, and it answers on a poisoned
 ///    guest.
 ///    Cancel each gRPC stream at your side, because the crate ends none of
 ///    them.

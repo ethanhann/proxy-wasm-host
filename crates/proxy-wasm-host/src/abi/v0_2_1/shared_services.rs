@@ -70,10 +70,10 @@ impl SharedValue {
 ///
 /// Every method has a default body that reports [`Status::NotFound`], so you
 /// implement what you serve.
-/// The ABI names no status for a function the host does not implement, so
+/// The ABI specifies no status for a function the host does not implement, so
 /// this is the crate's own rule rather than the ABI's, and `NOT_FOUND` is
 /// chosen because a guest can act on it.
-/// Every default body also logs a warning that names itself.
+/// Every default body also logs a warning that includes the name of its method.
 pub trait SharedServices: Send + Sync {
     /// The value and the compare and swap number of one key.
     ///
@@ -146,7 +146,7 @@ pub trait SharedServices: Send + Sync {
 
     /// Opens a queue that another VM registered.
     ///
-    /// A guest that names an empty VM id means its own VM, as it does on the
+    /// A guest that passes an empty VM id means its own VM, as it does on the
     /// C++ host, so `vm_id` is then the VM id of the caller.
     ///
     /// # Errors

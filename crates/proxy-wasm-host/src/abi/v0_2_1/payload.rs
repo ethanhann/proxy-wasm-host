@@ -62,7 +62,7 @@ fn owned_map(pairs: HeaderPairs<'_>) -> VecHeaderMap {
 
 /// What the running callback lends to the guest.
 ///
-/// The callout is absent for a callback that names none.
+/// The callout is absent for a callback that has none.
 #[derive(Debug)]
 pub(crate) struct Delivery {
     callout: Option<CalloutId>,
@@ -127,7 +127,7 @@ impl Delivery {
         }
     }
 
-    /// The arguments of a foreign function call, which names no callout.
+    /// The arguments of a foreign function call, which has no callout.
     pub(crate) fn foreign_arguments(arguments: Cow<'_, [u8]>) -> Self {
         Self {
             callout: None,

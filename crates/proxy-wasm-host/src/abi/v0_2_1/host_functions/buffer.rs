@@ -138,7 +138,7 @@ fn read_buffer(state: &mut HostState, buffer_type: BufferType) -> Result<Source<
 /// The guest reads what the stream state holds, so a size that is too large
 /// gives the guest a short read with an `OK` status and a size that is too
 /// small hides bytes.
-/// Neither answer names the mistake, so the crate names it here.
+/// Neither answer says what the mistake is, so the crate says it here.
 /// The caller takes the record, so one callback reports at most one
 /// difference.
 fn report_announced(buffer_type: BufferType, announced: Option<u32>, length: usize) {

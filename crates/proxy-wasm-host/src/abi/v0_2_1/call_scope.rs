@@ -19,11 +19,11 @@ use crate::abi::v0_2_1::{ContextId, Guest, StreamState};
 /// A group of callbacks that share one stream state.
 ///
 /// The scope serves one stream context.
-/// The first stream callback names it, and a later stream callback that
-/// names another one is refused, because the stream state you lent belongs
+/// The first stream callback decides which one, and a later stream callback
+/// for another context is refused, because the stream state you lent belongs
 /// to the first.
 /// The callbacks of a callout and the foreign function callback take any
-/// context, because the ABI names the context that made the callout and the
+/// context, because the ABI identifies the context that made the callout and the
 /// host reaches a root context with a foreign function call.
 ///
 /// [`Guest::enter`] gives you a scope, the callback methods run the guest,
@@ -60,8 +60,8 @@ use crate::abi::v0_2_1::{ContextId, Guest, StreamState};
 /// next [`Guest::enter`].
 pub struct CallScope<'a, H: StreamState> {
     guest: &'a mut Guest,
-    /// The stream context that the first stream callback of this scope
-    /// named, which every later stream callback must name again.
+    /// The stream context of the first stream callback of this scope, which
+    /// every later stream callback must use as well.
     served: Option<ContextId>,
     stream: PhantomData<H>,
 }

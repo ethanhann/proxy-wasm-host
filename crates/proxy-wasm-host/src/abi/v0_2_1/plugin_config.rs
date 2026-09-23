@@ -14,7 +14,7 @@
 /// The bytes reach the guest as you wrote them, so any format serves.
 /// A guest that cannot use what it reads answers false from its configuration
 /// callback.
-/// [`Started::Refused`](super::Started::Refused) then names that callback.
+/// [`Started::Refused`](super::Started::Refused) then identifies that callback.
 ///
 /// Sometimes you run several plugins against one instance.
 /// One root context holds one plugin, so create a root context for each and

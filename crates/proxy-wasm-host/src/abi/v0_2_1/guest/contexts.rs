@@ -155,7 +155,7 @@ impl Guest {
 
     /// One open callout, or `None` when `callout` is not open.
     ///
-    /// When a result arrives, this tells you the context to name in
+    /// When a result arrives, this tells you the context to pass to
     /// [`CallScope::on_http_call_response`](crate::abi::v0_2_1::CallScope::on_http_call_response)
     /// or in a gRPC delivery, the kind of the callout, and whether the
     /// caller is a root, so you need no record of your own.

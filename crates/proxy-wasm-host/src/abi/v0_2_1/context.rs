@@ -71,7 +71,7 @@ pub struct InvalidContextId {
     pub value: i64,
 }
 
-/// Which kind of context an identifier names.
+/// Which kind of context an identifier refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContextType {
     /// A context with no parent, which the ABI calls the plugin context.
@@ -85,7 +85,7 @@ pub enum ContextType {
 /// A guest decides for itself whether a stream context is a TCP stream or an
 /// HTTP stream, and it decides inside its own SDK, so the crate cannot read
 /// the choice.
-/// Both guest SDKs stop with a panic when a callback of one family names a
+/// Both guest SDKs stop with a panic when a callback of one family passes a
 /// context of the other family, and a panic poisons the guest.
 ///
 /// The crate records the family of a stream context at its first stream
@@ -94,7 +94,7 @@ pub enum ContextType {
 /// family you serve with
 /// [`Guest::expect_stream_kind`](crate::abi::v0_2_1::Guest::expect_stream_kind)
 /// before the first callback of a context.
-/// The ABI names two families and no more, so this enumeration is closed
+/// The ABI defines two families and no more, so this enumeration is closed
 /// and you match it with two arms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StreamKind {

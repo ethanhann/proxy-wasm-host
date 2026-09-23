@@ -3,7 +3,7 @@
 use crate::Error;
 use crate::abi::v0_2_1::{AbiAccess, Guest, GuestError};
 
-/// Every callback and every allocator the ABI names starts with this.
+/// Every callback and every allocator the ABI defines starts with this.
 const ABI_PREFIX: &str = "proxy_";
 
 /// The allocator a guest may export in place of `proxy_on_memory_allocate`.

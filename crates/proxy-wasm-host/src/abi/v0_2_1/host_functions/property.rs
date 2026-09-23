@@ -1,6 +1,6 @@
 //! `proxy_get_property` and `proxy_set_property`.
 //!
-//! The ABI names three properties that belong to Proxy-Wasm itself, and the
+//! The ABI defines three properties that belong to Proxy-Wasm itself, and the
 //! crate answers those from the plugin of the root and from the host
 //! services.
 //! Every other path goes to the stream state.

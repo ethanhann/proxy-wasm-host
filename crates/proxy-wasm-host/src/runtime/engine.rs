@@ -69,7 +69,7 @@ impl EngineConfig {
     /// can bound a guest call.
     ///
     /// A store on a metered engine starts with no fuel, so every guest you
-    /// build on this engine needs limits that name a fuel budget.
+    /// build on this engine needs limits that set a fuel budget.
     #[must_use]
     pub fn with_fuel_enabled(mut self, enabled: bool) -> Self {
         self.fuel_enabled = enabled;

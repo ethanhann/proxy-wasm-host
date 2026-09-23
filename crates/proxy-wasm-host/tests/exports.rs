@@ -1,9 +1,9 @@
 //! The list of names an embedder writes, at the paths it writes them by.
 //!
-//! The rule is that the surface is every type named in the signature of a
+//! The rule is that the surface is every type that appears in the signature of a
 //! method an embedder implements, plus the entry points and the error types.
 //! The rule has two halves, and this file holds both.
-//! The import block below names each item, so a name that is dropped rather
+//! The import block below lists each item, so a name that is dropped rather
 //! than moved stops this file compiling.
 //! An import cannot prove that a name is absent, so the three tests compare
 //! the export statements of the crate as text.
@@ -33,10 +33,10 @@ use proxy_wasm_host::abi::v0_2_1::{
     QueueRegistration, SharedServices, SharedValue, Started, StreamKind, StreamState, SystemClock,
     VmServices, WasmParams, WasmResults,
 };
-// What the codec names in a signature an embedder writes.
+// The codec types that appear in a signature an embedder writes.
 use proxy_wasm_host::codec::pairs::{EncodeError, PairVisitor, Pairs};
 
-// The rest of the public surface, which an embedder names less often.
+// The rest of the public surface, which an embedder uses less often.
 use proxy_wasm_host::abi::v0_2_1::types::{
     PeerType, UnknownValue, WasiClockId, WasiErrno, WasiFdId,
 };

@@ -566,7 +566,7 @@ mod tests {
     fn a_queue_one_guest_registered_is_not_granted_to_another_of_the_same_vm() {
         // Arrange
         // The grant is per instance, so a second guest of the same VM that
-        // never registered the queue cannot reach it by naming it. This dies
+        // never registered the queue cannot reach it by passing its identifier. This dies
         // if the grant set is shared between instances.
         let engine = engine();
         let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
@@ -595,7 +595,7 @@ mod tests {
     fn a_grant_does_not_survive_a_replacement_of_the_shared_services() {
         // Arrange
         // Both stores hand out small numbers from their own counter, so the
-        // identifier this guest was granted names a queue of another VM
+        // identifier this guest was granted refers to a queue of another VM
         // inside the replacement.
         let engine = engine();
         let first: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());

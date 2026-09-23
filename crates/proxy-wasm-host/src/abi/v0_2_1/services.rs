@@ -136,7 +136,7 @@ impl VmServices {
 
     /// Sets the VM id.
     ///
-    /// A guest names it when it resolves a shared queue that another VM
+    /// A guest passes it when it resolves a shared queue that another VM
     /// registered, and it also separates the shared data and the metrics of
     /// this plugin from those of every other plugin that holds the same
     /// store.

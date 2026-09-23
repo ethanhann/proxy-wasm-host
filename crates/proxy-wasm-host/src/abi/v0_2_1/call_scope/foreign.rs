@@ -12,7 +12,7 @@ impl<H: StreamState> CallScope<'_, H> {
     /// Calls `proxy_on_foreign_function` with the arguments of your own
     /// function.
     ///
-    /// The ABI names no registry of functions, so `function_id` is a number
+    /// The ABI defines no registry of functions, so `function_id` is a number
     /// that you and the plugin agree on.
     /// The guest reads `arguments` from the `FOREIGN_FUNCTION_ARGUMENTS`
     /// buffer while the callback runs, and it reads them in this callback

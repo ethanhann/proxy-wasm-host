@@ -7,7 +7,7 @@
 //!
 //! The decoder is strict.
 //! A guest controls the input, so a truncated table, a missing terminator, or
-//! bytes after the last pair each produce a named [`DecodeError`] rather than
+//! bytes after the last pair each produce a specific [`DecodeError`] rather than
 //! a partial map.
 //!
 //! The encoder can read its pairs from a visitor, so a header map that does

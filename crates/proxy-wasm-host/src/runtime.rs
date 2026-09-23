@@ -3,7 +3,7 @@
 //! An [`Engine`] compiles a [`Module`], and a guest runs it inside a store.
 //! [`Limits`] bound the CPU time, the fuel, and the memory of each guest.
 //! The ABI layer supplies the linker and an opaque state for each instance,
-//! so nothing here names an ABI version.
+//! so nothing here refers to an ABI version.
 
 mod alloc;
 mod engine;

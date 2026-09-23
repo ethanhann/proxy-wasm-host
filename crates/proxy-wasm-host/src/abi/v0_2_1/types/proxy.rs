@@ -152,7 +152,7 @@ abi_enum! {
 
 impl std::fmt::Display for Status {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The match names every variant, so a new one stops the build rather
+        // The match lists every variant, so a new one stops the build rather
         // than printing a name the ABI does not use.
         let name = match self {
             Status::Ok => "OK",

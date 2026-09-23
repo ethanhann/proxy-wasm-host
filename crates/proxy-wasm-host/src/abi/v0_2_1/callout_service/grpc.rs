@@ -18,7 +18,7 @@ use crate::abi::v0_2_1::types::Status;
 pub enum GrpcOpenRefusal {
     /// You do not know the upstream, which the guest reads as
     /// `PARSE_FAILURE`.
-    /// The ABI names that status for a gRPC callout, where an HTTP call gets
+    /// The ABI specifies that status for a gRPC callout, where an HTTP call gets
     /// `BAD_ARGUMENT`.
     UnknownUpstream,
     /// You cannot reach the server, which the guest reads as

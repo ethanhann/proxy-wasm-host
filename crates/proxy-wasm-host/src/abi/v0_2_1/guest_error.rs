@@ -79,19 +79,19 @@ pub enum GuestError {
         /// The value it returned.
         value: i32,
     },
-    /// A delivery named a callout that is not open, that another context
+    /// A delivery referred to a callout that is not open, that another context
     /// made, or that is of another kind than the delivery.
     #[error("callout {id} {problem}")]
     Callout {
-        /// The callout you named.
+        /// The callout you passed.
         id: CalloutId,
         /// What is wrong with it.
         problem: CalloutProblem,
     },
-    /// A queue callback named a root that did not register the queue.
+    /// A queue callback was for a root that did not register the queue.
     #[error("queue {id} {problem}")]
     Queue {
-        /// The queue you named.
+        /// The queue you passed.
         id: QueueId,
         /// What is wrong with it.
         problem: QueueProblem,

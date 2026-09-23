@@ -131,7 +131,7 @@ impl AbiState {
 
     /// Records that this guest obtained a queue identifier.
     ///
-    /// A guest that names one it never obtained is refused, so it cannot
+    /// A guest that passes one it never obtained is refused, so it cannot
     /// reach a queue of another VM by guessing a number.
     pub(crate) fn grant_queue(&mut self, queue: QueueId) {
         self.queues.insert(queue);

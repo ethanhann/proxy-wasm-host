@@ -40,7 +40,7 @@ impl Instance {
     /// # Errors
     ///
     /// Returns [`Error::Config`] when `limits` asks for fuel on an engine
-    /// without it, and when the engine meters fuel and `limits` names no
+    /// without it, and when the engine meters fuel and `limits` sets no
     /// fuel budget, because a store with no fuel stops every call.
     /// Returns [`Error::Instantiate`] when `linker` lacks an import of the
     /// module, and when `linker` or `module` belongs to another engine.

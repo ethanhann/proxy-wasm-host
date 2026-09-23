@@ -104,7 +104,7 @@ impl StreamState for SealedRequest {
     }
 }
 
-/// Drives one guest through the lifecycle one named step at a time.
+/// Drives one guest through the lifecycle one step at a time.
 struct Lifecycle {
     guest: Guest,
     sink: Arc<Sink>,

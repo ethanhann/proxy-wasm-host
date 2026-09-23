@@ -136,7 +136,7 @@ pub(super) struct Delivered<P: WasmParams> {
     ///
     /// A callout delivery passes the root of the caller, which a guest SDK
     /// requires.
-    /// A foreign function call passes the context the embedder named, which
+    /// A foreign function call passes the context the embedder chose, which
     /// the ABI calls the plugin context and a guest SDK ignores.
     pub(super) context: ContextId,
     /// The callout the delivery answers, which a foreign function call has
@@ -1231,7 +1231,7 @@ mod tests {
     /// Address 0 counts the HTTP responses and address 4 the gRPC closes.
     /// Address 8 holds the sum of both as `proxy_on_delete` saw it.
     /// Address 16 and address 20 hold the last identifier of each kind.
-    /// `set_cancel` names a callout that the close callback cancels.
+    /// `set_cancel` sets a callout that the close callback cancels.
     const ENDING: &str = r#"(module
         (import "env" "proxy_grpc_cancel" (func $cancel (param i32) (result i32)))
         (memory (export "memory") 1)

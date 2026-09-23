@@ -144,7 +144,7 @@ pub(super) mod test_support {
             .collect()
     }
 
-    /// Whether a hand written table names every variant in `all` exactly once.
+    /// Whether a hand written table lists every variant in `all` exactly once.
     pub(crate) fn covers<E: Copy + PartialEq>(table: &[(E, i32)], all: &[E]) -> bool {
         table.len() == all.len() && all.iter().all(|v| table.iter().any(|(t, _)| t == v))
     }

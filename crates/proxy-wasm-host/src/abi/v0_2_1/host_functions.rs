@@ -1,4 +1,4 @@
-//! The `env` functions the ABI names.
+//! The `env` functions the ABI defines.
 //!
 //! Every one of the 39 functions is registered for every guest, because a
 //! guest built with an SDK imports most of them whether or not it calls them.

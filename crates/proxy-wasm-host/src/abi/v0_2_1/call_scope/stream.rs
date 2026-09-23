@@ -16,7 +16,7 @@ use crate::abi::v0_2_1::{
 };
 
 impl<H: StreamState> CallScope<'_, H> {
-    /// Refuses a stream callback that names another context than the one
+    /// Refuses a stream callback for another context than the one
     /// this scope serves, and records the context of the first one.
     ///
     /// The stream state you lent belongs to one request, and a callback of
@@ -58,7 +58,7 @@ impl<H: StreamState> CallScope<'_, H> {
     /// The checks run in the order every callback of a context uses, and the
     /// family is recorded last, so a callback that a check refuses records
     /// none.
-    /// `announced` names the buffer whose length the crate compares with the
+    /// `announced` identifies the buffer whose length the crate compares with the
     /// count while the callback runs.
     pub(super) fn stream_action<P: WasmParams>(
         &mut self,
