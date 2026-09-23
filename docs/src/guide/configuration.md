@@ -40,7 +40,16 @@ let plugin = plugin
 The limits are used to control the behavior of the VM and prevent it from consuming too many resources.
 Limits are set per-guest.
 
-There are three types of guest limits: CPU time, memory ceiling, and fuel.
+Every limit has a default, so you can start with `Limits::default()` and change only the limits you care about.
+Each limit is set with a `with_*` method, and passing `None` removes that limit entirely:
+
+```rust
+use proxy_wasm_host::Limits;
+
+let limits = Limits::default()
+    .with_max_log_bytes(4 * 1024 * 1024)
+    .with_max_name_bytes(None);
+```
 
 ### CPU Time
 
@@ -65,6 +74,39 @@ This gives the host a deterministic bound on how much work a guest can do in a s
 This is different from CPU time because the exact instruction count depends on the underlying hardware.
 It is also, generally speaking, slower than epochs.
 By default, guests have unlimited fuel and are only bound by CPU time and memory ceiling.
+
+### Guest input limits
+
+A guest decides how much data it hands to the host, whether that is a map of headers, the name of a shared queue, or a log message.
+The following limits are checked before that data reaches any of your services:
+
+| Method | Default | What it limits |
+|---|---|---|
+| `with_max_decoded_pairs` | 1024 | The number of pairs in one map a guest sends |
+| `with_max_decoded_map_bytes` | 1 MiB | The size of one map a guest sends |
+| `with_max_shared_names` | 1024 | The number of queues and metrics one guest may hold |
+| `with_max_name_bytes` | 4096 | The length of one queue name, metric name, or shared data key |
+| `with_max_log_bytes` | 1 MiB | The length of one log message |
+
+When a guest goes over one of these limits, the host function returns an error status to the guest instead of calling your service.
+Keep in mind that guests built with the Rust SDK treat most error statuses as fatal and panic, which poisons the guest.
+If your plugins legitimately need more queues or longer names, raise the limit rather than letting the guest fail:
+
+```rust
+let limits = Limits::default()
+    .with_max_shared_names(4096)
+    .with_max_name_bytes(16 * 1024);
+```
+
+The shared name limit counts the queues and metrics a single guest has opened.
+Opening a queue or metric the guest already holds does not count against the limit again.
+
+Reading a shared data key that is longer than the name limit returns `NOT_FOUND` rather than an error, since a key that long could never have been stored.
+
+Log messages are the one exception to the rule.
+A message longer than the log limit is truncated to the limit and passed to your `LogSink`, and the guest is told the write succeeded.
+Guests commonly log the reason they are about to fail, so rejecting a long message would make the guest fail on the very line that explains why.
+The same limit applies to anything the guest writes to standard output or standard error.
 
 ## VmServices
 
@@ -91,5 +133,26 @@ See [Services](services.md) for details on logging, callouts, and shared state.
 If you use the shipped `InMemoryStore` for shared services, you can bound what a guest stores.
 These limits protect the host process from the guest filling the store with data.
 
-The largest value size, the total number of keys, and the number of items per queue can be capped.
+| Limit | Method | Default |
+|---|---|---|
+| Bytes in one value or queue item | `with_value_bytes` | 64 KiB |
+| Keys of the shared data | `with_keys` | 4096 |
+| Items in one queue | `with_queue_items` | 1024 |
+| Queues | `with_queues` | 4096 |
+| Metrics | `with_metrics` | 4096 |
+
 Any bound being exceeded causes a failure status to be reported to the guest.
+
+Unlike the guest limits above, these limits apply to the store as a whole.
+The store outlives the guests that use it, so a queue that one guest registers is still there after that guest is dropped and replaced.
+Capping the total number of queues and metrics keeps a misbehaving plugin from growing the store every time you rebuild it:
+
+```rust
+use proxy_wasm_host::abi::v0_2_1::{InMemoryStore, InMemoryStoreLimits};
+
+let store = InMemoryStore::new().with_limits(
+    InMemoryStoreLimits::new()
+        .with_queues(1024)
+        .with_metrics(1024),
+);
+```
