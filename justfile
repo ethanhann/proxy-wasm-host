@@ -47,6 +47,10 @@ check-code-quality: lint
 # Count the unsafe code of the crate and of its dependency tree.
 check-unsafe:
     #!/usr/bin/env bash
+    # Run this before a release. It needs `cargo install cargo-geiger`, and it
+    # takes about half an hour from cold, so `check` does not run it. It builds
+    # into a target directory of its own, because it reads the dependency files
+    # of a build and an older build can leave one that no longer resolves.
     set -uo pipefail
     cd crates/proxy-wasm-host
     CARGO_TARGET_DIR=../../target/geiger cargo geiger --all-features --locked
