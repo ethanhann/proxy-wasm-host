@@ -4,7 +4,3 @@ Copyright (c) 2026 Ethan Hann
 This product is a port to Rust of proxy-wasm-go-host,
 Copyright (c) 2021 The MOSN Authors, licensed under the Apache License, Version 2.0.
 https://github.com/mosn/proxy-wasm-go-host
-
-The test fixture crates/proxy-wasm-host/tests/fixtures/add-request-header-tinygo.wasm
-is a copy of internal/e2e/testdata/add-req-header-v2/main.wasm from proxy-wasm-go-host,
-built by the MOSN authors from a TinyGo guest that uses the proxy-wasm-go-sdk.

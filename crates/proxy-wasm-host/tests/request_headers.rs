@@ -210,6 +210,19 @@ fn the_rust_sdk_guest_starts_its_root_context() {
 }
 
 #[test]
+fn the_rust_sdk_guest_imports_at_least_32_functions() {
+    // Arrange
+    let engine = wasmtime::Engine::default();
+    let module = wasmtime::Module::new(&engine, RUST_SDK).unwrap();
+
+    // Act
+    let imports = module.imports().count();
+
+    // Assert
+    assert!(imports >= 32, "the SDK guest imports {imports} functions");
+}
+
+#[test]
 fn the_rust_sdk_guest_adds_the_context_header_and_logs() {
     // Arrange
     let mut lifecycle = Lifecycle::through_stream(RUST_SDK);

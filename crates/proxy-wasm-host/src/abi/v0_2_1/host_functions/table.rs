@@ -136,8 +136,6 @@ host_functions! {
 mod tests {
     use std::collections::BTreeSet;
 
-    use wasmtime::ExternType;
-
     use super::*;
     use crate::abi::v0_2_1::InMemoryStoreLimits;
     use crate::abi::v0_2_1::services::DEFAULT_MAX_OPEN_CALLOUTS;
@@ -145,7 +143,7 @@ mod tests {
     use crate::abi::v0_2_1::types::Status;
     use crate::abi::v0_2_1::wasi::WASI_FUNCTIONS;
     use crate::codec::pairs::{DEFAULT_MAX_DECODED_MAP_BYTES, DEFAULT_MAX_DECODED_PAIRS};
-    use crate::runtime::{Limits, Module};
+    use crate::runtime::Limits;
 
     /// The module rustdoc that documents this table.
     const MODULE: &str = include_str!("../../v0_2_1.rs");
@@ -355,35 +353,5 @@ mod tests {
 
         // Assert
         assert_eq!(result.unwrap(), Status::Ok);
-    }
-
-    #[test]
-    fn the_rust_sdk_fixture_imports_only_registered_functions() {
-        // Arrange
-        let engine = engine();
-        let bytes = include_bytes!("../../../../tests/fixtures/add-request-header.wasm");
-        let module = Module::new(&engine, bytes).unwrap();
-
-        // Act
-        let unknown: Vec<String> = module
-            .wasmtime()
-            .imports()
-            .filter(|import| {
-                let known = match (import.module(), import.ty()) {
-                    ("env", ExternType::Func(ty)) => HOST_FUNCTIONS.iter().any(|function| {
-                        function.name == import.name()
-                            && ty.params().count() == function.params.len()
-                    }),
-                    ("wasi_snapshot_preview1", _) => WASI_FUNCTIONS.contains(&import.name()),
-                    _ => false,
-                };
-                !known
-            })
-            .map(|import| format!("{}::{}", import.module(), import.name()))
-            .collect();
-
-        // Assert
-        assert!(unknown.is_empty(), "unknown imports: {unknown:?}");
-        assert!(module.wasmtime().imports().count() >= 32);
     }
 }

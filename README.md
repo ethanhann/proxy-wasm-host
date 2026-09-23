@@ -1,7 +1,7 @@
 # proxy-wasm-host
 
 [![CI](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/ethanhann/proxy-wasm-host/blob/main/LICENSE)
 
 
 A [Proxy-Wasm](https://github.com/proxy-wasm/spec) ABI v0.2.1 host library for Rust, built on [wasmtime](https://wasmtime.dev/).
@@ -30,8 +30,9 @@ just check
 ```
 
 `check` runs the format check, clippy with warnings denied, the build, the tests, and rustdoc with warnings denied.
-CI runs the same recipe.
+CI runs the same recipe, and then `just check-package`, which checks that the published crate holds the library source alone.
 Run `just` with no arguments to list every recipe.
+[CONTRIBUTING.md](https://github.com/ethanhann/proxy-wasm-host/blob/main/CONTRIBUTING.md) explains how to prepare a pull request.
 The tests also run the example plugins of the Rust SDK, so the suite covers canonical SDK example guests.
 `just build-guests` rebuilds the test guests under `crates/test-guests`.
 It needs rustup, and it installs the pinned toolchain and the `wasm32-wasip1` target on first use.

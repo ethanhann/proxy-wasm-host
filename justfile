@@ -35,7 +35,7 @@ fmt-check:
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
-# Run every check that CI runs.
+# Run the main checks. CI runs this recipe and then `check-package`.
 check: fmt-check lint build test doc
 
 # Run the code quality checks.
@@ -57,6 +57,20 @@ check-unsafe:
     status=$?
     # One means a dependency uses unsafe, which the report is there to show.
     [ "$status" -le 1 ]
+
+# Check that the package holds the library source alone, then run a publish dry run.
+check-package:
+    #!/usr/bin/env bash
+    # The dry run reads the crates.io index, so this needs the network.
+    set -euo pipefail
+    list="$(cargo package -p proxy-wasm-host --list --locked)"
+    unexpected="$(printf '%s\n' "$list" | grep -Ev '^src/.*\.rs$|^(Cargo\.toml|Cargo\.toml\.orig|Cargo\.lock|README\.md|LICENSE|NOTICE|\.cargo_vcs_info\.json)$' || [ "$?" -eq 1 ])"
+    if [ -n "$unexpected" ]; then
+        printf 'the package holds files outside the library source:\n%s\n' "$unexpected"
+        exit 1
+    fi
+    echo "Cargo warns once for each test, example, and bench target, because the package holds the library source alone."
+    cargo publish --dry-run -p proxy-wasm-host --locked
 
 # Build the test guests for wasm32-wasip1 and copy them into the fixtures directory.
 build-guests:
@@ -107,10 +121,10 @@ build-guests:
     done
 
 # Compare the copied guest sources with the release of the SDK they came from.
-# Run it when a new SDK version appears, and before a release.
-# It needs the network, so it is not part of `check`.
 check-guest-sources:
     #!/usr/bin/env bash
+    # Run it when a new SDK version appears, and before a release.
+    # It needs the network, so it is not part of `check`.
     set -euo pipefail
     tag="$(sed -n 's/^The copies come from tag \([^,]*\),.*/\1/p' NOTICE)"
     if [ -z "$tag" ]; then

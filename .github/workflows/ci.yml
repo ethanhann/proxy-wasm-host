@@ -33,6 +33,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - run: just build-guests
       - run: just check
+      - run: just check-package
 
   quality:
     name: quality
