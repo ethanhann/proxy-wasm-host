@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use proxy_wasm_host::abi::v0_2_1::types::{Action, LogLevel, MapType, Status};
 use proxy_wasm_host::abi::v0_2_1::{
-    Access, ContextId, Guest, GuestError, Host, Invocation, LogSink, PluginConfig, StreamState,
-    VmServices,
+    Access, ContextId, Guest, GuestError, Host, Invocation, LogContext, LogSink, PluginConfig,
+    StreamState, VmServices,
 };
 use proxy_wasm_host::codec::pairs::PairVisitor;
 use proxy_wasm_host::{
@@ -26,7 +26,7 @@ const TINYGO: &[u8] = include_bytes!("fixtures/add-request-header-tinygo.wasm");
 struct Sink(Mutex<Vec<(LogLevel, String)>>);
 
 impl LogSink for Sink {
-    fn log(&self, level: LogLevel, message: &[u8]) {
+    fn log(&self, _: LogContext<'_>, level: LogLevel, message: &[u8]) {
         self.0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

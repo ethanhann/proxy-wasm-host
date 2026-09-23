@@ -50,7 +50,7 @@ pub struct LocalResponse<'a> {
     pub body: Cow<'a, [u8]>,
     /// The response headers, in the order the guest serialized them.
     pub headers: HeaderPairs<'a>,
-    /// The gRPC status, or `None` when the response carries none.
+    /// The gRPC status, or `None` when the response has none.
     ///
     /// The ABI types the field as unsigned, and every SDK sends the all ones
     /// value to mean that there is no gRPC status, which arrives here as

@@ -15,6 +15,7 @@ mod grpc;
 mod header_map;
 mod local_response;
 mod log;
+mod log_context;
 mod metric;
 mod property;
 mod served;
@@ -25,5 +26,6 @@ pub(crate) mod table;
 mod timer;
 
 pub(crate) use failure::{Failure, complete};
+pub(crate) use log_context::log_context;
 pub(super) use served::Served;
 pub(crate) use table::register;

@@ -25,7 +25,7 @@ use values::{ForeignCall, LocalResponse};
 ///
 /// Each default body reports the status that the ABI section for that family
 /// lists for a resource that is not available.
-/// The crate reports the same status when it cannot reach you at all, which
+/// The crate reports the same status when it cannot reach you, which
 /// happens when no callback has run, when the guest refused the root context,
 /// and when no stream state is installed.
 ///

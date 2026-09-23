@@ -20,9 +20,9 @@ pub struct SharedValue {
     pub bytes: Vec<u8>,
     /// The number a write must match to succeed.
     ///
-    /// It is never zero, because the ABI gives zero the meaning that the
-    /// guest does not compare, and a guest built with the Rust SDK reads a
-    /// zero as an absent value.
+    /// It is never zero.
+    /// The ABI gives zero the meaning that the guest does not compare, and a
+    /// guest built with the Rust SDK reads a zero as an absent value.
     pub cas: NonZeroU32,
 }
 
@@ -35,11 +35,11 @@ impl SharedValue {
 
 /// The shared data, the shared queues, and the metrics of a VM.
 ///
-/// One value serves every instance that holds the same `Arc`, which is what
-/// lets one VM resolve a queue that another registered.
+/// One value serves every instance that holds the same `Arc`.
+/// A queue that one VM registers is therefore a queue another VM resolves.
 /// Every method takes `&self`, so an implementation holds its own state
-/// behind a lock, and a method may run while another thread holds the same
-/// value.
+/// behind a lock.
+/// Two threads can run two methods of one value at the same time.
 /// You supply one through
 /// [`VmServices::with_shared`](crate::abi::v0_2_1::VmServices::with_shared),
 /// which defaults to [`InMemoryStore`].
@@ -172,8 +172,8 @@ pub trait SharedServices: Send + Sync {
 
     /// Takes one item from the front of a queue.
     ///
-    /// The crate writes the item into the guest after you return it, and a
-    /// guest whose allocator fails loses the item, because nothing puts it
+    /// The crate writes the item into the guest after you return it.
+    /// A guest whose allocator fails loses the item, because nothing puts it
     /// back.
     ///
     /// # Errors
@@ -211,8 +211,8 @@ pub trait SharedServices: Send + Sync {
 
     /// Sets a metric to a value.
     ///
-    /// The ABI says this sets the metric, so it can lower a counter, and the
-    /// crate does not refuse that on your behalf.
+    /// The ABI says this sets the metric, so it can lower a counter.
+    /// The crate does not refuse that on your behalf.
     ///
     /// # Errors
     ///

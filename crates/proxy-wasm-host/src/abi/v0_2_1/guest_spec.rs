@@ -45,12 +45,14 @@ use crate::runtime::{Limits, Module};
 /// ```
 /// use std::sync::Arc;
 /// use proxy_wasm_host::abi::v0_2_1::types::LogLevel;
-/// use proxy_wasm_host::abi::v0_2_1::{GuestError, GuestSpec, Host, LogSink, PluginConfig, Started, VmServices};
+/// use proxy_wasm_host::abi::v0_2_1::{
+///     GuestError, GuestSpec, Host, LogContext, LogSink, PluginConfig, Started, VmServices,
+/// };
 /// use proxy_wasm_host::{Engine, Limits, Module};
 ///
 /// struct Discard;
 /// impl LogSink for Discard {
-///     fn log(&self, _: LogLevel, _: &[u8]) {}
+///     fn log(&self, _: LogContext<'_>, _: LogLevel, _: &[u8]) {}
 /// }
 ///
 /// # fn main() -> Result<(), GuestError> {

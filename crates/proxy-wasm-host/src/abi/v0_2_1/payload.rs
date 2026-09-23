@@ -1,6 +1,6 @@
 //! The value the crate serves to a guest for the time of one callback.
 //!
-//! A callback that carries a result, such as `proxy_on_http_call_response`,
+//! A callback that delivers a result, such as `proxy_on_http_call_response`,
 //! lends the guest maps and a buffer that exist only while it runs.
 //! The crate holds that value here and answers the map and the buffer
 //! functions from it, so neither the stream state nor the service is asked.
@@ -69,7 +69,7 @@ pub(crate) struct Delivery {
     payload: Payload,
 }
 
-/// The one value of a delivery, by the callback that carries it.
+/// The one value of a delivery, by the callback that delivers it.
 #[derive(Debug)]
 enum Payload {
     HttpCallResponse {

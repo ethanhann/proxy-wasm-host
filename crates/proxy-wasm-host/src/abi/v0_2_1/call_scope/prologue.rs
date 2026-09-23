@@ -130,7 +130,7 @@ pub(super) fn wire_u32(value: u32) -> Result<i32, Error> {
     })
 }
 
-/// A byte length as the ABI carries it to a guest.
+/// A byte length in the form the ABI gives a guest.
 pub(super) fn wire_size(len: usize) -> Result<i32, Error> {
     i32::try_from(len).map_err(|_| Error::ValueTooLarge { size: len })
 }

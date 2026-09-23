@@ -51,7 +51,12 @@ use identity::GuestId;
 ///
 /// struct Stderr;
 /// impl LogSink for Stderr {
-///     fn log(&self, _: proxy_wasm_host::abi::v0_2_1::types::LogLevel, message: &[u8]) {
+///     fn log(
+///         &self,
+///         _: proxy_wasm_host::abi::v0_2_1::LogContext<'_>,
+///         _: proxy_wasm_host::abi::v0_2_1::types::LogLevel,
+///         message: &[u8],
+///     ) {
 ///         eprintln!("{}", String::from_utf8_lossy(message));
 ///     }
 /// }

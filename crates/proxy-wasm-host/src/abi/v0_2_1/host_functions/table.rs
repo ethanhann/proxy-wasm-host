@@ -139,10 +139,154 @@ mod tests {
     use wasmtime::ExternType;
 
     use super::*;
+    use crate::abi::v0_2_1::InMemoryStoreLimits;
+    use crate::abi::v0_2_1::services::DEFAULT_MAX_OPEN_CALLOUTS;
     use crate::abi::v0_2_1::test_support::{engine, import_everything, instance, status};
     use crate::abi::v0_2_1::types::Status;
     use crate::abi::v0_2_1::wasi::WASI_FUNCTIONS;
+    use crate::codec::pairs::{DEFAULT_MAX_DECODED_MAP_BYTES, DEFAULT_MAX_DECODED_PAIRS};
     use crate::runtime::Module;
+
+    /// The module rustdoc that documents this table.
+    const MODULE: &str = include_str!("../../v0_2_1.rs");
+
+    /// The names the table of the module rustdoc lists, in order.
+    ///
+    /// A row is a documentation line that starts a Markdown table cell, and
+    /// the name is its first cell, which the row wraps in backticks.
+    fn documented_names() -> Vec<String> {
+        MODULE
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("//! | `")?.split('`').next())
+            .filter(|name| name.starts_with("proxy_"))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn the_rustdoc_table_names_every_registered_host_function() {
+        // Arrange
+        let registered: Vec<String> = HOST_FUNCTIONS
+            .iter()
+            .map(|function| function.name.to_owned())
+            .collect();
+
+        // Act
+        let documented = documented_names();
+
+        // Assert
+        assert_eq!(
+            documented, registered,
+            "the table of the module rustdoc and the registered set must hold \
+             the same names in the same order"
+        );
+    }
+
+    /// The rows of one table of the module rustdoc, as lists of cells.
+    fn rows_of(section: &str) -> Vec<Vec<String>> {
+        section
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("//! |"))
+            .filter(|row| !row.trim_start().starts_with("---"))
+            .map(|row| {
+                row.trim_end_matches('|')
+                    .split('|')
+                    .map(|cell| cell.trim().to_owned())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The section of the module rustdoc between two headings.
+    fn section(from: &str, to: &str) -> String {
+        let rest = MODULE.split(from).nth(1).expect("the heading is there");
+        rest.split(to).next().unwrap_or(rest).to_owned()
+    }
+
+    #[test]
+    fn every_row_of_the_table_has_four_cells_and_a_known_answerer() {
+        // Arrange
+        let allowed = [
+            "the crate",
+            "the services",
+            "the stream state",
+            "the shared services",
+            "the callouts",
+            "the same",
+            "the crate for the two configurations and for a delivery, else the stream state",
+            "the crate for a delivery, else the stream state",
+            "the crate for the three plugin properties, else the stream state",
+        ];
+
+        // Act
+        let rows = rows_of(&section("# The host functions", "# What the crate bounds"));
+
+        // Assert
+        assert_eq!(
+            rows.len(),
+            HOST_FUNCTIONS.len() + 1,
+            "one header and 39 rows"
+        );
+        for row in rows.iter().skip(1) {
+            assert_eq!(row.len(), 4, "a row of the table holds four cells: {row:?}");
+            assert!(
+                allowed.contains(&row[1].as_str()),
+                "the second cell names who answers, and {:?} is not one of them",
+                row[1]
+            );
+            assert!(!row[2].is_empty(), "the third cell is never empty: {row:?}");
+            assert!(
+                !row[3].is_empty(),
+                "the fourth cell is never empty: {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_rustdoc_bounds_hold_the_values_the_code_uses() {
+        // Arrange
+        let store = InMemoryStoreLimits::default();
+        let expected = [
+            (
+                "The pairs one map a guest sends may declare",
+                DEFAULT_MAX_DECODED_PAIRS.to_string(),
+            ),
+            (
+                "The bytes one map a guest sends may hold",
+                "1 MiB".to_owned(),
+            ),
+            (
+                "The callouts one guest may hold open",
+                DEFAULT_MAX_OPEN_CALLOUTS.to_string(),
+            ),
+            ("The bytes of one shared value", "64 KiB".to_owned()),
+            ("The keys of the shared store", store.keys().to_string()),
+            (
+                "The items of one shared queue",
+                store.queue_items().to_string(),
+            ),
+        ];
+
+        // Act
+        let rows = rows_of(&section("# What the crate bounds", "# Where a guest sees"));
+
+        // Assert
+        assert_eq!(DEFAULT_MAX_DECODED_MAP_BYTES, 1024 * 1024);
+        assert_eq!(store.value_bytes(), 64 * 1024);
+        for (label, value) in expected {
+            let row = rows
+                .iter()
+                .find(|row| row.first().is_some_and(|cell| cell == label))
+                .unwrap_or_else(|| panic!("the bounds table has a row for {label}"));
+            assert_eq!(row[1], value, "the documented default of {label}");
+        }
+        for name in WASI_FUNCTIONS {
+            assert!(
+                MODULE.contains(&format!("`{name}`")),
+                "the documentation does not name the WASI function {name}"
+            );
+        }
+    }
 
     #[test]
     fn the_table_has_39_distinct_proxy_functions_returning_i32() {

@@ -16,7 +16,7 @@ macro_rules! shared_id {
         pub struct $name(NonZeroU32);
 
         impl $name {
-            /// The identifier as the ABI carries it.
+            /// The identifier in the form the ABI uses.
             pub fn get(self) -> u32 {
                 self.0.get()
             }

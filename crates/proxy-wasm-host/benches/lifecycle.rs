@@ -7,8 +7,8 @@ use std::sync::Arc;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use proxy_wasm_host::abi::v0_2_1::types::{LogLevel, MapType, Status};
 use proxy_wasm_host::abi::v0_2_1::{
-    Access, ContextId, GuestSpec, Host, Invocation, LogSink, PluginConfig, StreamKind, StreamState,
-    VmServices,
+    Access, ContextId, GuestSpec, Host, Invocation, LogContext, LogSink, PluginConfig, StreamKind,
+    StreamState, VmServices,
 };
 use proxy_wasm_host::{Engine, HeaderMap, Limits, Module, VecHeaderMap};
 
@@ -25,7 +25,7 @@ const BARE: &str = r#"(module
 struct Discard;
 
 impl LogSink for Discard {
-    fn log(&self, _: LogLevel, _: &[u8]) {}
+    fn log(&self, _: LogContext<'_>, _: LogLevel, _: &[u8]) {}
 }
 
 #[derive(Default)]

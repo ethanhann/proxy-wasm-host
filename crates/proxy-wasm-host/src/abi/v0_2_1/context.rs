@@ -22,7 +22,7 @@ impl ContextId {
         Self(value)
     }
 
-    /// The identifier as the ABI carries it.
+    /// The identifier in the form the ABI uses.
     pub fn get(self) -> u32 {
         self.0.get()
     }

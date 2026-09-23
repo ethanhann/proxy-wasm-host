@@ -3,7 +3,7 @@
 /// What [`InMemoryStore`] allows a guest to store.
 ///
 /// The default allows 4096 keys of at most 64 KiB each and 1024 items on a
-/// queue, which bounds a guest that writes without ever reading.
+/// queue, which bounds a guest that writes and does not read.
 ///
 /// [`InMemoryStore`]: super::InMemoryStore
 ///

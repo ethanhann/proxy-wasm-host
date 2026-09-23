@@ -32,6 +32,7 @@ just check
 `check` runs the format check, clippy with warnings denied, the build, the tests, and rustdoc with warnings denied.
 CI runs the same recipe.
 Run `just` with no arguments to list every recipe.
+The tests also run the example plugins of the Rust SDK, so the suite covers canonical SDK example guests.
 `just build-guests` rebuilds the test guests under `crates/test-guests`.
 It needs rustup, and it installs the pinned toolchain and the `wasm32-wasip1` target on first use.
 `just bench` runs the benchmarks.

@@ -16,6 +16,7 @@ use wasmtime::{Caller, Linker};
 
 use crate::Error;
 use crate::abi::v0_2_1::AbiAccess;
+use crate::abi::v0_2_1::host_functions::log_context;
 use crate::abi::v0_2_1::types::{LogLevel, WasiClockId, WasiErrno, WasiFdId};
 use crate::runtime::HostState;
 use crate::runtime::{GuestMemory, GuestPtr, GuestSlice, split};
@@ -143,7 +144,11 @@ fn fd_write_impl(
         message.pop();
     }
     if count > 0 {
-        state.abi().services().log().log(level, &message);
+        state
+            .abi()
+            .services()
+            .log()
+            .log(log_context(state), level, &message);
     }
     let written = u32::try_from(total).unwrap_or(u32::MAX);
     memory.write_u32(written_ptr, written).map_err(fault)
@@ -259,7 +264,7 @@ mod tests {
     use crate::abi::v0_2_1::test_support::{
         RecordingSink, engine, instance, instance_with, instance_with_sink, services, wat_bytes,
     };
-    use crate::abi::v0_2_1::{Clock, VmServices};
+    use crate::abi::v0_2_1::{AbiAccess, Callback, Clock, VmServices};
     use crate::runtime::Module;
 
     const HEADER: &str = r#"
@@ -287,6 +292,38 @@ mod tests {
     }
 
     const FD_WRITE_IMPORT: &str = r#"(import "wasi_snapshot_preview1" "fd_write" (func $w (param i32 i32 i32 i32) (result i32)))"#;
+
+    #[test]
+    fn fd_write_carries_the_same_context_as_proxy_log() {
+        // Arrange
+        let engine = engine();
+        let sink = Arc::new(RecordingSink::default());
+        let wat = guest(
+            FD_WRITE_IMPORT,
+            r#"(data (i32.const 0) "hello\n")
+               (func (export "write") (result i32)
+                 (i32.store (i32.const 100) (i32.const 0)) (i32.store (i32.const 104) (i32.const 6))
+                 (call $w (i32.const 1) (i32.const 100) (i32.const 1) (i32.const 200)))"#,
+        );
+        let mut instance = instance_with_sink(&engine, &wat, Arc::clone(&sink)).unwrap();
+        let state = instance.state_mut();
+        let root = state.abi_mut().contexts_mut().create(None).unwrap();
+        state.abi_mut().contexts_mut().set_effective(root);
+        state
+            .abi_mut()
+            .set_current_callback(Some(Callback::VmStart));
+
+        // Act
+        let result = instance.call::<(), i32>("write", ()).unwrap();
+
+        // Assert
+        assert_eq!(result, 0);
+        let (context, level, message) = sink.lines().pop().expect("one line was recorded");
+        assert_eq!((level, message), (LogLevel::Info, b"hello".to_vec()));
+        let call = context.call.expect("a callback was running");
+        assert_eq!(call.context, root);
+        assert_eq!(call.callback, Some(Callback::VmStart));
+    }
 
     #[test]
     fn fd_write_logs_joined_entries_and_counts_bytes() {

@@ -14,8 +14,8 @@ use proxy_wasm_host::abi::v0_2_1::types::{
 };
 use proxy_wasm_host::abi::v0_2_1::{
     Access, CalloutId, Callouts, ForeignCall, GrpcCall, GrpcOpenRefusal, GrpcStream, HttpCall,
-    HttpCallRefusal, InMemoryStore, Invocation, LocalResponse, LogSink, MetricId, QueueEnqueued,
-    QueueId, SharedServices, SharedValue, StreamState,
+    HttpCallRefusal, InMemoryStore, Invocation, LocalResponse, LogContext, LogSink, MetricId,
+    QueueEnqueued, QueueId, SharedServices, SharedValue, StreamState,
 };
 use proxy_wasm_host::{Buffer, HeaderMap, VecHeaderMap};
 
@@ -97,6 +97,7 @@ pub type Recorded = (Option<Invocation>, Event);
 pub struct Recorder {
     events: Arc<Mutex<Vec<Recorded>>>,
     refusals: Arc<Mutex<CalloutRefusals>>,
+    contexts: Arc<Mutex<Vec<LogContext<'static>>>>,
 }
 
 impl Recorder {
@@ -106,6 +107,17 @@ impl Recorder {
 
     fn entries(&self) -> std::sync::MutexGuard<'_, Vec<Recorded>> {
         self.events.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The context of each log line, in the order the lines arrived.
+    ///
+    /// A log line carries no `Invocation` in its event, because the crate
+    /// gives a sink a context of its own.
+    pub fn log_contexts(&self) -> Vec<LogContext<'static>> {
+        self.contexts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Makes `call` report `refusal` in place of accepting.
@@ -169,6 +181,10 @@ impl Recorder {
     /// section causes and every method answers as it does by default.
     pub fn clear(&self) {
         self.entries().clear();
+        self.contexts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
         self.refusals
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -191,7 +207,11 @@ impl Recorder {
 }
 
 impl LogSink for Recorder {
-    fn log(&self, level: LogLevel, message: &[u8]) {
+    fn log(&self, context: LogContext<'_>, level: LogLevel, message: &[u8]) {
+        self.contexts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(context.into_owned());
         self.entries()
             .push((None, Event::Log(level, text(message))));
     }

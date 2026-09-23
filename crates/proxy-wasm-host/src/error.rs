@@ -90,7 +90,7 @@ pub enum Error {
         /// The requested size.
         size: u32,
     },
-    /// A host value is larger than the ABI can carry to the guest.
+    /// A host value is larger than the ABI can give the guest.
     #[error("{size} bytes is more than the ABI can pass to the guest")]
     ValueTooLarge {
         /// The value size.

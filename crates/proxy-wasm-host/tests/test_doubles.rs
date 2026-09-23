@@ -117,17 +117,15 @@ fn clear_empties_the_events_and_the_callout_refusals() {
     );
     let state = StreamDouble::new(&exercise.recorder);
     let before = exercise.recorder.events().len();
+    exercise.recorder.clear();
+    let emptied = exercise.recorder.events().is_empty();
 
     // Act
-    exercise.recorder.clear();
+    let (returned, _state) = request_headers(&mut guest, root, state);
 
     // Assert
     assert!(before > 0, "the start must have recorded something");
-    assert!(
-        exercise.recorder.events().is_empty(),
-        "clear must empty the event list"
-    );
-    let (returned, _state) = request_headers(&mut guest, root, state);
+    assert!(emptied, "clear must empty the event list");
     assert!(returned, "the callout must be accepted again");
     assert!(
         exercise

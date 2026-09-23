@@ -10,9 +10,15 @@
 /// guest.
 /// The guest then reads the bytes from the `PLUGIN_CONFIGURATION` buffer.
 ///
-/// One root context holds one plugin.
-/// If you run several plugins against one instance, create one root context
-/// for each and configure each with its own value.
+/// The crate reads nothing in the configuration.
+/// The bytes reach the guest as you wrote them, so any format serves.
+/// A guest that cannot use what it reads answers false from its configuration
+/// callback.
+/// [`Started::Refused`](super::Started::Refused) then names that callback.
+///
+/// Sometimes you run several plugins against one instance.
+/// One root context holds one plugin, so create a root context for each and
+/// configure each with its own value.
 ///
 /// For example, a plugin with a configuration and no name:
 ///

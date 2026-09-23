@@ -1,13 +1,18 @@
 //! The services and the VM scoped inputs an embedder gives to a guest.
 
-use std::sync::{Arc, OnceLock};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+
+mod clock;
+mod log_context;
+
+pub use clock::{Clock, SystemClock};
+pub use log_context::LogContext;
 
 use crate::abi::v0_2_1::callout_service::NoCallouts;
 use crate::abi::v0_2_1::types::LogLevel;
 use crate::abi::v0_2_1::{Callouts, InMemoryStore, SharedServices};
 
-const DEFAULT_MAX_OPEN_CALLOUTS: usize = 1024;
+pub(crate) const DEFAULT_MAX_OPEN_CALLOUTS: usize = 1024;
 
 /// Where guest log output goes.
 ///
@@ -17,47 +22,11 @@ const DEFAULT_MAX_OPEN_CALLOUTS: usize = 1024;
 /// `Arc` and calls it through a shared reference.
 pub trait LogSink: Send + Sync {
     /// Records one message at one level.
-    fn log(&self, level: LogLevel, message: &[u8]);
-}
-
-/// The time source for the WASI `clock_time_get` function and for
-/// `proxy_get_current_time_nanoseconds`.
-///
-/// A host may return approximate or frozen time.
-/// A test can therefore install a clock with fixed values.
-pub trait Clock: Send + Sync {
-    /// Nanoseconds since the Unix epoch.
-    fn realtime_nanos(&self) -> u64;
-    /// Nanoseconds since an origin that never moves while the process runs.
-    fn monotonic_nanos(&self) -> u64;
-}
-
-/// The clock that reads the operating system.
-///
-/// The monotonic origin is one `Instant` for the whole process.
-/// Every instance therefore reports comparable monotonic values.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemClock;
-
-fn monotonic_origin() -> Instant {
-    static ORIGIN: OnceLock<Instant> = OnceLock::new();
-    *ORIGIN.get_or_init(Instant::now)
-}
-
-fn nanos(duration: std::time::Duration) -> u64 {
-    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
-}
-
-impl Clock for SystemClock {
-    fn realtime_nanos(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, nanos)
-    }
-
-    fn monotonic_nanos(&self) -> u64 {
-        nanos(monotonic_origin().elapsed())
-    }
+    ///
+    /// `context` says where the line came from.
+    /// The value borrows from the call that wrote the line, so a sink that
+    /// keeps its lines calls [`LogContext::into_owned`] first.
+    fn log(&self, context: LogContext<'_>, level: LogLevel, message: &[u8]);
 }
 
 /// What the host performs for a guest, and the VM scoped inputs the guest

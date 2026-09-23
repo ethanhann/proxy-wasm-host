@@ -7,8 +7,10 @@ use crate::abi::v0_2_1::{
 
 /// How [`Guest::start`] ended when no callback failed.
 ///
-/// A start is accepted or refused.
-/// No third answer exists, so you match it with two arms.
+/// A root that passed both of its start callbacks serves stream contexts, and
+/// a root that answered false to either one serves nothing.
+/// [`Guest::start`] answers this so that you can tell the two apart before
+/// you send a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use = "a start can be refused, and a refused root serves nothing"]
 pub enum Started {
@@ -51,17 +53,24 @@ impl Guest {
     /// Creates a root context, runs `proxy_on_vm_start`, and runs
     /// `proxy_on_configure` with `plugin`.
     ///
-    /// Before a guest serves a request, its root must pass these three
-    /// steps, and this method runs them in one call.
-    /// The guest stays with you on every path.
+    /// A root must pass three steps before it serves a request.
+    /// This method runs them in one call.
+    /// The method returns the guest to you whether the start succeeded or
+    /// failed.
     /// After a refusal or a failure, [`Guest::open_callouts`] still names the
     /// callouts the root opened.
     /// A plugin with a second root calls `start` again with the
     /// [`PluginConfig`] of that root.
     ///
-    /// A callback that fails refuses the root as an answer of false does.
-    /// A failed VM start refuses the whole guest, and a failed configuration
-    /// refuses the root, so the root serves no request that you cannot see.
+    /// A callback that fails refuses the root, as an answer of false does.
+    /// A failed VM start refuses the whole guest.
+    /// A failed configuration refuses the root alone.
+    ///
+    /// A guest validates its own configuration, which [`PluginConfig`]
+    /// describes.
+    /// A guest that rejects what it reads answers false.
+    /// This method then answers [`Started::Refused`] with
+    /// [`Callback::Configure`](crate::abi::v0_2_1::Callback::Configure).
     ///
     /// # Errors
     ///

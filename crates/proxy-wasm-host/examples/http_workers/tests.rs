@@ -5,7 +5,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use proxy_wasm_host::abi::v0_2_1::types::LogLevel;
-use proxy_wasm_host::abi::v0_2_1::{Host, InMemoryStore, LogSink, VmServices};
+use proxy_wasm_host::abi::v0_2_1::{GuestId, Host, InMemoryStore, LogContext, LogSink, VmServices};
 use proxy_wasm_host::{Engine, Limits, Module};
 use tiny_http::{Header, TestRequest};
 
@@ -248,6 +248,7 @@ fn the_sink_maps_each_level_to_its_tracing_level() {
         .with_ansi(false)
         .with_max_level(tracing::Level::TRACE)
         .finish();
+    let context = LogContext::new(b"vm", GuestId::next());
     let levels = [
         LogLevel::Trace,
         LogLevel::Debug,
@@ -260,7 +261,7 @@ fn the_sink_maps_each_level_to_its_tracing_level() {
     // Act
     tracing::subscriber::with_default(subscriber, || {
         for level in levels {
-            TracingSink.log(level, b"line");
+            TracingSink.log(context.clone(), level, b"line");
         }
     });
 

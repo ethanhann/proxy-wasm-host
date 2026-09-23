@@ -1,6 +1,6 @@
 //! The enumerations of ABI v0.2.1 and their `i32` conversions.
 //!
-//! Each enum carries the exact values from the Types section of the ABI
+//! Each enum has the exact values of the Types section of the ABI
 //! document.
 //! A value crosses the guest boundary as an `i32`, so every enum converts in
 //! both directions.

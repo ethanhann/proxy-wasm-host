@@ -21,7 +21,7 @@ use crate::abi::v0_2_1::ContextId;
 pub struct CalloutId(NonZeroU32);
 
 impl CalloutId {
-    /// The identifier as the ABI carries it.
+    /// The identifier in the form the ABI uses.
     pub fn get(self) -> u32 {
         self.0.get()
     }
@@ -213,7 +213,7 @@ impl CalloutTable {
         self.open.remove(&id)
     }
 
-    /// Whether this table ever gave out the identifier.
+    /// Whether this table gave out the identifier.
     ///
     /// The counter moves forward, so every identifier below it was given to
     /// the guest.

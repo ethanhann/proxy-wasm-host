@@ -10,7 +10,7 @@ use crate::abi::v0_2_1::host_functions::call::{from_embedder, guest_pairs, with_
 use crate::abi::v0_2_1::types::Status;
 use crate::runtime::{GuestSlice, HostState, split};
 
-/// The value every SDK sends when a response carries no gRPC status.
+/// The value every SDK sends when a response has no gRPC status.
 const NO_GRPC_STATUS: i32 = -1;
 
 #[expect(

@@ -5,7 +5,7 @@
 //! A guest reaches only a metric it defined, because an identifier is a small
 //! number that another VM can guess and the ABI gives the guest no VM id on
 //! the three calls that name one.
-//! The value is carried at its full width in every direction, which the Go
+//! The value keeps its full width in every direction, which the Go
 //! host does not do.
 
 use wasmtime::AsContextMut;

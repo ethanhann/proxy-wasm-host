@@ -235,7 +235,7 @@ pub(super) fn deliver_http_response(
 /// Ends `callout` and runs `proxy_on_grpc_close` on `root` with `status`.
 ///
 /// The message is measured before anything changes, so a message the ABI
-/// cannot carry leaves the callout open.
+/// cannot hold leaves the callout open.
 /// The code passes as its raw bits, so a code above `i32::MAX` reaches the
 /// guest whole.
 pub(super) fn deliver_grpc_close(

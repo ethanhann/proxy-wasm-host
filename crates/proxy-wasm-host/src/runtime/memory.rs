@@ -213,7 +213,7 @@ fn word<const N: usize>(bytes: &[u8]) -> [u8; N] {
 /// The guest memory and the host state of a store or a caller, in one
 /// borrow.
 ///
-/// Every host function that touches guest memory starts here.
+/// Every host function that reads or writes guest memory starts here.
 /// The memory handle is cached after instantiation, so a wasm start section
 /// cannot reach guest memory through a host function.
 /// The ABI start functions are exports that run after instantiation, so they

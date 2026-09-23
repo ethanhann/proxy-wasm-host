@@ -4,6 +4,7 @@ use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::host_functions::Failure;
+use crate::abi::v0_2_1::host_functions::log_context::log_context;
 use crate::abi::v0_2_1::types::LogLevel;
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split};
 
@@ -17,7 +18,11 @@ pub(super) fn proxy_log(
     let slice = GuestSlice::try_from((message_data, message_size))?;
     let (memory, state) = split(ctx)?;
     let message = memory.read(slice)?;
-    state.abi().services().log().log(level, message);
+    state
+        .abi()
+        .services()
+        .log()
+        .log(log_context(state), level, message);
     Ok(())
 }
 
@@ -38,9 +43,16 @@ mod tests {
 
     use super::*;
     use crate::abi::v0_2_1::test_support::{
-        RecordingSink, engine, instance_with_sink, outcome, status,
+        RecordingSink, engine, instance_with, instance_with_sink, outcome, status, wat_bytes,
     };
     use crate::abi::v0_2_1::types::Status;
+    use std::borrow::Cow;
+
+    use crate::abi::v0_2_1::payload::Delivery;
+    use crate::abi::v0_2_1::{
+        AbiAccess, Callback, CalloutId, ContextId, LogSink, PluginConfig, VmServices,
+    };
+    use crate::runtime::{Instance, Module};
 
     const LOGGER: &str = r#"(module
         (import "env" "proxy_log" (func $log (param i32 i32 i32) (result i32)))
@@ -49,6 +61,206 @@ mod tests {
         (func (export "log") (param i32 i32 i32) (result i32)
             local.get 0 local.get 1 local.get 2 call $log)
         (data (i32.const 16) "hello"))"#;
+
+    /// An instance of `LOGGER` whose sink the test keeps, with a root and a
+    /// stream context, and the callback a request would be in.
+    fn serving(sink: &Arc<RecordingSink>) -> (Instance, ContextId, ContextId) {
+        let engine = engine();
+        let services = VmServices::new(Arc::clone(sink) as Arc<dyn LogSink>).with_vm_id(*b"vm-1");
+        let module = Module::new(&engine, &wat_bytes(LOGGER)).unwrap();
+        let mut instance = instance_with(&engine, &module, services).unwrap();
+        let state = instance.state_mut();
+        let root = state.abi_mut().contexts_mut().create(None).unwrap();
+        let stream = state.abi_mut().contexts_mut().create(Some(root)).unwrap();
+        state.abi_mut().contexts_mut().set_effective(stream);
+        state
+            .abi_mut()
+            .set_current_callback(Some(Callback::RequestHeaders));
+        (instance, root, stream)
+    }
+
+    /// The plugin the tests configure their root with.
+    fn plugin() -> PluginConfig {
+        PluginConfig::new()
+            .with_name(*b"authz")
+            .with_root_id(*b"main")
+    }
+
+    /// Logs "hello" at the info level through the guest.
+    fn log_hello(instance: &mut Instance) -> Status {
+        instance
+            .call::<(i32, i32, i32), i32>("log", (2, 16, 5))
+            .map(status)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_line_from_a_stream_callback_names_its_plugin_and_its_call() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let (mut instance, root, stream) = serving(&sink);
+        instance
+            .state_mut()
+            .abi_mut()
+            .contexts_mut()
+            .set_plugin(root, plugin());
+        let guest = instance.state().abi().guest();
+
+        // Act
+        let result = log_hello(&mut instance);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        let (context, level, message) = sink.lines().pop().expect("one line was recorded");
+        assert_eq!(level, LogLevel::Info);
+        assert_eq!(message, b"hello");
+        assert_eq!(
+            context.vm_id.as_ref(),
+            b"vm-1",
+            "the VM id comes from the services the embedder supplied"
+        );
+        assert_eq!(context.guest, guest);
+        assert_eq!(context.plugin_name.as_deref(), Some(b"authz".as_slice()));
+        assert_eq!(context.root_id.as_deref(), Some(b"main".as_slice()));
+        let call = context.call.expect("a callback was running");
+        assert_eq!(call.context, stream);
+        assert_eq!(call.callback, Some(Callback::RequestHeaders));
+        assert_eq!(call.callout, None);
+    }
+
+    #[test]
+    fn a_line_with_no_callback_running_carries_no_call() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let (mut instance, root, _) = serving(&sink);
+        instance
+            .state_mut()
+            .abi_mut()
+            .contexts_mut()
+            .set_plugin(root, plugin());
+        instance.state_mut().abi_mut().set_current_callback(None);
+
+        // Act
+        let result = log_hello(&mut instance);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        let (context, _, _) = sink.lines().pop().expect("one line was recorded");
+        assert_eq!(
+            context.call, None,
+            "the context table keeps the last context after a callback returns"
+        );
+        assert_eq!(context.plugin_name, None);
+        assert_eq!(context.root_id, None);
+    }
+
+    #[test]
+    fn a_line_before_a_configuration_names_no_plugin() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let (mut instance, _, stream) = serving(&sink);
+
+        // Act
+        let result = log_hello(&mut instance);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        let (context, _, _) = sink.lines().pop().expect("one line was recorded");
+        assert_eq!(context.plugin_name, None, "no configuration has run");
+        assert_eq!(context.root_id, None);
+        assert_eq!(context.call.map(|call| call.context), Some(stream));
+    }
+
+    #[test]
+    fn a_line_with_a_callback_and_no_context_carries_no_call() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let (mut instance, root, stream) = serving(&sink);
+        instance
+            .state_mut()
+            .abi_mut()
+            .contexts_mut()
+            .set_plugin(root, plugin());
+        instance.state_mut().abi_mut().contexts_mut().remove(stream);
+
+        // Act
+        let result = log_hello(&mut instance);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        let (context, _, _) = sink.lines().pop().expect("one line was recorded");
+        assert_eq!(
+            context.call, None,
+            "a callback with no effective context leaves the call absent"
+        );
+        assert_eq!(context.plugin_name, None);
+    }
+
+    #[test]
+    fn a_line_inside_a_delivery_names_its_callout() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let (mut instance, _, _) = serving(&sink);
+        let callout = CalloutId::try_from(1).unwrap();
+        let delivery = Delivery::grpc_message(callout, Cow::Borrowed(b"body"));
+        instance.state_mut().abi_mut().set_delivery(Some(delivery));
+
+        // Act
+        let result = log_hello(&mut instance);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        let (context, _, _) = sink.lines().pop().expect("one line was recorded");
+        assert_eq!(context.call.and_then(|call| call.callout), Some(callout));
+    }
+
+    #[test]
+    fn the_call_of_a_line_is_the_effective_context() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let (mut instance, root, _) = serving(&sink);
+        instance
+            .state_mut()
+            .abi_mut()
+            .contexts_mut()
+            .set_effective(root);
+
+        // Act
+        let result = log_hello(&mut instance);
+
+        // Assert
+        assert_eq!(result, Status::Ok);
+        let (context, _, _) = sink.lines().pop().expect("one line was recorded");
+        assert_eq!(context.call.map(|call| call.context), Some(root));
+    }
+
+    #[test]
+    fn two_guests_of_one_plugin_are_told_apart_by_their_identity() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let (mut first, first_root, _) = serving(&sink);
+        let (mut second, second_root, _) = serving(&sink);
+        for (instance, root) in [(&mut first, first_root), (&mut second, second_root)] {
+            instance
+                .state_mut()
+                .abi_mut()
+                .contexts_mut()
+                .set_plugin(root, plugin());
+        }
+        log_hello(&mut first);
+
+        // Act
+        log_hello(&mut second);
+
+        // Assert
+        let lines = sink.lines();
+        let (first, second) = (&lines[0].0, &lines[1].0);
+        assert_ne!(
+            first.guest, second.guest,
+            "two guests of one plugin differ here and nowhere else"
+        );
+        assert_eq!(first.plugin_name, second.plugin_name);
+    }
 
     #[test]
     fn a_message_is_logged_at_its_level() {

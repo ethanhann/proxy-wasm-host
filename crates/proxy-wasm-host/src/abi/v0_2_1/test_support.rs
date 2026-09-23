@@ -18,7 +18,7 @@ use crate::abi::v0_2_1::VmServices;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::types::LogLevel;
 use crate::abi::v0_2_1::types::Status;
-use crate::abi::v0_2_1::{Callback, ContextId};
+use crate::abi::v0_2_1::{Callback, ContextId, LogContext};
 use crate::runtime::{Engine, EngineConfig, GuestPtr, GuestSlice, Instance, Limits, Module};
 
 /// One memory page, a stub allocator that returns 1024, and a `_start`.
@@ -245,15 +245,26 @@ pub(crate) fn import_everything() -> String {
     wat
 }
 
+/// One recorded line, with where it came from.
+pub(crate) type RecordedLine = (LogContext<'static>, LogLevel, Vec<u8>);
+
 /// A log sink that records every message.
 #[derive(Default)]
 pub(crate) struct RecordingSink {
-    entries: Mutex<Vec<(LogLevel, Vec<u8>)>>,
+    entries: Mutex<Vec<RecordedLine>>,
 }
 
 impl RecordingSink {
     /// Every message logged so far, in order.
     pub(crate) fn entries(&self) -> Vec<(LogLevel, Vec<u8>)> {
+        self.lines()
+            .into_iter()
+            .map(|(_, level, message)| (level, message))
+            .collect()
+    }
+
+    /// Every message logged so far, with the context of each one.
+    pub(crate) fn lines(&self) -> Vec<RecordedLine> {
         self.entries
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -262,11 +273,11 @@ impl RecordingSink {
 }
 
 impl LogSink for RecordingSink {
-    fn log(&self, level: LogLevel, message: &[u8]) {
+    fn log(&self, context: LogContext<'_>, level: LogLevel, message: &[u8]) {
         self.entries
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push((level, message.to_vec()));
+            .push((context.into_owned(), level, message.to_vec()));
     }
 }
 

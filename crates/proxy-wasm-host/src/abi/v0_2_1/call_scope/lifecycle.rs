@@ -113,6 +113,12 @@ impl<H: StreamState> CallScope<'_, H> {
     /// back.
     /// A `false` answer refuses this root context and every stream context
     /// under it.
+    /// The guest decides, because the crate reads nothing in the bytes of
+    /// [`PluginConfig`](crate::abi::v0_2_1::PluginConfig).
+    /// A caller that drives the callbacks by hand reads the boolean here.
+    /// A caller that uses [`Guest::start`](crate::abi::v0_2_1::Guest::start)
+    /// reads the same refusal as
+    /// [`Started::Refused`](crate::abi::v0_2_1::Started::Refused).
     ///
     /// # Errors
     ///
