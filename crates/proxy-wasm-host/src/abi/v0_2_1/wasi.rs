@@ -1,8 +1,10 @@
 //! The eight `wasi_snapshot_preview1` functions the ABI document names.
 //!
 //! Each one has the WASI signature and the ABI document's meaning.
-//! `fd_write` cuts a message to the length the embedder allows and reports
-//! every byte as written, which is what `proxy_log` does with a long message.
+//! `fd_write` cuts a message to the length the embedder allows, as
+//! `proxy_log` does, and reports every byte as written.
+//! A WASI libc that receives a smaller count writes the rest again, so a
+//! count of the cut bytes alone would repeat the call until the message ends.
 //! `fd_write` is a log call, the clock and randomness functions read the
 //! services in the host state, the environment functions serve the per guest
 //! variables, and the argument functions report no arguments.
@@ -133,13 +135,21 @@ fn fd_write_impl(
             .map_err(fault)
         })
         .collect::<Result<Vec<GuestSlice>, WasiErrno>>()?;
+    for entry in &entries {
+        memory.read(*entry).map_err(fault)?;
+    }
     let total: u64 = entries.iter().map(|entry| u64::from(entry.len())).sum();
-    let budget = state.max_log_bytes().unwrap_or(usize::MAX);
+    // A guest can list one region many times, so without a bound of the
+    // embedder the copy stops at the size of the guest memory.
+    let budget = state.max_log_bytes().unwrap_or(memory.size());
     let wanted = usize::try_from(total).unwrap_or(usize::MAX);
     let mut message = Vec::with_capacity(wanted.min(budget));
     for entry in &entries {
-        let bytes = memory.read(*entry).map_err(fault)?;
         let room = budget.saturating_sub(message.len());
+        if room == 0 {
+            break;
+        }
+        let bytes = memory.read(*entry).map_err(fault)?;
         message.extend_from_slice(&bytes[..bytes.len().min(room)]);
     }
     if message.last() == Some(&b'\n') {
@@ -489,6 +499,75 @@ mod tests {
             sink.entries(),
             vec![(LogLevel::Info, b"hello, \nworld".to_vec())]
         );
+    }
+
+    #[test]
+    fn fd_write_with_no_bound_copies_no_more_than_the_guest_memory() {
+        // Arrange
+        let engine = engine();
+        let sink = Arc::new(RecordingSink::default());
+        let wat = guest(
+            FD_WRITE_IMPORT,
+            r#"(func (export "write") (result i32)
+                 (i32.store (i32.const 100) (i32.const 0)) (i32.store (i32.const 104) (i32.const 65536))
+                 (i32.store (i32.const 108) (i32.const 0)) (i32.store (i32.const 112) (i32.const 65536))
+                 (i32.store (i32.const 116) (i32.const 0)) (i32.store (i32.const 120) (i32.const 65536))
+                 (call $w (i32.const 1) (i32.const 100) (i32.const 3) (i32.const 200)))"#,
+        );
+        let module = Module::new(&engine, &wat_bytes(&wat)).unwrap();
+        let limits = Limits::default().with_max_log_bytes(None);
+        let mut instance = instance_with_limits(
+            &engine,
+            &module,
+            VmServices::new(Arc::clone(&sink) as Arc<dyn LogSink>),
+            &limits,
+        )
+        .unwrap();
+
+        // Act
+        let result = instance.call::<(), i32>("write", ()).unwrap();
+
+        // Assert
+        assert_eq!(result, 0);
+        let entries = sink.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].1.len(),
+            65536,
+            "three views of one page must not cost three pages"
+        );
+        let memory = instance.memory().unwrap();
+        assert_eq!(memory.read_u32(ptr(200)), Ok(3 * 65536));
+    }
+
+    #[test]
+    fn fd_write_refuses_an_iovec_past_the_memory_before_it_logs() {
+        // Arrange
+        let engine = engine();
+        let sink = Arc::new(RecordingSink::default());
+        let wat = guest(
+            FD_WRITE_IMPORT,
+            r#"(func (export "write") (result i32)
+                 (i32.store (i32.const 100) (i32.const 0)) (i32.store (i32.const 104) (i32.const 8))
+                 (i32.store (i32.const 108) (i32.const 0)) (i32.store (i32.const 112) (i32.const -1))
+                 (call $w (i32.const 1) (i32.const 100) (i32.const 2) (i32.const 200)))"#,
+        );
+        let module = Module::new(&engine, &wat_bytes(&wat)).unwrap();
+        let limits = Limits::default().with_max_log_bytes(None);
+        let mut instance = instance_with_limits(
+            &engine,
+            &module,
+            VmServices::new(Arc::clone(&sink) as Arc<dyn LogSink>),
+            &limits,
+        )
+        .unwrap();
+
+        // Act
+        let result = instance.call::<(), i32>("write", ()).unwrap();
+
+        // Assert
+        assert_eq!(result, i32::from(WasiErrno::Fault));
+        assert!(sink.entries().is_empty());
     }
 
     #[test]

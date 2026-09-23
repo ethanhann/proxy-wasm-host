@@ -2,7 +2,7 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::Error;
 use crate::abi::AbiVersion;
@@ -95,14 +95,10 @@ pub struct GuestSpec {
 }
 
 /// What one spec counts, shared by every clone of it.
-///
-/// A guest tells the counters that it was poisoned when it is dropped, and
-/// the next build reads that flag.
 #[derive(Debug, Default)]
 pub(crate) struct BuildCounters {
     builds: AtomicU64,
-    builds_after_poison: AtomicU64,
-    poison_seen: AtomicBool,
+    poisoned_guests: AtomicU64,
 }
 
 fn raise(counter: &AtomicU64) {
@@ -114,14 +110,11 @@ fn raise(counter: &AtomicU64) {
 impl BuildCounters {
     fn record_build(&self) {
         raise(&self.builds);
-        if self.poison_seen.swap(false, Ordering::Relaxed) {
-            raise(&self.builds_after_poison);
-        }
     }
 
     /// Records that a poisoned guest of this spec was dropped.
     pub(crate) fn record_poison(&self) {
-        self.poison_seen.store(true, Ordering::Relaxed);
+        raise(&self.poisoned_guests);
     }
 }
 
@@ -131,7 +124,7 @@ impl fmt::Debug for GuestSpec {
             .field("services", &self.services)
             .field("limits", &self.limits)
             .field("builds", &self.builds())
-            .field("builds_after_poison", &self.builds_after_poison())
+            .field("poisoned_guests", &self.poisoned_guests())
             .finish_non_exhaustive()
     }
 }
@@ -200,21 +193,22 @@ impl GuestSpec {
         self.counters.builds.load(Ordering::Relaxed)
     }
 
-    /// How many of those builds followed a poisoned guest of this spec.
+    /// How many guests this spec built were poisoned and then dropped.
     ///
-    /// The number rises when a guest is dropped after a trap and the next
-    /// guest is built.
+    /// The number rises when you drop a poisoned guest, whether you build
+    /// its replacement before or after, and it counts each guest of a pool.
+    /// A poisoned guest that you keep is not in it until you drop it.
     /// A plugin that traps on every request drives it up at the rate of the
-    /// traffic, and a plugin that works leaves it at the number of the
-    /// failures you already know about.
+    /// traffic, and a plugin that works leaves it where it was.
     ///
-    /// Read it after each build, keep the value you read, and stop serving
-    /// with the plugin when the difference over your own window is larger
-    /// than you accept.
+    /// The ABI document asks a host to limit the rate of these failures.
+    /// Keep the value you read, compare it after each rebuild, and stop
+    /// serving with the plugin when it rises faster than you accept.
     /// The crate applies no window of its own, because the rate you accept
     /// belongs to your deployment.
-    pub fn builds_after_poison(&self) -> u64 {
-        self.counters.builds_after_poison.load(Ordering::Relaxed)
+    /// The number stops at [`u64::MAX`].
+    pub fn poisoned_guests(&self) -> u64 {
+        self.counters.poisoned_guests.load(Ordering::Relaxed)
     }
 
     /// The services that each guest [`GuestSpec::build`] gives receives a
@@ -376,6 +370,14 @@ mod tests {
         assert!(text.ends_with(", .. }"), "{text}");
     }
 
+    /// A guest of `TRAPS` that has trapped in its start.
+    fn poisoned(spec: &GuestSpec) -> Guest {
+        let mut guest = spec.build().unwrap();
+        assert!(guest.start(PluginConfig::new()).is_err());
+        assert!(guest.is_poisoned());
+        guest
+    }
+
     #[test]
     fn a_spec_counts_the_guests_it_built() {
         // Arrange
@@ -387,54 +389,80 @@ mod tests {
 
         // Assert
         assert_eq!(spec.builds(), 2);
-        assert_eq!(spec.builds_after_poison(), 0);
+        assert_eq!(spec.poisoned_guests(), 0);
         assert_ne!(first.id(), second.id());
     }
 
     #[test]
     fn a_clone_of_a_spec_counts_into_the_same_numbers() {
         // Arrange
-        let spec = spec(MARKED, services());
+        let spec = spec(TRAPS, services());
         let clone = spec.clone();
         let _first = spec.build().unwrap();
+        let guest = poisoned(&clone);
 
         // Act
-        let _second = clone.build().unwrap();
+        drop(guest);
 
         // Assert
         assert_eq!(spec.builds(), 2);
         assert_eq!(clone.builds(), 2);
+        assert_eq!(spec.poisoned_guests(), 1);
     }
 
     #[test]
-    fn a_spec_counts_a_build_that_followed_a_poisoned_guest() {
+    fn a_poisoned_guest_counts_when_it_is_dropped() {
         // Arrange
         let spec = spec(TRAPS, services());
-        let mut guest = spec.build().unwrap();
-        assert!(guest.start(PluginConfig::new()).is_err());
-        assert!(guest.is_poisoned());
-        drop(guest);
+        let guest = poisoned(&spec);
+        assert_eq!(spec.poisoned_guests(), 0, "a live guest is not counted");
 
         // Act
-        let _next = spec.build().unwrap();
+        drop(guest);
 
         // Assert
-        assert_eq!(spec.builds(), 2);
-        assert_eq!(spec.builds_after_poison(), 1);
+        assert_eq!(spec.poisoned_guests(), 1);
     }
 
     #[test]
-    fn a_guest_that_was_never_poisoned_leaves_the_second_number_at_zero() {
+    fn a_poisoned_guest_counts_when_its_replacement_was_built_first() {
+        // Arrange
+        let spec = spec(TRAPS, services());
+        let mut guest = poisoned(&spec);
+        assert_eq!(spec.poisoned_guests(), 0, "{:?} is still alive", guest.id());
+
+        // Act
+        guest = spec.build().unwrap();
+
+        // Assert
+        assert_eq!(spec.poisoned_guests(), 1);
+        assert!(!guest.is_poisoned());
+    }
+
+    #[test]
+    fn every_poisoned_guest_of_a_pool_counts() {
+        // Arrange
+        let spec = spec(TRAPS, services());
+        let pool = [poisoned(&spec), poisoned(&spec), poisoned(&spec)];
+
+        // Act
+        drop(pool);
+
+        // Assert
+        assert_eq!(spec.poisoned_guests(), 3);
+    }
+
+    #[test]
+    fn a_guest_that_was_never_poisoned_is_not_counted() {
         // Arrange
         let spec = spec(MARKED, services());
         let guest = spec.build().unwrap();
-        drop(guest);
 
         // Act
-        let _next = spec.build().unwrap();
+        drop(guest);
 
         // Assert
-        assert_eq!(spec.builds(), 2);
-        assert_eq!(spec.builds_after_poison(), 0);
+        assert_eq!(spec.builds(), 1);
+        assert_eq!(spec.poisoned_guests(), 0);
     }
 }

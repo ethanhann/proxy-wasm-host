@@ -59,9 +59,9 @@ struct Metrics {
 ///
 /// A guest drives every one of these families directly, so the store bounds
 /// what it holds.
-/// [`InMemoryStoreLimits::default`] allows 4096 keys of at most 64 KiB each and 1024 items
-/// on a queue, and a write past a bound reports
-/// [`Status::InternalFailure`].
+/// [`InMemoryStoreLimits::default`] allows 4096 keys of at most 64 KiB each,
+/// 1024 items on a queue, 4096 queues, and 4096 metrics, and a write past a
+/// bound reports [`Status::InternalFailure`].
 /// Change them with [`InMemoryStore::with_limits`].
 ///
 /// A histogram takes an observation and keeps no value, because the ABI gives
@@ -169,6 +169,9 @@ impl SharedServices for InMemoryStore {
         if let Some(id) = queues.by_name.get(&key) {
             return Ok(*id);
         }
+        if queues.by_name.len() >= self.limits.queues() {
+            return Err(Status::InternalFailure);
+        }
         let id = QueueId::from_non_zero(next_id(&mut queues.next).ok_or(Status::InternalFailure)?);
         queues.by_name.insert(key.clone(), id);
         queues.owners.insert(id, key);
@@ -239,6 +242,9 @@ impl SharedServices for InMemoryStore {
                 return Ok(id);
             }
             return Err(Status::BadArgument);
+        }
+        if metrics.by_name.len() >= self.limits.metrics() {
+            return Err(Status::InternalFailure);
         }
         let id =
             MetricId::from_non_zero(next_id(&mut metrics.next).ok_or(Status::InternalFailure)?);
@@ -461,6 +467,60 @@ mod tests {
                 .unwrap()
                 .bytes,
             b"v"
+        );
+    }
+
+    #[test]
+    fn a_queue_past_the_limit_is_refused_and_not_created() {
+        // Arrange
+        let services = InMemoryStore::new().with_limits(InMemoryStoreLimits::new().with_queues(1));
+        services
+            .register_shared_queue(call(), VM, b"first")
+            .unwrap();
+
+        // Act
+        let refused = services.register_shared_queue(call(), VM, b"second");
+
+        // Assert
+        assert_eq!(refused, Err(Status::InternalFailure));
+        assert_eq!(
+            services.resolve_shared_queue(call(), VM, b"second"),
+            Err(Status::NotFound)
+        );
+    }
+
+    #[test]
+    fn a_queue_the_store_holds_opens_at_the_limit() {
+        // Arrange
+        let services = InMemoryStore::new().with_limits(InMemoryStoreLimits::new().with_queues(1));
+        let first = services
+            .register_shared_queue(call(), VM, b"first")
+            .unwrap();
+
+        // Act
+        let again = services.register_shared_queue(call(), VM, b"first");
+
+        // Assert
+        assert_eq!(again, Ok(first));
+    }
+
+    #[test]
+    fn a_metric_past_the_limit_is_refused() {
+        // Arrange
+        let services = InMemoryStore::new().with_limits(InMemoryStoreLimits::new().with_metrics(1));
+        let first = services
+            .define_metric(call(), VM, MetricType::Counter, b"first")
+            .unwrap();
+
+        // Act
+        let refused = services.define_metric(call(), VM, MetricType::Counter, b"second");
+
+        // Assert
+        assert_eq!(refused, Err(Status::InternalFailure));
+        assert_eq!(
+            services.define_metric(call(), VM, MetricType::Counter, b"first"),
+            Ok(first),
+            "a metric the store holds still opens"
         );
     }
 

@@ -44,14 +44,22 @@ impl SharedValue {
 /// [`VmServices::with_shared`](crate::abi::v0_2_1::VmServices::with_shared),
 /// which defaults to [`InMemoryStore`].
 ///
-/// The shared data, the queues, and the metrics are separated by the VM id
-/// rather than by the context, because a context identifier starts at one in
-/// every instance and says nothing about which VM asked.
-/// Two plugins that you give the same VM id share their keys, which is the
-/// same control the ABI gives you for a queue.
+/// The shared data and the metrics are separated by the VM id rather than by
+/// the context, because a context identifier starts at one in every instance
+/// and says nothing about which VM asked.
+/// Two plugins that you give the same VM id share their keys and their
+/// metrics.
 /// A VM id you leave empty puts every plugin of that process in one
 /// namespace, so set one per plugin through
 /// [`VmServices::with_vm_id`](crate::abi::v0_2_1::VmServices::with_vm_id).
+///
+/// A queue is different, because the ABI lets a guest open a queue of
+/// another VM.
+/// A guest that knows the VM id and the name of a queue opens it with
+/// `proxy_resolve_shared_queue`, and it can then add items and take them.
+/// The C++ host allows the same.
+/// Treat a queue name as known to every plugin that shares your store, or
+/// give plugins you do not trust a store of their own.
 ///
 /// The crate refuses a queue or a metric identifier that the guest did not
 /// obtain through a register, a resolve, or a define in this instance, so an
@@ -137,6 +145,9 @@ pub trait SharedServices: Send + Sync {
     }
 
     /// Opens a queue that another VM registered.
+    ///
+    /// A guest that names an empty VM id means its own VM, as it does on the
+    /// C++ host, so `vm_id` is then the VM id of the caller.
     ///
     /// # Errors
     ///

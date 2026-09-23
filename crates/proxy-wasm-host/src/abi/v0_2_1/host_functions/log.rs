@@ -1,9 +1,9 @@
 //! `proxy_log` and `proxy_get_log_level`.
 //!
 //! A message longer than the embedder allows reaches the sink cut to that
-//! length, and the guest receives the answer of a message that fits. A guest
-//! reports its own failures through this call, so a refusal here would trap
-//! the guest on the line that says why it is failing.
+//! length, and the call answers `OK`. A guest reports its own failures
+//! through this call, so a refusal would stop the guest on the line that
+//! says why it is failing.
 
 use wasmtime::AsContextMut;
 

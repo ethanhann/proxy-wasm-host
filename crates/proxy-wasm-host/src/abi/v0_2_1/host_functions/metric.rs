@@ -31,9 +31,9 @@ pub(super) fn proxy_define_metric(
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_metric_id)?;
     let name = memory.read(name)?;
-    within_name_bytes(state, name)?;
-    within_shared_names(state)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
+    within_name_bytes(state, name, Status::InternalFailure)?;
+    within_shared_names(state)?;
     let vm_id = state.abi().services().vm_id();
     let metric = from_embedder(
         "define_metric",
@@ -426,9 +426,10 @@ mod tests {
     fn a_guest_at_its_share_of_names_is_refused_a_new_metric() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let recording = Arc::new(RecordingServices::new());
         let limits = Limits::default().with_max_shared_names(1);
-        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, shared, &limits);
+        let (mut instance, _) =
+            shared_hosted_with_limits(&engine, GUEST, recording.clone(), &limits);
         let kind = i32::from(MetricType::Counter);
         assert_eq!(define(&mut instance, kind, b"first"), Status::Ok);
 
@@ -437,6 +438,11 @@ mod tests {
 
         // Assert
         assert_eq!(result, Status::InternalFailure);
+        assert_eq!(
+            recording.calls().len(),
+            1,
+            "the store must not create a metric the crate refuses"
+        );
     }
 
     #[test]

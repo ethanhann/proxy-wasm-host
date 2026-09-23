@@ -29,8 +29,8 @@ pub(super) fn proxy_set_shared_data(
     let (memory, state) = split(ctx)?;
     let key = memory.read(key)?;
     let value = memory.read(value)?;
-    within_name_bytes(state, key)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
+    within_name_bytes(state, key, Status::InternalFailure)?;
     let vm_id = state.abi().services().vm_id();
     from_embedder(
         "set_shared_data",
@@ -55,8 +55,8 @@ pub(super) fn proxy_get_shared_data(
     memory.read_u32(size_ptr)?;
     memory.read_u32(cas_ptr)?;
     let key = memory.read(key)?;
-    within_name_bytes(state, key)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
+    within_name_bytes(state, key, Status::NotFound)?;
     let vm_id = state.abi().services().vm_id();
     let value = from_embedder("get_shared_data", shared.get_shared_data(call, vm_id, key))?;
     let cas = value.cas.get();
@@ -431,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn a_read_of_a_key_above_the_byte_bound_is_refused() {
+    fn a_read_of_a_key_above_the_byte_bound_finds_nothing() {
         // Arrange
         let engine = engine();
         let recording = Arc::new(RecordingServices::new());
@@ -443,8 +443,15 @@ mod tests {
         let result = get(&mut instance, b"fives");
 
         // Assert
-        assert_eq!(result, Status::InternalFailure);
-        assert!(recording.calls().is_empty());
+        assert_eq!(
+            result,
+            Status::NotFound,
+            "a guest of the Rust SDK reads this as a miss and does not stop"
+        );
+        assert!(
+            recording.calls().is_empty(),
+            "the service must not see a key the crate refuses"
+        );
     }
 
     #[test]

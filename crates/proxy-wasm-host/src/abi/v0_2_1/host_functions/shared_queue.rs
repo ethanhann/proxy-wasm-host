@@ -28,9 +28,9 @@ pub(super) fn proxy_register_shared_queue(
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_queue_id)?;
     let name = memory.read(name)?;
-    within_name_bytes(state, name)?;
-    within_shared_names(state)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
+    within_name_bytes(state, name, Status::InternalFailure)?;
+    within_shared_names(state)?;
     let vm_id = state.abi().services().vm_id();
     let queue = from_embedder(
         "register_shared_queue",
@@ -60,9 +60,15 @@ pub(super) fn proxy_resolve_shared_queue(
     memory.read_u32(return_queue_id)?;
     let vm_id = memory.read(vm_id)?;
     let name = memory.read(name)?;
-    within_name_bytes(state, name)?;
-    within_shared_names(state)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
+    within_name_bytes(state, name, Status::InternalFailure)?;
+    within_shared_names(state)?;
+    // The C++ host reads an empty VM id as the VM of the caller.
+    let vm_id = if vm_id.is_empty() {
+        state.abi().services().vm_id()
+    } else {
+        vm_id
+    };
     let queue = from_embedder(
         "resolve_shared_queue",
         shared.resolve_shared_queue(call, vm_id, name),
@@ -301,6 +307,34 @@ mod tests {
     }
 
     #[test]
+    fn a_resolve_with_an_empty_vm_id_finds_a_queue_of_the_callers_vm() {
+        // Arrange
+        let engine = engine();
+        let recording = Arc::new(RecordingServices::new());
+        let (mut instance, _) = shared_hosted(&engine, GUEST, recording.clone());
+        register(&mut instance, b"q");
+        let (_, name_len) = write(&mut instance, NAME, b"q");
+
+        // Act
+        let result = status(
+            instance
+                .call::<(i32, i32, i32, i32, i32), i32>(
+                    "resolve",
+                    (VM, 0, NAME, name_len, RETURN_ID),
+                )
+                .unwrap(),
+        );
+
+        // Assert
+        assert_eq!(result, Status::Ok, "the C++ host reads empty as its own VM");
+        assert_eq!(returned_id(&mut instance), 1);
+        assert_eq!(
+            recording.calls()[1].1,
+            SharedCall::Resolve(VM_ID.to_vec(), b"q".to_vec())
+        );
+    }
+
+    #[test]
     fn a_resolve_of_a_name_no_vm_registered_is_not_found() {
         // Arrange
         let engine = engine();
@@ -413,6 +447,56 @@ mod tests {
 
         // Assert
         assert_eq!(result, Status::NotFound);
+    }
+
+    #[test]
+    fn a_long_name_with_no_effective_context_is_not_found() {
+        // Arrange
+        let engine = engine();
+        let mut instance = bare(&engine, GUEST);
+
+        // Act
+        let result = outcome(proxy_register_shared_queue(
+            instance.store_mut(),
+            NAME,
+            5000,
+            RETURN_ID,
+        ));
+
+        // Assert
+        assert_eq!(
+            result,
+            Status::NotFound,
+            "the absence of a context answers before a bound"
+        );
+    }
+
+    #[test]
+    fn a_guest_at_its_share_registers_again_after_the_store_is_replaced() {
+        // Arrange
+        let engine = engine();
+        let first: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let second: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let limits = Limits::default().with_max_shared_names(1);
+        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, first, &limits);
+        assert_eq!(register(&mut instance, b"mine"), Status::Ok);
+        let replacement = instance
+            .state()
+            .abi()
+            .services()
+            .clone()
+            .with_shared(second);
+        *instance.state_mut().abi_mut().services_mut() = replacement;
+
+        // Act
+        let result = register(&mut instance, b"mine");
+
+        // Assert
+        assert_eq!(
+            result,
+            Status::Ok,
+            "a new store starts the guest with no grants"
+        );
     }
 
     #[test]
@@ -557,9 +641,10 @@ mod tests {
     fn a_guest_at_its_share_of_names_is_refused_a_new_queue() {
         // Arrange
         let engine = engine();
-        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let recording = Arc::new(RecordingServices::new());
         let limits = Limits::default().with_max_shared_names(2);
-        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, shared, &limits);
+        let (mut instance, _) =
+            shared_hosted_with_limits(&engine, GUEST, recording.clone(), &limits);
         assert_eq!(register(&mut instance, b"first"), Status::Ok);
         assert_eq!(register(&mut instance, b"second"), Status::Ok);
 
@@ -568,6 +653,11 @@ mod tests {
 
         // Assert
         assert_eq!(result, Status::InternalFailure);
+        assert_eq!(
+            recording.calls().len(),
+            2,
+            "the store must not create a queue the crate refuses"
+        );
     }
 
     #[test]

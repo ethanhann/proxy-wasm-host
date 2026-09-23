@@ -108,6 +108,8 @@
 //! | The bytes of one shared value | 64 KiB | [`InMemoryStore::with_limits`] |
 //! | The keys of the shared store | 4096 | [`InMemoryStore::with_limits`] |
 //! | The items of one shared queue | 1024 | [`InMemoryStore::with_limits`] |
+//! | The queues of the shared store | 4096 | [`InMemoryStore::with_limits`] |
+//! | The metrics of the shared store | 4096 | [`InMemoryStore::with_limits`] |
 //! | The CPU time of one guest call | one second | [`Limits::with_cpu_time`](crate::Limits::with_cpu_time) |
 //! | The memory of one instance | 128 MiB | [`Limits::with_memory_bytes`](crate::Limits::with_memory_bytes) |
 //! | The WASI functions a guest may import | the eight the ABI names | fixed |
@@ -122,9 +124,11 @@
 //! `INTERNAL_FAILURE` from the call it made, and the service is not asked.
 //! A guest of the Rust SDK stops on that status, which poisons the instance
 //! and leaves the recovery of [`GuestSpec`] to you.
+//! A read of a shared data key over the name byte limit answers `NOT_FOUND`
+//! instead, because no such key can be in the store through this crate.
 //! A message over the log limit reaches the sink cut to the limit, and the
-//! guest receives the answer of a message that fits, because a guest reports
-//! its own failures through that call.
+//! call answers `OK`, because a guest reports its own failures through that
+//! call.
 //!
 //! The WASI surface is fixed.
 //! The crate registers the eight functions the ABI document names, which are

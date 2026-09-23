@@ -275,6 +275,11 @@ mod tests {
                 "The items of one shared queue",
                 store.queue_items().to_string(),
             ),
+            ("The queues of the shared store", store.queues().to_string()),
+            (
+                "The metrics of the shared store",
+                store.metrics().to_string(),
+            ),
         ];
 
         // Act
