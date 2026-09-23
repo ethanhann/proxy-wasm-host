@@ -4,6 +4,10 @@
 //! the log of the host.
 //! The guest log goes to `tracing`, so both reach the same subscriber.
 //!
+//! `tiny_http` holds two file descriptors for each open connection. If you put
+//! the example under load, raise the open file limit first with `ulimit -n`,
+//! or the server stops with "Too many open files".
+//!
 //! The sink, the request type, and the answer of this file are written again in
 //! `examples/http_workers/worker.rs`, so each example reads on its own.
 
@@ -274,10 +278,19 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let module = Module::new(&engine, &bytes)?;
     let services = VmServices::new(Arc::new(TracingSink));
     let spec = GuestSpec::new(&Host::new(&engine)?, &module, services, &Limits::default())?;
-    let (mut guest, mut root) = start(&spec)?;
     let server = Server::http(ADDRESS)?;
     tracing::info!("listening on {ADDRESS} with the plugin {path}");
-    for request in server.incoming_requests() {
+    run(&server, &spec)
+}
+
+/// Serves every request the server receives, one at a time.
+///
+/// `tiny_http` stops accepting connections after the first failed accept, so
+/// this returns that error rather than letting the example exit quietly.
+fn run(server: &Server, spec: &GuestSpec) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let (mut guest, mut root) = start(spec)?;
+    loop {
+        let request = server.recv()?;
         let span = tracing::info_span!("request", path = request.url());
         let _entered = span.enter();
         let state = request_state(&request);
@@ -286,7 +299,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Ok(answer) => answer,
             Err(error) => {
                 tracing::error!("the guest failed: {error}");
-                let (fresh, fresh_root) = start(&spec)?;
+                let (fresh, fresh_root) = start(spec)?;
                 guest = fresh;
                 root = fresh_root;
                 tracing::info!("a new guest serves the next request");
@@ -297,7 +310,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             tracing::warn!("the answer did not reach the client: {error}");
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -4,6 +4,10 @@
 //! A queue item wakes the worker whose root registered the queue last, which is
 //! the rule of the C++ host, and a worker that loses its guest builds a new one.
 //! Send `curl -H 'x-trap: 1' http://127.0.0.1:2045/` to see the second policy.
+//!
+//! `tiny_http` holds two file descriptors for each open connection. If you put
+//! the example under load, raise the open file limit first with `ulimit -n`,
+//! or the server stops with "Too many open files".
 
 mod request;
 mod routes;
@@ -73,8 +77,20 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let server = Server::http(ADDRESS)?;
     tracing::info!("listening on {ADDRESS} with {WORKERS} workers and the plugin {path}");
-    for (count, request) in server.incoming_requests().enumerate() {
-        let index = count % WORKERS;
+    dispatch(&server, &senders)
+}
+
+/// Hands each request the server receives to the workers in turn.
+///
+/// `tiny_http` stops accepting connections after the first failed accept, so
+/// this returns that error rather than letting the example exit quietly.
+fn dispatch(
+    server: &Server,
+    senders: &[Sender<Job>],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    for count in 0.. {
+        let request = server.recv()?;
+        let index = count % senders.len();
         tracing::info!("{} {} to worker {index}", request.method(), request.url());
         if senders[index].send(Job::Request(request)).is_err() {
             tracing::warn!("worker {index} has stopped");

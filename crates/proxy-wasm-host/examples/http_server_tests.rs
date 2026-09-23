@@ -21,18 +21,21 @@ const PAUSING: &str = r#"(module
     (func (export "proxy_abi_version_0_2_1"))
     (func (export "proxy_on_request_headers") (param i32 i32 i32) (result i32) i32.const 1))"#;
 
-fn guest_of(bytes: &[u8]) -> (Guest, ContextId) {
+fn spec_of(bytes: &[u8]) -> GuestSpec {
     let engine = Engine::new().unwrap();
     let module = Module::new(&engine, bytes).unwrap();
     let services = VmServices::new(Arc::new(TracingSink));
-    let spec = GuestSpec::new(
+    GuestSpec::new(
         &Host::new(&engine).unwrap(),
         &module,
         services,
         &Limits::default(),
     )
-    .unwrap();
-    start(&spec).unwrap()
+    .unwrap()
+}
+
+fn guest_of(bytes: &[u8]) -> (Guest, ContextId) {
+    start(&spec_of(bytes)).unwrap()
 }
 
 /// A writer that keeps every line a subscriber writes.
@@ -210,4 +213,19 @@ fn the_request_state_holds_the_three_pseudo_headers() {
         .collect();
     assert_eq!(names[..3], [":method", ":path", ":authority"]);
     assert_eq!(pairs(&state.headers)[1].1, "/example");
+}
+
+#[test]
+fn a_server_that_stops_accepting_ends_the_run_with_an_error() {
+    // Arrange
+    let spec = spec_of(GUEST);
+    let server = Server::http("127.0.0.1:0").unwrap();
+    server.unblock();
+
+    // Act
+    let result = run(&server, &spec);
+
+    // Assert
+    let error = result.expect_err("a server that stops must not end the example quietly");
+    assert!(!error.to_string().is_empty());
 }

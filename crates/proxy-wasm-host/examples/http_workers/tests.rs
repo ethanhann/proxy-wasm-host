@@ -311,3 +311,18 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Lines {
         self.clone()
     }
 }
+
+#[test]
+fn a_server_that_stops_accepting_ends_the_dispatch_with_an_error() {
+    // Arrange
+    let (sender, _receiver) = channel();
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    server.unblock();
+
+    // Act
+    let result = crate::dispatch(&server, &[sender]);
+
+    // Assert
+    let error = result.expect_err("a server that stops must not end the example quietly");
+    assert!(!error.to_string().is_empty());
+}
