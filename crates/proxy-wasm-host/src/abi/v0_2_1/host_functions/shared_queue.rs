@@ -326,7 +326,11 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(result, Status::Ok, "the C++ host reads empty as its own VM");
+        assert_eq!(
+            result,
+            Status::Ok,
+            "an empty VM id means the caller's own VM"
+        );
         assert_eq!(returned_id(&mut instance), 1);
         assert_eq!(
             recording.calls()[1].1,

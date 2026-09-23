@@ -114,8 +114,8 @@
 //! | The memory of one instance | 128 MiB | [`Limits::with_memory_bytes`](crate::Limits::with_memory_bytes) |
 //! | The WASI functions a guest may import | the eight the ABI defines | fixed |
 //!
-//! The first three rows come from the C++ host that Envoy runs, so a guest
-//! that host accepts is accepted here.
+//! The first three rows match the most widely used Proxy-Wasm host, so a
+//! plugin that works there is not refused here.
 //! The three rows after them, the store rows, and the two instance rows are
 //! limits of this crate.
 //! No other host applies them.
@@ -141,28 +141,27 @@
 //! Rust SDK.
 //! A guest built by the Go compiler imports more and does not load.
 //!
-//! # Where a guest sees another answer than on Envoy
+//! # Where answers can differ from other hosts
 //!
-//! The C++ host is the one Envoy runs, so a plugin author tested against it.
-//! Four rules of this crate answer a guest differently.
-//! Each one closes a way for one request to reach another.
+//! A plugin is usually tested on another Proxy-Wasm host before it runs here.
+//! Four rules of this crate are stricter than the most widely used host, and
+//! each one stops one request from reaching another.
 //!
-//! 1. `proxy_set_effective_context` accepts a context under the root of the
-//!    running callback alone. That host accepts any context of the virtual
-//!    machine, so a request of one plugin can read the configuration of
-//!    another plugin in the same machine.
-//! 2. A callout belongs to the context that opened it. That host sends every
-//!    callout function through the root, so one request can cancel or feed
-//!    the callout of another request of the same plugin.
+//! 1. `proxy_set_effective_context` accepts only a context under the root of
+//!    the running callback. A host that accepts any context of the virtual
+//!    machine lets a request of one plugin read the configuration of another
+//!    plugin in the same machine.
+//! 2. A callout belongs to the context that opened it, so one request cannot
+//!    cancel or feed the callout of another request of the same plugin.
 //! 3. A callout whose headers lack `:authority`, `:method`, or `:path` is
-//!    refused with `BAD_ARGUMENT`. The ABI document requires that check of
-//!    the host, and that host leaves it to the proxy.
+//!    refused with `BAD_ARGUMENT`, as the ABI document requires. Some hosts
+//!    leave that check to the proxy.
 //! 4. `proxy_get_buffer_bytes` refuses a start past the end of the buffer
 //!    with `BAD_ARGUMENT`, which the ABI document specifies for an invalid
-//!    start. That host clamps the length to zero and answers `OK`.
+//!    start. Some hosts clamp the length to zero and answer `OK`.
 //!
-//! Three more answers differ.
-//! The ABI document defines none of them.
+//! The ABI document leaves three more answers open, and this crate gives
+//! them as follows.
 //!
 //! 1. `proxy_close_stream` and `proxy_send_local_response` answer
 //!    `UNIMPLEMENTED` when no stream state serves the call.

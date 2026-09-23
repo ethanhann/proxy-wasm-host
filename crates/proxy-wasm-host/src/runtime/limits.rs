@@ -53,8 +53,7 @@ impl Default for Limits {
 
 impl Limits {
     /// One second of CPU time per call, no fuel, a 128 MiB memory ceiling,
-    /// the two decode limits of the C++ host, which are 1024 pairs and 1 MiB
-    /// for one map a guest sends, 1024 shared names, 4096 bytes for one name
+    /// 1024 pairs and 1 MiB for one map a guest sends, 1024 shared names, 4096 bytes for one name
     /// or key, and 1 MiB for one log line.
     pub fn new() -> Self {
         Self::default()
@@ -86,7 +85,7 @@ impl Limits {
     /// Sets the most pairs one map a guest sends may declare, or removes the
     /// limit with `None`.
     ///
-    /// The default is 1024, which is the value the C++ host uses.
+    /// The default is 1024, the same as the most widely used Proxy-Wasm host.
     /// A guest that sends a larger map receives `BAD_ARGUMENT`, and
     /// `PARSE_FAILURE` from the two functions that open a gRPC callout.
     #[must_use]
@@ -98,7 +97,7 @@ impl Limits {
     /// Sets the most bytes one map a guest sends may hold, or removes the
     /// limit with `None`.
     ///
-    /// The default is 1 MiB, which is the value the C++ host uses.
+    /// The default is 1 MiB, the same as the most widely used Proxy-Wasm host.
     /// A guest that sends a longer map receives the same status as one that
     /// declares too many pairs.
     #[must_use]

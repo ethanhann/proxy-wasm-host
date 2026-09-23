@@ -4,22 +4,23 @@ use crate::codec::pairs::DecodeError;
 
 /// The most pairs one serialized map may declare by default.
 ///
-/// The value is the one the C++ host uses, so a guest that a proxy built on
-/// that host accepts is accepted here.
+/// The value matches the most widely used Proxy-Wasm host, so a plugin that
+/// works there is not refused here.
 /// Read it through [`PairLimits::default`], which is the shape that survives
 /// a change of the value.
 pub(crate) const DEFAULT_MAX_DECODED_PAIRS: u32 = 1024;
 
 /// The most bytes one serialized map may hold by default.
 ///
-/// The value is the one the C++ host uses.
+/// The value matches the most widely used Proxy-Wasm host.
 pub(crate) const DEFAULT_MAX_DECODED_MAP_BYTES: usize = 1024 * 1024;
 
 /// What one call to [`decode_pairs`](super::decode_pairs) may read.
 ///
 /// A guest writes the map, so a guest also chooses how large it is.
 /// These two numbers bound the work one call can ask for.
-/// [`PairLimits::default`] holds the values of the C++ host, and
+/// [`PairLimits::default`] holds the values of the most widely used
+/// Proxy-Wasm host, and
 /// [`PairLimits::unlimited`] reads whatever the input holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PairLimits {

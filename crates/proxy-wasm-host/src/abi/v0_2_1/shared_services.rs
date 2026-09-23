@@ -57,7 +57,7 @@ impl SharedValue {
 /// another VM.
 /// A guest that knows the VM id and the name of a queue opens it with
 /// `proxy_resolve_shared_queue`, and it can then add items and take them.
-/// The C++ host allows the same.
+/// Other Proxy-Wasm hosts allow the same.
 /// Treat a queue name as known to every plugin that shares your store, or
 /// give plugins you do not trust a store of their own.
 ///
@@ -146,8 +146,8 @@ pub trait SharedServices: Send + Sync {
 
     /// Opens a queue that another VM registered.
     ///
-    /// A guest that passes an empty VM id means its own VM, as it does on the
-    /// C++ host, so `vm_id` is then the VM id of the caller.
+    /// A guest that passes an empty VM id means its own VM, as it does on
+    /// other Proxy-Wasm hosts, so `vm_id` is then the VM id of the caller.
     ///
     /// # Errors
     ///

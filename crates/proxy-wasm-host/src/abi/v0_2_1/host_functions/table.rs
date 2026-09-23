@@ -283,7 +283,10 @@ mod tests {
         ];
 
         // Act
-        let rows = rows_of(&section("# What the crate bounds", "# Where a guest sees"));
+        let rows = rows_of(&section(
+            "# What the crate bounds",
+            "# Where answers can differ",
+        ));
 
         // Assert
         assert_eq!(DEFAULT_MAX_DECODED_MAP_BYTES, 1024 * 1024);

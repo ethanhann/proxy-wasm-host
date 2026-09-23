@@ -10,7 +10,7 @@ use crate::worker::Job;
 
 /// The workers that registered each queue, in the order they registered.
 ///
-/// An item wakes the worker that registered last, as the C++ host does.
+/// An item wakes the worker that registered last.
 /// The earlier workers stay in the list, so an item still reaches a guest when
 /// the last worker stops.
 #[derive(Clone, Default)]

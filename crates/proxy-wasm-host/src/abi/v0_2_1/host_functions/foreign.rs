@@ -251,7 +251,7 @@ mod tests {
                 word(&mut instance, RETURN_SIZE.cast_unsigned())
             ),
             (0, 0),
-            "a refused call writes the two zeros the C++ host writes"
+            "a refused call writes two zeros"
         );
     }
 
