@@ -22,7 +22,7 @@ This dictates the maximum amount of stack space that can be used by an engine in
 
 The `opt_level` setting chooses how hard Cranelift optimizes the machine code it makes from a guest.
 `OptLevel::Speed` is the default and gives the fastest code.
-`OptLevel::SpeedAndSize` also applies the optimizations that keep the code small (other Proxy-Wasm hosts implementations use this approach).
+`OptLevel::SpeedAndSize` also applies the optimizations that keep the code small (other Proxy-Wasm host implementations use this approach).
 
 ```rust
 let engine = EngineConfig::new()
