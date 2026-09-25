@@ -170,9 +170,9 @@ check-guest-sources:
     fi
     echo "every copied guest source matches $tag"
 
-# Run the benchmarks.
-bench:
-    cargo bench --workspace --locked
+# Run the benchmarks, at the optimization level speed or speed-and-size.
+bench opt-level="speed":
+    BENCH_OPT_LEVEL={{opt-level}} cargo bench --workspace --locked
 
 # Run docs site locally
 docs:
