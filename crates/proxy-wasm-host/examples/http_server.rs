@@ -9,7 +9,9 @@
 //! or the server stops with "Too many open files".
 //!
 //! The sink, the request type, and the answer of this file are written again in
-//! `examples/http_workers/worker.rs`, so each example reads on its own.
+//! `examples/http_workers/request.rs`, so each example reads on its own. That
+//! copy keeps header names in lower case, as a proxy does, and this one keeps
+//! them as the guest wrote them.
 
 use std::borrow::Cow;
 use std::io::Cursor;

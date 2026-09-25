@@ -3,11 +3,9 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use proxy_wasm_host::OptLevel;
-
 /// The command line the example accepts.
-pub const USAGE: &str = "usage: http_workers [PATH | --wasm PATH | --no-wasm] [--workers N] \
-                         [--port N] [--opt-level speed|speed-and-size]";
+pub const USAGE: &str =
+    "usage: http_workers [PATH | --wasm PATH | --no-wasm] [--workers N] [--port N]";
 
 /// Which plugin the workers run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,8 +27,6 @@ pub struct Options {
     pub workers: usize,
     /// The port the server listens on.
     pub port: u16,
-    /// How hard the compiler optimizes the plugin.
-    pub opt_level: OptLevel,
 }
 
 impl Default for Options {
@@ -39,7 +35,6 @@ impl Default for Options {
             plugin: Plugin::Default,
             workers: 4,
             port: 2045,
-            opt_level: OptLevel::Speed,
         }
     }
 }
@@ -71,7 +66,6 @@ struct Given {
     no_wasm: bool,
     workers: Option<usize>,
     port: Option<u16>,
-    opt_level: Option<OptLevel>,
 }
 
 /// Reads the arguments that follow the program name.
@@ -92,25 +86,16 @@ where
             "--help" | "-h" => return Ok(Command::Help),
             "--no-wasm" if given.no_wasm => return Err(twice(&arg)),
             "--no-wasm" => given.no_wasm = true,
-            "--wasm" => set(
-                &mut given.wasm,
-                &arg,
-                PathBuf::from(value(&mut args, &arg)?),
-            )?,
+            "--wasm" => set(&mut given.wasm, &arg, plugin_path(value(&mut args, &arg)?)?)?,
             "--workers" => set(&mut given.workers, &arg, workers(&value(&mut args, &arg)?)?)?,
             "--port" => set(&mut given.port, &arg, port(&value(&mut args, &arg)?)?)?,
-            "--opt-level" => set(
-                &mut given.opt_level,
-                &arg,
-                opt_level(&value(&mut args, &arg)?)?,
-            )?,
             flag if flag.starts_with('-') => {
                 return Err(UsageError(format!("unknown option {flag}")));
             }
             _ if given.path.is_some() => {
                 return Err(UsageError("give one plugin path".to_owned()));
             }
-            _ => given.path = Some(PathBuf::from(arg)),
+            _ => given.path = Some(plugin_path(arg)?),
         }
     }
     let plugin = match (given.path, given.wasm, given.no_wasm) {
@@ -131,7 +116,6 @@ where
         plugin,
         workers: given.workers.unwrap_or(defaults.workers),
         port: given.port.unwrap_or(defaults.port),
-        opt_level: given.opt_level.unwrap_or(defaults.opt_level),
     }))
 }
 
@@ -147,14 +131,26 @@ fn set<T>(slot: &mut Option<T>, flag: &str, value: T) -> Result<(), UsageError> 
     Ok(())
 }
 
+/// The value after `flag`, which is missing when the next argument is itself
+/// an option.
 fn value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, UsageError> {
-    args.next()
-        .ok_or_else(|| UsageError(format!("{flag} needs a value")))
+    match args.next() {
+        Some(value) if !value.starts_with("--") => Ok(value),
+        _ => Err(UsageError(format!("{flag} needs a value"))),
+    }
+}
+
+fn plugin_path(value: String) -> Result<PathBuf, UsageError> {
+    if value.is_empty() {
+        return Err(UsageError("the plugin path is empty".to_owned()));
+    }
+    Ok(PathBuf::from(value))
 }
 
 fn workers(value: &str) -> Result<usize, UsageError> {
+    let digits = !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit());
     match value.parse::<usize>() {
-        Ok(count) if count > 0 => Ok(count),
+        Ok(count) if digits && count > 0 => Ok(count),
         _ => Err(UsageError(format!(
             "--workers needs a whole number of 1 or more, not {value}"
         ))),
@@ -162,20 +158,11 @@ fn workers(value: &str) -> Result<usize, UsageError> {
 }
 
 fn port(value: &str) -> Result<u16, UsageError> {
+    let digits = !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit());
     match value.parse::<u16>() {
-        Ok(port) if port > 0 => Ok(port),
+        Ok(port) if digits && port > 0 => Ok(port),
         _ => Err(UsageError(format!(
             "--port needs a whole number from 1 to 65535, not {value}"
-        ))),
-    }
-}
-
-fn opt_level(value: &str) -> Result<OptLevel, UsageError> {
-    match value {
-        "speed" => Ok(OptLevel::Speed),
-        "speed-and-size" => Ok(OptLevel::SpeedAndSize),
-        _ => Err(UsageError(format!(
-            "--opt-level needs speed or speed-and-size, not {value}"
         ))),
     }
 }
@@ -237,21 +224,6 @@ mod tests {
                 usage("--port needs a whole number from 1 to 65535, not 0"),
                 usage("--port needs a whole number from 1 to 65535, not 65536"),
             ]
-        );
-    }
-
-    #[test]
-    fn an_unknown_opt_level_is_a_usage_error() {
-        // Arrange
-        let line = args("--opt-level fast");
-
-        // Act
-        let result = parse(line);
-
-        // Assert
-        assert_eq!(
-            result,
-            usage("--opt-level needs speed or speed-and-size, not fast")
         );
     }
 
@@ -354,7 +326,6 @@ mod tests {
                 plugin: Plugin::Default,
                 workers: 4,
                 port: 2045,
-                opt_level: OptLevel::Speed,
             }))
         );
     }
@@ -362,7 +333,7 @@ mod tests {
     #[test]
     fn each_option_reads_back() {
         // Arrange
-        let line = args("--wasm a.wasm --workers 1 --port 8080 --opt-level speed-and-size");
+        let line = args("--wasm a.wasm --workers 1 --port 8080");
 
         // Act
         let result = parse(line);
@@ -374,7 +345,6 @@ mod tests {
                 plugin: Plugin::Path(PathBuf::from("a.wasm")),
                 workers: 1,
                 port: 8080,
-                opt_level: OptLevel::SpeedAndSize,
             }))
         );
     }
@@ -401,6 +371,60 @@ mod tests {
                     ..Options::default()
                 })),
             ]
+        );
+    }
+
+    #[test]
+    fn an_option_where_its_value_should_be_is_a_usage_error() {
+        // Arrange
+        let lines = [args("--wasm --no-wasm"), args("--workers --port 8080")];
+
+        // Act
+        let results = lines.map(parse);
+
+        // Assert
+        assert_eq!(
+            results,
+            [
+                usage("--wasm needs a value"),
+                usage("--workers needs a value")
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_plugin_path_is_a_usage_error() {
+        // Arrange
+        let lines = [
+            vec![String::new()],
+            vec!["--wasm".to_owned(), String::new()],
+        ];
+
+        // Act
+        let results = lines.map(parse);
+
+        // Assert
+        assert_eq!(
+            results,
+            [
+                usage("the plugin path is empty"),
+                usage("the plugin path is empty")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_worker_count_with_a_sign_is_a_usage_error() {
+        // Arrange
+        let line = args("--workers +2");
+
+        // Act
+        let result = parse(line);
+
+        // Assert
+        assert_eq!(
+            result,
+            usage("--workers needs a whole number of 1 or more, not +2")
         );
     }
 

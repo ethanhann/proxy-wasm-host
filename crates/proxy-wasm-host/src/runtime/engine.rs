@@ -8,7 +8,6 @@ use std::time::Duration;
 use wasmtime::Config;
 
 use crate::Error;
-use crate::runtime::OptLevel;
 
 const DEFAULT_EPOCH_PERIOD: Duration = Duration::from_millis(10);
 
@@ -25,7 +24,6 @@ pub struct EngineConfig {
     external_ticks: bool,
     fuel_enabled: bool,
     max_wasm_stack: Option<usize>,
-    opt_level: OptLevel,
 }
 
 impl Default for EngineConfig {
@@ -35,7 +33,6 @@ impl Default for EngineConfig {
             external_ticks: false,
             fuel_enabled: false,
             max_wasm_stack: None,
-            opt_level: OptLevel::Speed,
         }
     }
 }
@@ -87,18 +84,6 @@ impl EngineConfig {
         self
     }
 
-    /// Sets how hard the compiler optimizes the code of each guest.
-    ///
-    /// The default is [`OptLevel::Speed`], which gives the fastest code.
-    /// [`OptLevel::SpeedAndSize`] also keeps the code small, which is what some
-    /// other Proxy-Wasm hosts use, so set it when you compare this crate with
-    /// one of them.
-    #[must_use]
-    pub fn with_opt_level(mut self, level: OptLevel) -> Self {
-        self.opt_level = level;
-        self
-    }
-
     /// Builds the engine and, unless disabled, its ticker thread.
     ///
     /// # Errors
@@ -114,7 +99,6 @@ impl EngineConfig {
         let mut config = Config::new();
         config.epoch_interruption(true);
         config.consume_fuel(self.fuel_enabled);
-        config.cranelift_opt_level(self.opt_level.into());
         if let Some(bytes) = self.max_wasm_stack {
             config.max_wasm_stack(bytes);
         }
@@ -176,11 +160,6 @@ impl Engine {
     /// Whether fuel metering is on.
     pub fn fuel_enabled(&self) -> bool {
         self.inner.config.fuel_enabled
-    }
-
-    /// How hard the compiler optimizes the code of each guest.
-    pub fn opt_level(&self) -> OptLevel {
-        self.inner.config.opt_level
     }
 
     /// Whether the engine runs its own ticker thread.
@@ -365,55 +344,6 @@ mod tests {
         assert_eq!(configs[0].max_wasm_stack, Some(1 << 20));
         assert_eq!(configs[1], base);
         assert!(configs[0].clone().build().is_ok());
-    }
-
-    #[test]
-    fn the_opt_level_defaults_to_speed_and_reads_back() {
-        // Arrange
-        let configs = [
-            EngineConfig::new(),
-            EngineConfig::new().with_opt_level(OptLevel::SpeedAndSize),
-            EngineConfig::new().with_opt_level(OptLevel::Speed),
-        ];
-
-        // Act
-        let levels: Vec<OptLevel> = configs
-            .map(|config| config.build().unwrap().opt_level())
-            .to_vec();
-
-        // Assert
-        assert_eq!(
-            levels,
-            vec![OptLevel::Speed, OptLevel::SpeedAndSize, OptLevel::Speed]
-        );
-    }
-
-    #[test]
-    fn an_engine_at_each_opt_level_compiles_and_runs_a_module() {
-        // Arrange
-        let wat = r#"(module (func (export "add") (param i32 i32) (result i32)
-            local.get 0 local.get 1 i32.add))"#;
-        let bytes = wat::parse_str(wat).unwrap();
-        let engines = [OptLevel::Speed, OptLevel::SpeedAndSize]
-            .map(|level| EngineConfig::new().with_opt_level(level).build().unwrap());
-
-        // Act
-        let sums: Vec<i32> = engines
-            .iter()
-            .map(|engine| {
-                let module = wasmtime::Module::new(engine.wasmtime(), &bytes).unwrap();
-                let mut store = wasmtime::Store::new(engine.wasmtime(), ());
-                store.set_epoch_deadline(1_000);
-                let instance = wasmtime::Instance::new(&mut store, &module, &[]).unwrap();
-                let add = instance
-                    .get_typed_func::<(i32, i32), i32>(&mut store, "add")
-                    .unwrap();
-                add.call(&mut store, (2, 3)).unwrap()
-            })
-            .collect();
-
-        // Assert
-        assert_eq!(sums, vec![5, 5]);
     }
 
     #[test]

@@ -1,7 +1,4 @@
 //! The cost of building a guest, of starting its root, and of one request.
-//!
-//! `BENCH_OPT_LEVEL=speed-and-size` compiles the guests into smaller code, and
-//! the default is `speed`.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
 use std::hint::black_box;
@@ -13,7 +10,7 @@ use proxy_wasm_host::abi::v0_2_1::{
     Access, ContextId, GuestSpec, Host, Invocation, LogContext, LogSink, PluginConfig, StreamKind,
     StreamState, VmServices,
 };
-use proxy_wasm_host::{EngineConfig, HeaderMap, Limits, Module, OptLevel, VecHeaderMap};
+use proxy_wasm_host::{Engine, HeaderMap, Limits, Module, VecHeaderMap};
 
 const ADD_REQUEST_HEADER: &[u8] = include_bytes!("../tests/fixtures/add-request-header.wasm");
 const EXERCISE_ALL: &[u8] = include_bytes!("../tests/fixtures/exercise-all.wasm");
@@ -50,21 +47,8 @@ impl StreamState for Request {
     }
 }
 
-/// The optimization level that `BENCH_OPT_LEVEL` asks for.
-fn opt_level() -> OptLevel {
-    match std::env::var("BENCH_OPT_LEVEL").as_deref() {
-        Err(std::env::VarError::NotPresent) | Ok("speed") => OptLevel::Speed,
-        Ok("speed-and-size") => OptLevel::SpeedAndSize,
-        Ok(other) => panic!("BENCH_OPT_LEVEL must be speed or speed-and-size, not {other}"),
-        Err(error) => panic!("BENCH_OPT_LEVEL cannot be read: {error}"),
-    }
-}
-
 fn spec(bytes: &[u8]) -> GuestSpec {
-    let engine = EngineConfig::new()
-        .with_opt_level(opt_level())
-        .build()
-        .unwrap();
+    let engine = Engine::new().unwrap();
     let module = Module::new(&engine, bytes).unwrap();
     let services = VmServices::new(Arc::new(Discard));
     GuestSpec::new(

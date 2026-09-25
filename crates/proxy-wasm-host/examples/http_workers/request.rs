@@ -8,12 +8,14 @@ use std::fmt::Write as _;
 use std::io::Cursor;
 use std::ops::ControlFlow;
 
+use proxy_wasm_host::HeaderMap;
 use proxy_wasm_host::abi::v0_2_1::types::{Action, LogLevel, MapType, Status};
 use proxy_wasm_host::abi::v0_2_1::{
     Access, Invocation, LocalResponse, LogContext, LogSink, StreamState,
 };
-use proxy_wasm_host::{HeaderMap, VecHeaderMap};
 use tiny_http::{Header, Request, Response};
+
+use crate::headers::ProxyHeaders;
 
 /// Emits one `tracing` event for a guest line.
 ///
@@ -94,7 +96,7 @@ pub struct Local {
 #[derive(Default)]
 pub struct HttpRequest {
     /// The request headers, which the guest reads and changes.
-    pub headers: VecHeaderMap,
+    pub headers: ProxyHeaders,
     local: Option<Local>,
 }
 
@@ -136,7 +138,7 @@ pub fn request_state(request: &Request, authority: &str) -> HttpRequest {
     ];
     for header in request.headers() {
         headers.push((
-            header.field.as_str().as_str().to_lowercase().into(),
+            header.field.as_str().as_str().into(),
             header.value.as_str().into(),
         ));
     }
@@ -197,3 +199,7 @@ pub fn answer_of(state: &HttpRequest, action: Action) -> Response<Cursor<Vec<u8>
 fn copied(name: &str) -> bool {
     !name.starts_with(':') && name != "content-length" && name != "content-type"
 }
+
+#[cfg(test)]
+#[path = "request_tests.rs"]
+mod tests;

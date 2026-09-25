@@ -15,8 +15,8 @@
 //! # The surface
 //!
 //! What no ABI version owns is exported here, at the crate root.
-//! You build and configure with [`Engine`], [`EngineConfig`], [`OptLevel`],
-//! [`Module`], and [`Limits`].
+//! You build and configure with [`Engine`], [`EngineConfig`], [`Module`], and
+//! [`Limits`].
 //! You lend your own storage through [`Buffer`], [`HeaderMap`], and
 //! [`VecHeaderMap`], and you refuse a write with [`NotAllowed`].
 //! You read a failure of the runtime through [`Error`], [`Limit`], and
@@ -40,7 +40,7 @@ pub use abi::AbiVersion;
 pub use buffer::Buffer;
 pub use error::{Error, Limit, MemoryError};
 pub use header_map::{HeaderMap, VecHeaderMap};
-pub use runtime::{Engine, EngineConfig, Limits, Module, OptLevel};
+pub use runtime::{Engine, EngineConfig, Limits, Module};
 
 /// The embedder refused a write to a header map or a buffer.
 ///

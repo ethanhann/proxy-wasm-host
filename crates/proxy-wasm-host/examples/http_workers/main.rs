@@ -5,30 +5,45 @@
 //! worker that loses its guest builds a new one.
 //! Send `curl -H 'x-trap: 1' http://127.0.0.1:2045/` to see the second policy.
 //!
-//! Run it with a plugin path, or with no path for the plugin that ships with
-//! the example:
+//! With no arguments, it runs the plugin that ships with the example.
+//! You can name another plugin with a path, or run with no plugin:
 //!
 //! ```text
-//! http_workers [PATH | --wasm PATH | --no-wasm] [--workers N] [--port N] [--opt-level speed|speed-and-size]
+//! http_workers [PATH | --wasm PATH | --no-wasm] [--workers N] [--port N]
 //! ```
 //!
 //! `--workers` sets how many worker threads serve requests, and the default is
-//! four. `--port` sets the port on 127.0.0.1, and the default is 2045.
-//! `--opt-level speed-and-size` compiles the plugin into smaller code, and the
-//! default is `speed`.
+//! four. `--port` sets the port on 127.0.0.1, and the default is 2045. `--help`
+//! prints the usage line. An option it cannot use prints the reason and the
+//! usage line, and the process exits with status 2.
 //!
-//! `--no-wasm` runs no plugin at all. Each request still travels through the
-//! dispatch to a worker thread, and the worker answers it as it arrived, so you
-//! can measure the HTTP server and the dispatch on their own and subtract that
+//! The request headers follow the rules of a proxy. A name is stored in lower
+//! case and compared without regard to case, and a header the guest replaces
+//! moves to the end.
+//!
+//! # Measuring
+//!
+//! `--no-wasm` runs no plugin. Each request still goes through the dispatch to
+//! a worker thread, and the worker answers it as it arrived. You can measure
+//! the HTTP server and the dispatch on their own this way, and subtract that
 //! from a run with a plugin.
 //!
+//! The example logs two lines for each request at the info level, so set
+//! `RUST_LOG=error` before you measure, or the log becomes part of the cost.
+//!
+//! One thread accepts every request and hands it to a worker, and the worker
+//! writes the answer to the socket. A server that answers on the thread of the
+//! connection spends its time in other places, so compare the difference to
+//! each server's own `--no-wasm` run rather than the raw numbers.
+//!
 //! `tiny_http` starts one thread for each open connection and holds two file
-//! descriptors for each one. If you put the example under load, raise the open
-//! file limit first with `ulimit -n`, or the server stops with "Too many open
+//! descriptors for each one. Before you put the example under load, raise the
+//! open file limit with `ulimit -n`, or the server stops with "Too many open
 //! files". If you compare it with a server that has a fixed pool of connection
 //! threads, keep the number of connections at or below the size of that pool,
 //! so both servers run one thread for each connection.
 
+mod headers;
 mod options;
 mod request;
 mod routes;
@@ -40,7 +55,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use proxy_wasm_host::abi::v0_2_1::{GuestSpec, Host, InMemoryStore, PluginConfig, VmServices};
-use proxy_wasm_host::{EngineConfig, Limits, Module};
+use proxy_wasm_host::{Engine, Limits, Module};
 use tiny_http::Server;
 
 use options::{Command, Options, Plugin, USAGE};
@@ -80,14 +95,17 @@ fn main() -> Outcome<()> {
     };
     let authority = format!("127.0.0.1:{}", options.port);
     let (senders, plugin) = match &options.plugin {
-        Plugin::None => (start_baseline(options.workers, &authority), "no plugin"),
+        Plugin::None => (
+            start_baseline(options.workers, &authority)?,
+            "no plugin".to_owned(),
+        ),
         Plugin::Default => (
             start_workers(&options, Path::new(DEFAULT_GUEST), &authority)?,
-            DEFAULT_GUEST,
+            format!("the plugin {DEFAULT_GUEST}"),
         ),
         Plugin::Path(path) => (
             start_workers(&options, path, &authority)?,
-            path.to_str().unwrap_or("a plugin"),
+            format!("the plugin {}", path.display()),
         ),
     };
     let server = Server::http(&authority)?;
@@ -104,19 +122,30 @@ fn channels(count: usize) -> (Vec<Sender<Job>>, Vec<Receiver<Job>>) {
 }
 
 /// Starts workers that run no guest.
-fn start_baseline(count: usize, authority: &str) -> Vec<Sender<Job>> {
+fn start_baseline(count: usize, authority: &str) -> Outcome<Vec<Sender<Job>>> {
     let (senders, receivers) = channels(count);
-    for receiver in receivers {
+    for (index, receiver) in receivers.into_iter().enumerate() {
         let authority = authority.to_owned();
-        std::thread::spawn(move || serve_baseline(&receiver, &authority));
+        spawn(index, move || serve_baseline(&receiver, &authority))?;
     }
-    senders
+    Ok(senders)
+}
+
+/// Starts the thread of one worker, and reports a thread the system refuses
+/// rather than panicking.
+fn spawn(index: usize, work: impl FnOnce() + Send + 'static) -> Outcome<()> {
+    std::thread::Builder::new()
+        .name(format!("worker {index}"))
+        .spawn(work)
+        .map_err(|error| format!("worker {index} could not start its thread: {error}"))?;
+    Ok(())
 }
 
 /// Starts one worker with one guest of the plugin at `path` for each worker
 /// the options ask for.
 fn start_workers(options: &Options, path: &Path, authority: &str) -> Outcome<Vec<Sender<Job>>> {
-    let bytes = std::fs::read(path)?;
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("cannot read the plugin {}: {error}", path.display()))?;
 
     // The channels and the routes come first, because the observer of the store
     // holds a sender of each worker and reads the routes.
@@ -125,9 +154,7 @@ fn start_workers(options: &Options, path: &Path, authority: &str) -> Outcome<Vec
     let store =
         InMemoryStore::new().with_enqueue_observer(observer(routes.clone(), senders.clone()));
 
-    let engine = EngineConfig::new()
-        .with_opt_level(options.opt_level)
-        .build()?;
+    let engine = Engine::new()?;
     let module = Module::new(&engine, &bytes)?;
     let services = VmServices::new(Arc::new(TracingSink))
         .with_vm_id(*b"example")
@@ -140,7 +167,7 @@ fn start_workers(options: &Options, path: &Path, authority: &str) -> Outcome<Vec
     for (index, receiver) in receivers.into_iter().enumerate() {
         let mut worker = Worker::start(index, &spec, plugin.clone(), &routes, authority)
             .map_err(|failure| failure_message(index, &failure))?;
-        std::thread::spawn(move || worker.run(&receiver));
+        spawn(index, move || worker.run(&receiver))?;
     }
     Ok(senders)
 }

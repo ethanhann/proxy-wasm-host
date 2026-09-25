@@ -4,7 +4,7 @@
 
 The `EngineConfig` struct is used to configure the engine.
 
-An engine has a `epoch_period`, `external_ticks`, `fuel_enabled`, `max_wasm_stack`, and `opt_level`.
+An engine has a `epoch_period`, `external_ticks`, `fuel_enabled`, and `max_wasm_stack`.
 
 An engine has a `epoch_period` which is the duration between epochs.
 A guest's CPU time limit is measured in these periods.
@@ -19,16 +19,6 @@ If it is set to off, individual fuel limits set for guests will have no effect.
 
 The `max_wasm_stack` setting sets an upperbound on the size, in bytes, of the engine's Wasm stack.
 This dictates the maximum amount of stack space that can be used by an engine instance to execute WebAssembly instructions.
-
-The `opt_level` setting chooses how hard Cranelift optimizes the machine code it makes from a guest.
-`OptLevel::Speed` is the default and gives the fastest code.
-`OptLevel::SpeedAndSize` also applies the optimizations that keep the code small (other Proxy-Wasm host implementations use this approach).
-
-```rust
-let engine = EngineConfig::new()
-    .with_opt_level(OptLevel::SpeedAndSize)
-    .build()?;
-```
 
 ## PluginConfig
 

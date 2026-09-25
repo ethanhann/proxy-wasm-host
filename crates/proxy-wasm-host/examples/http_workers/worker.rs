@@ -3,7 +3,6 @@
 use std::io::Cursor;
 use std::sync::mpsc::Receiver;
 
-use proxy_wasm_host::HeaderMap;
 use proxy_wasm_host::abi::v0_2_1::types::Action;
 use proxy_wasm_host::abi::v0_2_1::{
     Callback, ContextId, Guest, GuestError, GuestId, GuestSpec, PluginConfig, QueueId, Started,
