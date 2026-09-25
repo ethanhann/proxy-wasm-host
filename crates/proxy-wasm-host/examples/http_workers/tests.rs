@@ -1,6 +1,6 @@
 //! The tests of the worker of the `http_workers` example.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -16,6 +16,9 @@ use crate::request::{HttpRequest, TracingSink, pairs, request_state};
 use super::*;
 
 const GUEST: &[u8] = include_bytes!("../../tests/fixtures/http-example.wasm");
+
+/// The authority of a server on the default port.
+const AUTHORITY: &str = "127.0.0.1:2045";
 
 /// A pool of `count` workers on one store, in the order they started.
 struct Pool {
@@ -48,7 +51,7 @@ fn pool(count: usize) -> Pool {
     let plugin = PluginConfig::new().with_name(*b"example");
     let workers = (0..count)
         .map(|index| {
-            Worker::start(index, &spec, plugin.clone(), &routes)
+            Worker::start(index, &spec, plugin.clone(), &routes, AUTHORITY)
                 .ok()
                 .unwrap()
         })
@@ -65,7 +68,7 @@ fn test_request(headers: &[(&str, &str)]) -> Request {
 }
 
 fn request(headers: &[(&str, &str)]) -> HttpRequest {
-    request_state(&test_request(headers))
+    request_state(&test_request(headers), AUTHORITY)
 }
 
 #[test]
@@ -228,7 +231,7 @@ fn the_request_state_holds_the_three_pseudo_headers() {
     let source = test_request(&[]);
 
     // Act
-    let state = request_state(&source);
+    let state = request_state(&source, AUTHORITY);
 
     // Assert
     let names: Vec<String> = pairs(&state.headers)
@@ -237,6 +240,39 @@ fn the_request_state_holds_the_three_pseudo_headers() {
         .collect();
     assert_eq!(names[..3], [":method", ":path", ":authority"]);
     assert_eq!(pairs(&state.headers)[1].1, "/example");
+}
+
+#[test]
+fn the_authority_is_the_one_the_server_listens_on() {
+    // Arrange
+    let source = test_request(&[]);
+
+    // Act
+    let state = request_state(&source, "127.0.0.1:8080");
+
+    // Assert
+    assert_eq!(
+        pairs(&state.headers)[2],
+        (":authority".to_owned(), "127.0.0.1:8080".to_owned())
+    );
+}
+
+#[test]
+fn a_baseline_answer_lists_the_request_as_it_arrived() {
+    // Arrange
+    let source = test_request(&[("x-trace", "7")]);
+
+    // Act
+    let answer = baseline_answer(&source, AUTHORITY);
+
+    // Assert
+    let mut body = String::new();
+    answer.into_reader().read_to_string(&mut body).unwrap();
+    assert_eq!(
+        body,
+        ":method: GET\n:path: /example\n:authority: 127.0.0.1:2045\nx-trace: 7\ncontent-length: 0\n",
+        "a test request carries a content-length of its own"
+    );
 }
 
 #[test]

@@ -15,6 +15,7 @@ mod layering;
 mod limits;
 mod memory;
 mod module;
+mod opt_level;
 
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -24,6 +25,7 @@ pub(crate) use instance::Instance;
 pub use limits::Limits;
 pub(crate) use memory::{GuestMemory, GuestPtr, GuestSlice};
 pub use module::Module;
+pub use opt_level::OptLevel;
 
 pub(crate) use alloc::{write_optional_return, write_return};
 pub(crate) use host_state::HostState;

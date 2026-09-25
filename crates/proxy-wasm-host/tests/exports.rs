@@ -16,7 +16,7 @@
 // What no ABI version owns.
 use proxy_wasm_host::{
     AbiVersion, Buffer, Engine, EngineConfig, Error, HeaderMap, Limit, Limits, MemoryError, Module,
-    NotAllowed, VecHeaderMap,
+    NotAllowed, OptLevel, VecHeaderMap,
 };
 // What ABI v0.2.1 defines.
 use proxy_wasm_host::abi::UnsupportedAbi;
@@ -90,7 +90,7 @@ fn the_crate_root_exports_only_names_that_no_abi_version_owns() {
             "pub use buffer::Buffer;",
             "pub use error::{Error, Limit, MemoryError};",
             "pub use header_map::{HeaderMap, VecHeaderMap};",
-            "pub use runtime::{Engine, EngineConfig, Limits, Module};",
+            "pub use runtime::{Engine, EngineConfig, Limits, Module, OptLevel};",
         ]
     );
 }

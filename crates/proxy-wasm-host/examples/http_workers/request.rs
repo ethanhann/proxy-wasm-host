@@ -15,9 +15,6 @@ use proxy_wasm_host::abi::v0_2_1::{
 use proxy_wasm_host::{HeaderMap, VecHeaderMap};
 use tiny_http::{Header, Request, Response};
 
-/// The address the example listens on, which a guest reads as `:authority`.
-pub const ADDRESS: &str = "127.0.0.1:2045";
-
 /// Emits one `tracing` event for a guest line.
 ///
 /// The level of an event is part of its callsite, so each level needs its own
@@ -128,11 +125,14 @@ impl StreamState for HttpRequest {
 }
 
 /// The request headers, with the pseudo headers a guest expects first.
-pub fn request_state(request: &Request) -> HttpRequest {
+///
+/// `authority` is the address the server listens on, which a guest reads as
+/// `:authority`.
+pub fn request_state(request: &Request, authority: &str) -> HttpRequest {
     let mut headers: Vec<(Vec<u8>, Vec<u8>)> = vec![
         (b":method".to_vec(), request.method().as_str().into()),
         (b":path".to_vec(), request.url().into()),
-        (b":authority".to_vec(), ADDRESS.into()),
+        (b":authority".to_vec(), authority.into()),
     ];
     for header in request.headers() {
         headers.push((
