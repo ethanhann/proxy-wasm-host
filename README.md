@@ -36,7 +36,7 @@ Run `just` with no arguments to list every recipe.
 The tests also run the example plugins of the Rust SDK, so the suite covers canonical SDK example guests.
 `just build-guests` rebuilds the test guests under `crates/test-guests`.
 It needs rustup, and it installs the pinned toolchain and the `wasm32-wasip1` target on first use.
-`just bench` runs the benchmarks.
+`just bench` runs the benchmarks, and `just bench speed-and-size` runs them with the guests compiled into smaller code.
 
 ## Examples
 
