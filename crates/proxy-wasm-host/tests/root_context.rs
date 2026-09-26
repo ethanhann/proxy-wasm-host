@@ -2,7 +2,7 @@
 //! its queue, and its gRPC callouts.
 //!
 //! The helpers below are test code, and the allowance clippy makes for a test
-//! does not reach a function of an integration test that carries no test
+//! does not reach a function of an integration test that has no test
 //! attribute.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 

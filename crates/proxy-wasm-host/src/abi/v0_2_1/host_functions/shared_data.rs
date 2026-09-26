@@ -389,8 +389,8 @@ mod tests {
     #[test]
     fn a_key_of_one_vm_is_not_visible_to_a_guest_of_another() {
         // Arrange
-        // The existing test drives the store directly. This one drives two
-        // guests, so it dies if the VM id is dropped from the key.
+        // This test drives two guests rather than the store, so it fails
+        // when the VM id is dropped from the key.
         let engine = engine();
         let store: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut mine, _) = shared_hosted(&engine, GUEST, Arc::clone(&store));

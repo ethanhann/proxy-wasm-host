@@ -578,8 +578,9 @@ mod tests {
     fn a_queue_one_guest_registered_is_not_granted_to_another_of_the_same_vm() {
         // Arrange
         // The grant is per instance, so a second guest of the same VM that
-        // never registered the queue cannot reach it by passing its identifier. This dies
-        // if the grant set is shared between instances.
+        // never registered the queue cannot reach it by passing its
+        // identifier, and the test fails when the grant set is shared between
+        // instances.
         let engine = engine();
         let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut mine, _) = shared_hosted(&engine, GUEST, Arc::clone(&shared));

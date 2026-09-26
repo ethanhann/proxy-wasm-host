@@ -14,7 +14,7 @@ use crate::runtime::Limits;
 /// supplied.
 /// Everything the ABI layer keeps is in one opaque slot, which the ABI layer
 /// fills and only the ABI layer reads inside.
-/// The type is crate private, so nothing outside the crate can clear the
+/// The type is crate-private, so nothing outside the crate can clear the
 /// poison flag or replace the cached handles.
 pub(crate) struct HostState {
     store_limits: StoreLimits,

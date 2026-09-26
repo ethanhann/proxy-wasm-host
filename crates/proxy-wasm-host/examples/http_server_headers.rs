@@ -33,7 +33,7 @@ impl RequestHeaders {
         }
     }
 
-    /// The `tiny_http` headers, which the answer can carry as they are.
+    /// The `tiny_http` headers, which the answer can send as they are.
     pub fn fields(&self) -> &[Header] {
         &self.fields
     }

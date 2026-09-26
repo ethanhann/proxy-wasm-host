@@ -11,8 +11,8 @@ use crate::runtime::HostState;
 
 /// One address in guest memory.
 ///
-/// A guest passes an address as a signed 32 bit value, and the crate rejects
-/// a negative one, so it serves the first two gibibytes of a guest memory.
+/// A guest passes an address as a signed 32-bit value, and the crate reads
+/// its bits as unsigned, so it serves the whole memory of a guest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GuestPtr(u32);
 

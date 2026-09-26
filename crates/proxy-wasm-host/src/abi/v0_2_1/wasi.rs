@@ -5,13 +5,14 @@
 //! `proxy_log` does, and reports every byte as written.
 //! A WASI libc that receives a smaller count writes the rest again, so a
 //! count of the cut bytes alone would repeat the call until the message ends.
-//! `fd_write` is a log call, the clock and randomness functions read the
-//! services in the host state, the environment functions serve the per guest
-//! variables, and the argument functions report no arguments.
+//! `fd_write` is a log call.
+//! The clock and randomness functions read the services in the host state.
+//! The environment functions serve the per-guest variables, and the argument
+//! functions report no arguments.
 //! A guest that imports any other WASI function fails to instantiate.
 //!
 //! A file descriptor maps to a log level, which is a Proxy-Wasm decision
-//! rather than a WASI one, so the module sits with the version that makes it.
+//! rather than a WASI one, so the module belongs to the version that makes it.
 //! This version's registrar adds these functions before its own.
 
 use std::fmt::Display;

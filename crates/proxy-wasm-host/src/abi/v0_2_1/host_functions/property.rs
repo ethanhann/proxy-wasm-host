@@ -48,7 +48,7 @@ fn served(path: &[&[u8]]) -> Served<WellKnown> {
 /// The value of a property the crate answers itself.
 ///
 /// The VM id needs no context, as the VM configuration needs none.
-/// The plugin name and the plugin root id hang on a root context, so they
+/// The plugin name and the plugin root id belong to a root context, so they
 /// follow the rule every other body follows and refuse a root the guest
 /// rejected.
 fn well_known(state: &HostState, name: WellKnown) -> Result<Vec<u8>, Failure> {

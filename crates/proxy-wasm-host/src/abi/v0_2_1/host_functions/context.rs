@@ -195,8 +195,8 @@ mod tests {
     #[test]
     fn the_effective_context_never_moves_to_another_root_through_the_body() {
         // Arrange
-        // The existing test drives a guest. This one drives the body, so it
-        // dies if the two roots are no longer compared.
+        // This test drives the body rather than a guest, so it fails when
+        // the two roots are no longer compared.
         let engine = engine();
         let mut instance = instance(&engine, CALLERS).unwrap();
         let contexts = instance.state_mut().abi_mut().contexts_mut();

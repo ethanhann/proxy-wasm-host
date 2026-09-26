@@ -22,7 +22,6 @@
 //!
 //! A guest imports 39 functions from the module `env`.
 //! The crate registers every one of them for every guest.
-//! The table says who answers each call.
 //!
 //! The second column shows who answers.
 //! "The crate" means that no method of yours runs.
@@ -47,9 +46,6 @@
 //! to the guest.
 //! [`StreamState`] and [`SharedServices`] list the status each one gives when
 //! you do not implement it.
-//!
-//! The last column is written by hand, and the test that reads this table
-//! compares the names and the shape of each row and not that column.
 //!
 //! | Function | Served by | Method | Also answers |
 //! |---|---|---|---|
@@ -141,9 +137,8 @@
 //! `environ_get`, `args_sizes_get`, `args_get`, and `proc_exit`.
 //! A guest that imports any other name from `wasi_snapshot_preview1` fails to
 //! instantiate.
-//! Every guest this project builds imports at most those eight, which covers
-//! its own three guests, a `TinyGo` fixture, and seven example plugins of the
-//! Rust SDK.
+//! Every guest built with the Rust SDK or with `TinyGo` imports at most those
+//! eight.
 //! A guest built by the Go compiler imports more and does not load.
 //!
 //! # Where answers can differ from other hosts
@@ -226,6 +221,9 @@
 //! [`QueueId`], [`MetricId`], [`InvalidQueueId`], and [`InvalidMetricId`].
 //! The enumerations the ABI defines are under [`types`].
 
+// The last column of the host function table is written by hand, and the
+// test that reads the table compares the names and the shape of each row and
+// not that column.
 pub mod types;
 
 mod call_scope;

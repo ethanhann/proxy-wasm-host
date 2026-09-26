@@ -1,4 +1,4 @@
-//! One worker: a guest, the jobs it runs, and the guest it builds again.
+//! One worker, with its guest, the jobs it runs, and the guest it builds again.
 
 use std::io::Cursor;
 use std::sync::mpsc::Receiver;

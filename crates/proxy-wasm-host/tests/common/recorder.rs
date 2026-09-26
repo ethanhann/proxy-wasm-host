@@ -111,7 +111,7 @@ impl Recorder {
 
     /// The context of each log line, in the order the lines arrived.
     ///
-    /// A log line carries no `Invocation` in its event, because the crate
+    /// A log line has no `Invocation` in its event, because the crate
     /// gives a sink a context of its own.
     pub fn log_contexts(&self) -> Vec<LogContext<'static>> {
         self.contexts

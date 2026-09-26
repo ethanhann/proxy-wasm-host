@@ -320,8 +320,8 @@ mod tests {
     #[test]
     fn add_keeps_the_existing_pair_and_appends() {
         // Arrange
-        // The Go CommonHeader.Add panics.
-        // This map appends instead.
+        // The Go `CommonHeader.Add` panics on a repeated key, and this map
+        // appends instead.
         let mut map = map(&[("k", "first")]);
 
         // Act

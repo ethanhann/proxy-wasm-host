@@ -355,8 +355,8 @@ mod tests {
         encode_pairs(&pairs).unwrap()
     }
 
-    /// The arguments of a call whose initial metadata sits clear of the
-    /// other values.
+    /// The arguments of a call whose initial metadata is placed apart from
+    /// the other values.
     fn oversized(instance: &mut Instance) -> Call {
         let upstream = write(instance, UPSTREAM, b"authz");
         let service = write(instance, SERVICE, b"example.Authz");

@@ -69,7 +69,7 @@ impl Guest {
     ///
     /// The call runs with no stream state, so a host function the export
     /// calls reports the unavailable status of its family.
-    /// A name that starts with `proxy_` and `malloc` are refused with
+    /// A name that starts with `proxy_`, and the name `malloc`, are refused with
     /// [`Error::Config`], because the crate calls those itself.
     #[cfg(test)]
     pub(crate) fn call_export<P: wasmtime::WasmParams, R: wasmtime::WasmResults>(

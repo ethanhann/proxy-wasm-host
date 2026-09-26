@@ -422,8 +422,9 @@ mod tests {
 
         // Assert
         // wasmtime offers no read of the deadline, so this is indirect
-        // evidence: a store with a deadline of zero stops the write of a data
-        // segment, and the test depends on wasmtime checking it there.
+        // evidence.
+        // A store with a deadline of zero stops the write of a data segment,
+        // and the test depends on wasmtime checking it there.
         assert!(
             result.is_ok(),
             "a store with no deadline stops the instantiation at once: {:?}",

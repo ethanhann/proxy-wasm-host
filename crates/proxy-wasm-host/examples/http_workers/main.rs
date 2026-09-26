@@ -1,6 +1,5 @@
 //! A proxy with a pool of workers, one guest on each worker thread.
 //!
-//! It shows the two policies the crate leaves to you.
 //! A queue item wakes the worker whose root registered the queue last, and a
 //! worker that loses its guest builds a new one.
 //! Send `curl -H 'x-trap: 1' http://127.0.0.1:2045/` to see the second policy.

@@ -151,7 +151,7 @@ impl VmServices {
     /// `CallScope::on_vm_start` reports the length of these bytes to the
     /// guest.
     /// If you replace them after the guest started, the guest reads bytes
-    /// whose length it was never told, so that is yours to manage.
+    /// whose length it was never told, so replace them before the start.
     #[must_use]
     pub fn with_vm_configuration(mut self, configuration: impl Into<Vec<u8>>) -> Self {
         self.vm_configuration = configuration.into();

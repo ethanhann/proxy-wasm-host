@@ -170,8 +170,8 @@ pub trait Callouts: Send + Sync {
     /// lists for this call, and then deliver
     /// [`CallScope::on_grpc_close`](crate::abi::v0_2_1::CallScope::on_grpc_close),
     /// which ends the callout.
-    /// Keep in mind that a guest of the Rust SDK stops with a panic on any
-    /// answer but `OK`, so a refusal ends that guest, and a message you drop
+    /// A guest of the Rust SDK stops with a panic on any answer but `OK`, so
+    /// a refusal ends that guest, and a message you drop
     /// with `Ok(())` keeps it running until the close.
     ///
     /// `end_of_stream` says that the guest sends no more on this stream.

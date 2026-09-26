@@ -135,7 +135,7 @@ impl RecordingStream {
         &self.foreign_calls
     }
 
-    /// Makes every method report success for something it never touched.
+    /// Makes every method report success for something it never changed.
     pub(crate) fn refusing_with_ok(mut self) -> Self {
         self.refuse_with_ok = true;
         self

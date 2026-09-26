@@ -1,4 +1,4 @@
-//! The per stream state an embedder lends to a guest.
+//! The per-stream state an embedder lends to a guest.
 
 pub(crate) mod invocation;
 pub(crate) mod values;
@@ -102,7 +102,7 @@ pub trait StreamState: Any + Send {
     ///
     /// The status you return goes to the guest unchanged, except that
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`], because
-    /// no map was touched.
+    /// no map was changed.
     fn header_map(
         &mut self,
         call: Invocation,
@@ -142,7 +142,7 @@ pub trait StreamState: Any + Send {
     ///
     /// The status you return goes to the guest unchanged, except that
     /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`], because
-    /// no buffer was touched.
+    /// no buffer was changed.
     fn buffer(
         &mut self,
         call: Invocation,
@@ -224,13 +224,14 @@ pub trait StreamState: Any + Send {
     /// services, so you never see those three.
     /// The ABI says that properties are particular to a host, so you decide
     /// which ones you serve.
-    /// The ABI document lists the well known properties of a proxy, such as
-    /// `request.path` and `source.address`, with a type for each, and a
-    /// guest of the Rust SDK reads the bytes as follows: a string is its
-    /// bytes with no terminator, an int and a uint are eight bytes in little
-    /// endian order, a bool is one byte, a timestamp is the nanoseconds since
-    /// the epoch as eight bytes, and a duration is nanoseconds as eight
-    /// bytes.
+    /// The ABI document lists the well-known properties of a proxy, such as
+    /// `request.path` and `source.address`, with a type for each.
+    /// A guest of the Rust SDK reads a string as its bytes with no
+    /// terminator.
+    /// It reads an int and a uint as eight bytes in little-endian order, and
+    /// a bool as one byte.
+    /// It reads a timestamp as the nanoseconds since the epoch in eight
+    /// bytes, and a duration as nanoseconds in eight bytes.
     ///
     /// # Errors
     ///

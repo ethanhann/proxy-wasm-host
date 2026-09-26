@@ -82,9 +82,10 @@
 //! You build and configure with [`Engine`], [`EngineConfig`], [`Module`], and
 //! [`Limits`].
 //! You lend your own storage through [`Buffer`], [`HeaderMap`], and
-//! [`VecHeaderMap`], you walk the pairs of a map with a [`PairVisitor`],
-//! [`HeaderMapExt`] reads a map through the trait, and you refuse a write
-//! with [`NotAllowed`].
+//! [`VecHeaderMap`].
+//! You walk the pairs of a map with a [`PairVisitor`], and [`HeaderMapExt`]
+//! reads a map through the trait.
+//! You refuse a write with [`NotAllowed`].
 //! You read a failure of the runtime through [`Error`], [`Limit`], and
 //! [`MemoryError`].
 //! You ask which ABI a module speaks with [`AbiVersion`], and

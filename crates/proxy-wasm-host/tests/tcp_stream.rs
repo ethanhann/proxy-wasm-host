@@ -2,7 +2,7 @@
 //! both closes.
 //!
 //! The helpers below are test code, and the allowance clippy makes for a test
-//! does not reach a function of an integration test that carries no test
+//! does not reach a function of an integration test that has no test
 //! attribute.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -20,8 +20,8 @@ fn fill(buffer: &mut Vec<u8>, data: &[u8]) {
     buffer.extend_from_slice(data);
 }
 
-/// What the script saw: the answers of the data callbacks, the buffers after
-/// each one, and the context.
+/// What the script saw, which is the answers of the data callbacks, the
+/// buffers after each one, and the context.
 #[derive(Debug, PartialEq)]
 struct Seen {
     actions: Vec<Action>,

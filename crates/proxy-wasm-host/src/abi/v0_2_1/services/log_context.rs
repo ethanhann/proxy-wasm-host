@@ -63,7 +63,7 @@ pub struct LogContext<'a> {
     /// delivery.
     /// A sink that groups its lines by request reads the context from it.
     /// A guest can also write a line when no callback is running, from its
-    /// own start up code, and this is `None` there.
+    /// own startup code, and this is `None` there.
     pub call: Option<Invocation>,
 }
 

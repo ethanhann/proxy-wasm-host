@@ -50,9 +50,10 @@ struct Metrics {
 /// so a guest works without any shared state of your own.
 ///
 /// It serves one process.
-/// A metric recorded into it reaches no metric sink of your proxy, a value
-/// written into it is gone when the process ends, and a proxy that runs
-/// several processes supplies an implementation that reaches across them.
+/// A metric recorded into it reaches no metric sink of your proxy.
+/// A value written into it is gone when the process ends.
+/// A proxy that runs several processes supplies an implementation that
+/// reaches across them.
 ///
 /// Each family has its own lock, so a metric does not wait behind a queue,
 /// and a panic while a lock is held does not stop the other instances.
@@ -60,8 +61,8 @@ struct Metrics {
 /// A guest drives every one of these families directly, so the store bounds
 /// what it holds.
 /// [`InMemoryStoreLimits::default`] allows 4096 keys of at most 64 KiB each,
-/// 1024 items on a queue, 4096 queues, and 4096 metrics, and a write past a
-/// bound reports [`Status::InternalFailure`].
+/// 1024 items on a queue, 4096 queues, and 4096 metrics.
+/// A write past a bound reports [`Status::InternalFailure`].
 /// Change them with [`InMemoryStore::with_limits`].
 ///
 /// A histogram takes an observation and keeps no value, because the ABI gives

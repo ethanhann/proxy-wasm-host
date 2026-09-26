@@ -88,7 +88,7 @@ pub(super) fn with_shared(
     Ok((call, shared))
 }
 
-/// The embedder's answer, with a success for a resource it never touched
+/// The embedder's answer, with a success for a resource it never changed
 /// turned into a failure.
 pub(super) fn from_embedder<T>(
     method: &'static str,

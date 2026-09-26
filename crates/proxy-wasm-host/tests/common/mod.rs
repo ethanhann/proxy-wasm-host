@@ -1,4 +1,4 @@
-//! The doubles, their answers, and the harness that the end to end tests
+//! The doubles, their answers, and the harness that the end-to-end tests
 //! share.
 //!
 //! Each test file compiles this module on its own and uses a part of it, so

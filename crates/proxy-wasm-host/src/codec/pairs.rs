@@ -1,6 +1,6 @@
 //! Serialization of a map of byte string pairs.
 //!
-//! A non empty map is a `u32` pair count, then a `u32` key length and a `u32`
+//! A map with at least one pair is a `u32` pair count, then a `u32` key length and a `u32`
 //! value length for each pair, then each key and value in turn with a `0x00`
 //! byte after each one.
 //! An empty map is either no bytes or a single `0x00` byte.

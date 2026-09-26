@@ -859,8 +859,8 @@ mod tests {
     #[test]
     fn a_guest_under_a_refused_root_is_not_served_the_plugin_configuration() {
         // Arrange
-        // The existing test drives the body. This one drives a guest, so it
-        // dies if the rejection is not consulted before the read.
+        // This test drives a guest rather than the body, so it fails when
+        // the rejection is not consulted before the read.
         let mut instance = configured(b"vm", b"plugin bytes");
         let root = instance.state().abi().contexts().effective().unwrap();
         instance.state_mut().abi_mut().contexts_mut().reject(root);

@@ -8,7 +8,7 @@
 //! This is a text search, so it finds a name only where a name is written.
 //! A dependency held by a type alias, by a macro that builds the path, or by
 //! a value whose type is never spelled at the call site is invisible to it.
-//! It deters an accident and it does not resist intent.
+//! It catches an accidental dependency, and a deliberate one can get past it.
 
 #[cfg(test)]
 mod tests {

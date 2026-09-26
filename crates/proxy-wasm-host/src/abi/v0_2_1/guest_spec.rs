@@ -209,7 +209,7 @@ impl GuestSpec {
         self.counters.poisoned_guests.load(Ordering::Relaxed)
     }
 
-    /// The services that each guest [`GuestSpec::build`] gives receives a
+    /// The services that each guest built by [`GuestSpec::build`] receives a
     /// clone of.
     pub fn services(&self) -> &VmServices {
         &self.services

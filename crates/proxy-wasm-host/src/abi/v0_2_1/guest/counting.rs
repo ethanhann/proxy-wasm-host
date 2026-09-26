@@ -1,8 +1,7 @@
 //! What a guest reports to the spec that built it.
 //!
-//! An embedder knows that it called `build`. It does not know which guests
-//! the crate poisoned, so a guest records that it was poisoned when it is
-//! dropped.
+//! An embedder knows that it called `build`, but not which guests the crate
+//! poisoned, so a guest records that it was poisoned when it is dropped.
 
 use std::sync::Arc;
 
