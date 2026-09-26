@@ -3,48 +3,21 @@
 [![CI](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/ethanhann/proxy-wasm-host/blob/main/LICENSE)
 
-
 A [Proxy-Wasm](https://github.com/proxy-wasm/spec) ABI v0.2.1 host library for Rust, built on [wasmtime](https://wasmtime.dev/).
-If you write a proxy in Rust and want to run Proxy-Wasm guests in it, this crate provides the host side of the ABI.
-It is a port of [proxy-wasm-go-host](https://github.com/mosn/proxy-wasm-go-host) from Go to Rust.
+If you are writing a proxy in Rust and want it to run Proxy-Wasm plugins, this crate implements the host side of the ABI for you.
+It is a port of [proxy-wasm-go-host](https://github.com/mosn/proxy-wasm-go-host) to Rust.
 
-## Status
-
-The crate runs every callback of ABI v0.2.1, which covers the lifecycle of an HTTP stream and of a TCP stream, the HTTP and gRPC callouts, the ticks, the queue ready callbacks, and a foreign function call.
-It serves logging, the log level, the clock, the tick period, the header maps, the buffers, the stream operations, the HTTP and gRPC callouts, the local response, the shared data, the shared queues, the metrics, the properties, and the foreign function call.
-The embedder drives each callback and supplies the state a guest reads.
-The facts below decide whether you can use it.
-
-- ABI: Proxy-Wasm v0.2.1, with v0.2.0 guests accepted.
-  Guests built by the Go compiler and v0.1.0 guests do not load.
+- ABI: Proxy-Wasm v0.2.1, and guests built for v0.2.0 also load.
 - Runtime: wasmtime 49.
 - Minimum supported Rust version: 1.96.
-  The minimum follows the `rust-version` that wasmtime declares, so it moves when the wasmtime dependency moves.
 
-## Use
+## Getting started
 
 ```sh
 cargo add proxy-wasm-host
 ```
 
-The [API documentation](https://docs.rs/proxy-wasm-host) starts with an example that builds an engine, a host, and a guest and runs one request through it.
-
-## Build and test
-
-The project uses [just](https://github.com/casey/just).
-
-```sh
-just check
-```
-
-`check` runs the format check, clippy with warnings denied, the build, the tests, and rustdoc with warnings denied.
-CI runs the same recipe, and then `just check-package`, which checks that the published crate holds the library source alone.
-Run `just` with no arguments to list every recipe.
-[CONTRIBUTING.md](https://github.com/ethanhann/proxy-wasm-host/blob/main/CONTRIBUTING.md) explains how to prepare a pull request.
-The tests also run the example plugins of the Rust SDK, so the suite covers canonical SDK example guests.
-`just build-guests` rebuilds the test guests under `crates/test-guests`.
-It needs rustup, and it installs the pinned toolchain and the `wasm32-wasip1` target on first use.
-`just bench` runs the benchmarks.
+The [API documentation](https://docs.rs/proxy-wasm-host) opens with a complete example that compiles a plugin, starts it, and runs a request through it.
 
 ## Examples
 
@@ -53,20 +26,15 @@ cargo run --example http_server
 curl http://127.0.0.1:2045/
 ```
 
-```text
-INFO http_server: listening on 127.0.0.1:2045 with the plugin .../add-request-header.wasm
-INFO request{path="/"}: http_server: GET /
-INFO request{path="/"}: guest: adding header plugin=example context=2
-```
+The response lists the request headers, including the one the plugin added.
+`cargo run --example http_workers` runs the same kind of proxy with a pool of worker threads and one guest per worker.
 
-The answer lists the headers, and it includes the header the plugin added.
-`cargo run --example http_workers` serves requests through a pool of workers, where each worker has its own guest of a plugin that also uses a shared queue.
+## Contributing
 
-## Security
-
-[SECURITY.md](https://github.com/ethanhann/proxy-wasm-host/blob/main/SECURITY.md) says how to report a vulnerability, what is in scope, and which duties stay with your embedder.
+[CONTRIBUTING.md](https://github.com/ethanhann/proxy-wasm-host/blob/main/CONTRIBUTING.md) covers the build, the checks, and the conventions.
+[SECURITY.md](https://github.com/ethanhann/proxy-wasm-host/blob/main/SECURITY.md) covers how to report a vulnerability.
 
 ## License
 
 Apache License, Version 2.0.
-See `LICENSE` for the text and `NOTICE` for the attribution to the original Go project.
+See `LICENSE` for the text and `NOTICE` for the attribution of the original Go project.

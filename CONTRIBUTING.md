@@ -1,67 +1,31 @@
 # Contributing
 
-This page says what you need to build the crate, how to check a change, and what the tests and the guests expect.
-
-## What you need
+## Requirements
 
 You need [rustup](https://rustup.rs/), Rust 1.96 or later, and [just](https://github.com/casey/just).
-The quality checks use a few extra cargo tools, which you can install in one step:
+`just install-dev-tools` installs the cargo tools that the other recipes use.
 
-```sh
-just install-dev-tools
-```
-
-The coverage recipe needs `cargo-llvm-cov` and `cargo-nextest`, the `check-unsafe` recipe needs `cargo-geiger`, and the `docs` recipe needs `mdbook`, which `just install-dev-tools` also installs.
-
-The test guests are built with their own pinned toolchain and the `wasm32-wasip1` target.
-You do not need to install either by hand, because `just build-guests` installs both on first use.
-
-## Checking a change
-
-Run the main checks before you commit:
+## Checks
 
 ```sh
 just check
 ```
 
-`check` runs the format check, clippy, the build, the tests, and rustdoc.
-Before you open a pull request, also run the quality checks and the package check:
+`check` runs the formatter, clippy, the build, the tests, and rustdoc, and CI runs the same recipe.
+Before you open a pull request, also run `just check-code-quality` and `just check-package`.
+The package check runs a publish dry run, so it needs network access and a committed tree.
+Run `just` with no arguments to list every recipe.
 
-```sh
-just check-code-quality
-just check-package
-```
+## Conventions
 
-`check-package` needs the network, since it runs a publish dry run against the crates.io index.
-It also refuses to run while a file the package holds, the README, or a manifest has uncommitted changes, so commit your work first.
-Run `just` with no arguments to see every recipe.
-
-## What the lints ask of you
-
-The workspace turns on a strict set of lints, and CI treats every warning as an error.
-Every public item needs a doc comment.
-The `clippy::all` and `clippy::pedantic` groups are denied.
-The workspace forbids `unsafe` code.
-
-`unwrap` and `expect` are denied outside tests, so in application code you return the error instead.
-Clippy allows them in a `#[test]` function and a `#[cfg(test)]` module, but not in a helper function of an integration test file.
-That is why each file under `tests/` starts with `#![allow(clippy::unwrap_used, clippy::expect_used)]`, and a new test file should do the same.
-
-## The size of a file
-
-A source file holds at most 600 lines of application code, and a file with more than 300 lines of it is a candidate for a split.
-The tests in a file's `#[cfg(test)]` module are counted on their own, and a test module over 600 lines is a candidate for a sibling `tests.rs` file, with no hard limit.
-Integration tests, examples, and benches follow the same limits.
-
-## The layout of the modules
-
-A module with children is a `name.rs` file next to a `name/` directory, and the crate has no `mod.rs` file.
-The one exception is `tests/common/mod.rs`, because Cargo compiles a `tests/common.rs` as a test binary of its own.
-
-## Writing tests
-
-Each test follows the Arrange, Act, and Assert pattern, with each section marked by a comment.
-Keep the Act section to a single statement, so it is clear what the test exercises:
+- Every public item has a doc comment, and CI treats every warning as an error.
+- `unsafe` code is forbidden, and `unwrap` and `expect` are denied outside tests.
+  Each file under `tests/` starts with `#![allow(clippy::unwrap_used, clippy::expect_used)]`, because clippy does not treat the helper functions of an integration test as test code.
+- A source file contains at most 600 lines of application code.
+  A file over 300 lines, or a test module over 600 lines, is a candidate for a split.
+- A module with submodules is a `name.rs` file next to a `name/` directory, with no `mod.rs` files.
+  The exception is `tests/common/mod.rs`, which Cargo requires.
+- Each test follows the Arrange, Act, Assert pattern, with each section marked by a comment and a single statement in Act:
 
 ```rust
 #[test]
@@ -79,47 +43,20 @@ fn a_message_at_the_log_bound_reaches_the_sink_whole() {
 }
 ```
 
-Prefer assertions that check the whole result.
-In the example above, the test compares every entry the sink received, not only the number of entries, so a wrong level or a wrong message fails it too.
+## Test guests
 
-## The test guests
-
-Many tests run real Proxy-Wasm guests, which live as compiled modules under `crates/proxy-wasm-host/tests/fixtures`.
-The modules are committed, so the tests run without a guest toolchain.
-Most of them are built from the guest crates in `crates/test-guests`, and you can rebuild those with:
-
-```sh
-just build-guests
-```
-
-The TinyGo module is the exception.
-It is a copy from proxy-wasm-go-host, as `NOTICE` explains, and its source is not in this repository.
-
-A rebuild on another platform can produce different bytes for the same source.
-Only commit a rebuilt fixture when you changed its guest, and commit the one you tested against.
-
-Some guests are unchanged copies of the example plugins of the Rust SDK, and `just check-guest-sources` compares them with their upstream release.
+The tests run real Proxy-Wasm guests, committed as compiled modules under `crates/proxy-wasm-host/tests/fixtures`.
+Most of them are built from the crates in `crates/test-guests` with `just build-guests`, which installs the pinned toolchain and the `wasm32-wasip1` target on first use.
+A rebuild on another platform can produce different bytes for the same source, so commit a rebuilt fixture only when you changed its guest.
 
 To add a guest, create its crate under `crates/test-guests`, add it to the `members` list of `crates/test-guests/Cargo.toml`, and run `just build-guests`.
-If the guest is copied from another project, add a paragraph that credits it to the `NOTICE` file at the repository root.
+If you copied the guest from another project, credit it in `NOTICE`.
 
-## The documentation site
+## Documentation site
 
-The guide under `docs/` is an [mdBook](https://rust-lang.github.io/mdBook/) site.
-Install mdBook with `cargo install mdbook`, and then serve the site locally with:
-
-```sh
-just docs
-```
-
-Please open an issue before you add or rewrite a page, so the change can be discussed first.
+The guide under `docs/` is an [mdBook](https://rust-lang.github.io/mdBook/) site, and `just docs` serves it locally.
+Open an issue before you add or rewrite a page.
 
 ## License
 
-The project is licensed under the Apache License, Version 2.0.
-By contributing, you agree that your contribution is licensed under the same terms.
-
-## Reporting a vulnerability
-
-Please do not open a public issue for a security problem.
-[SECURITY.md](https://github.com/ethanhann/proxy-wasm-host/blob/main/SECURITY.md) explains how to report one privately.
+By contributing, you agree that your contribution is licensed under the Apache License, Version 2.0.
