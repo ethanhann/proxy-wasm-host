@@ -1,12 +1,13 @@
 # Services
 
-Services allow VMs to do stuff outside the VM itself.
+A guest cannot reach anything outside its own memory.
+The services are the traits you implement so that a guest can log, read the clock, share data with other guests, and make callouts.
 
 ## Logging
 
 ### The LogSink trait
 
-The `LogSink` trait implementation determines where a guest's log messages are sent.
+Your `LogSink` implementation decides where the log messages of a guest go.
 
 For example, if you wanted to discard all messages you would implement it like this:
 
@@ -18,10 +19,12 @@ impl LogSink for Discard {
 }
 ```
 
-However, this would not be done except for perhaps during local development.
-Realistically, the log level and message would be sent somewhere useful.
+However, this would not be done except for perhaps during local development, a benchmark, or a test.
+In actual proxy implementation, the log level and message would be sent somewhere.
 
-This connects guest log output to whatever tracing subscriber (e.g., stdout, JSON, OpenTelemetry, etc.) is configured:
+A sink can hand each line to the `tracing` crate.
+This allows the guest log to reach the subscriber (e.g., stdout, JSON, OpenTelemetry, etc.) already configured for a proxy.
+For example, a sink that maps each `LogLevel` to a `tracing` event:
 
 ```rust
 use std::borrow::Cow;

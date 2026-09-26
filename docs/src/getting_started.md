@@ -2,13 +2,13 @@
 
 ## Introduction
 
-`proxy-wasm-host` is a crate that allows WebAssembly modules to run as plugins in various proxy servers.
+`proxy-wasm-host` lets a proxy written in Rust run WebAssembly modules as plugins.
 It is a Rust implementation of the [Proxy-Wasm](https://github.com/proxy-wasm/spec) specification.
 
 The crate is a port of [proxy-wasm-go-host](https://github.com/mosn/proxy-wasm-go-host).
 It hosts guests built for ABI v0.2.1, and it also accepts guests built for v0.2.0.
 
-You do not need to use this crate unless you are building or maintaining a proxy written in Rust.
+If you build or maintain a proxy written in Rust and want it to run Proxy-Wasm plugins, this crate gives you the host side of the ABI.
 See [areweproxyyet.github.io](https://areweproxyyet.github.io/) for a list of proxies that might benefit from this crate.
 
 ## Installation
@@ -19,9 +19,9 @@ cargo add proxy-wasm-host
 
 ## Usage
 
-Usage of this crate assumes that you want to load and run a plugin in the host runtime this crate provides.
+To run a plugin you compile it into a `Module`, link the host functions once with `Host`, and bind a `Guest` to both.
 
-For example, given a pre-compiled plugin file called "foo.wasm", you would load it like this:
+For example, given a compiled plugin at `plugins/foo.wasm`, you load it like this:
 
 ```rust
 use std::sync::Arc;
