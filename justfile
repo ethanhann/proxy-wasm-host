@@ -185,3 +185,7 @@ bench:
 # Serve the docs site locally.
 docs:
     cd docs && mdbook serve
+
+# Publish to crates.io
+publish:
+    cargo publish -p proxy-wasm-host
