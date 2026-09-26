@@ -2,9 +2,9 @@
 _list:
     @just --list
 
-# Install the development tooling that the quality checks use.
+# Install the development tooling that the quality, coverage, and docs recipes use.
 install-dev-tools:
-    cargo install --locked cargo-machete cargo-deny cargo-audit
+    cargo install --locked cargo-machete cargo-deny cargo-audit cargo-llvm-cov cargo-nextest cargo-geiger mdbook
 
 # Build every workspace target.
 build:
@@ -15,9 +15,9 @@ test:
     cargo test --workspace --all-targets --locked
     cargo test --workspace --doc --locked
 
-# Run tests and show coverage report
+# Run the tests and show a coverage report.
 test-with-coverage:
-    cargo llvm-cov nextest --workspace --all-features --summary-only --ignore-filename-regex 'tests/|examples/'
+    cargo llvm-cov nextest --workspace --all-features --locked --summary-only --ignore-filename-regex 'tests/|examples/'
 
 # Run clippy with warnings denied.
 lint:
@@ -128,7 +128,7 @@ check-guest-sources:
     set -euo pipefail
     tag="$(sed -n 's/^The copies come from tag \([^,]*\),.*/\1/p' NOTICE)"
     if [ -z "$tag" ]; then
-        echo "FAIL NOTICE does not name the tag the copies came from"
+        echo "FAIL NOTICE does not state the tag the copies came from"
         exit 1
     fi
     work="$(mktemp -d)"
@@ -182,6 +182,6 @@ bench:
     fi
     cargo bench --workspace --locked
 
-# Run docs site locally
+# Serve the docs site locally.
 docs:
     cd docs && mdbook serve

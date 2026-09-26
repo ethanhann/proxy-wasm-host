@@ -10,16 +10,24 @@ It is a port of [proxy-wasm-go-host](https://github.com/mosn/proxy-wasm-go-host)
 
 ## Status
 
-The crate is not published yet.
-It runs every callback of ABI v0.2.1, which covers the lifecycle of an HTTP stream and of a TCP stream, the HTTP and gRPC callouts, the ticks, the queue ready callbacks, and a foreign function call.
+The crate runs every callback of ABI v0.2.1, which covers the lifecycle of an HTTP stream and of a TCP stream, the HTTP and gRPC callouts, the ticks, the queue ready callbacks, and a foreign function call.
 It serves logging, the log level, the clock, the tick period, the header maps, the buffers, the stream operations, the HTTP and gRPC callouts, the local response, the shared data, the shared queues, the metrics, the properties, and the foreign function call.
 The embedder drives each callback and supplies the state a guest reads.
-When it is published, the facts below decide whether you can use it.
+The facts below decide whether you can use it.
 
 - ABI: Proxy-Wasm v0.2.1, with v0.2.0 guests accepted.
+  Guests built by the Go compiler and v0.1.0 guests do not load.
 - Runtime: wasmtime 49.
 - Minimum supported Rust version: 1.96.
   The minimum follows the `rust-version` that wasmtime declares, so it moves when the wasmtime dependency moves.
+
+## Use
+
+```sh
+cargo add proxy-wasm-host
+```
+
+The [API documentation](https://docs.rs/proxy-wasm-host) starts with an example that builds an engine, a host, and a guest and runs one request through it.
 
 ## Build and test
 
@@ -48,15 +56,15 @@ curl http://127.0.0.1:2045/
 ```text
 INFO http_server: listening on 127.0.0.1:2045 with the plugin .../add-request-header.wasm
 INFO request{path="/"}: http_server: GET /
-INFO request{path="/"}: guest: adding header
+INFO request{path="/"}: guest: adding header plugin=example context=2
 ```
 
 The answer lists the headers, and it carries the header the plugin added.
-`cargo run --example http_workers` runs the same request through a pool of workers, where each worker has its own guest.
+`cargo run --example http_workers` serves requests through a pool of workers, where each worker has its own guest of a plugin that also uses a shared queue.
 
 ## Security
 
-`SECURITY.md` says how to report a vulnerability, what is in scope, and which duties stay with your embedder.
+[SECURITY.md](https://github.com/ethanhann/proxy-wasm-host/blob/main/SECURITY.md) says how to report a vulnerability, what is in scope, and which duties stay with your embedder.
 
 ## License
 

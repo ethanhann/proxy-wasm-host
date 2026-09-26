@@ -11,6 +11,8 @@ The quality checks use a few extra cargo tools, which you can install in one ste
 just install-dev-tools
 ```
 
+The coverage recipe needs `cargo-llvm-cov` and `cargo-nextest`, the `check-unsafe` recipe needs `cargo-geiger`, and the `docs` recipe needs `mdbook`, which `just install-dev-tools` also installs.
+
 The test guests are built with their own pinned toolchain and the `wasm32-wasip1` target.
 You do not need to install either by hand, because `just build-guests` installs both on first use.
 
@@ -48,8 +50,13 @@ That is why each file under `tests/` starts with `#![allow(clippy::unwrap_used, 
 ## The size of a file
 
 A source file holds at most 600 lines of application code, and a file with more than 300 lines of it is a candidate for a split.
-The tests in a file's `#[cfg(test)]` module are counted separately, against the same limits.
+The tests in a file's `#[cfg(test)]` module are counted on their own, and a test module over 600 lines is a candidate for a sibling `tests.rs` file, with no hard limit.
 Integration tests, examples, and benches follow the same limits.
+
+## The layout of the modules
+
+A module with children is a `name.rs` file next to a `name/` directory, and the crate has no `mod.rs` file.
+The one exception is `tests/common/mod.rs`, because Cargo compiles a `tests/common.rs` as a test binary of its own.
 
 ## Writing tests
 
