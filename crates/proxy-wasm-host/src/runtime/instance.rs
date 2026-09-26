@@ -68,10 +68,7 @@ impl Instance {
         let budget = Budget::new(limits, engine);
         let mut store = Store::new(engine.wasmtime(), HostState::new(abi));
         budget.refill(&mut store)?;
-        let mut builder = StoreLimitsBuilder::new()
-            .memories(1)
-            .tables(1)
-            .instances(1);
+        let mut builder = StoreLimitsBuilder::new().memories(1).tables(1).instances(1);
         if let Some(bytes) = limits.memory_bytes() {
             builder = builder.memory_size(bytes);
         }
@@ -600,6 +597,52 @@ mod tests {
         // Assert
         assert!(matches!(result, Err(Error::GuestExit { code: 7 })));
         assert!(instance.is_poisoned());
+    }
+
+    const GROWING_TABLE: &str = r#"(module
+        (memory (export "memory") 1)
+        (table 1 funcref)
+        (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+        (func (export "grow") (param i32) (result i32)
+            (table.grow (ref.null func) (local.get 0))))"#;
+
+    #[test]
+    fn a_module_with_a_second_memory_does_not_load() {
+        // Arrange
+        let engine = engine();
+        let wat = r#"(module
+            (memory (export "memory") 1)
+            (memory 1)
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024))"#;
+
+        // Act
+        let result = Module::new(&engine, &wat_bytes(wat));
+
+        // Assert
+        assert!(matches!(result, Err(Error::Compile { .. })), "{result:?}");
+    }
+
+    #[test]
+    fn a_table_cannot_grow_past_the_element_bound() {
+        // Arrange
+        let engine = engine();
+        let module = Module::new(&engine, &wat_bytes(GROWING_TABLE)).unwrap();
+        let limits = Limits::new().with_table_elements(100);
+        let mut instance =
+            Instance::new(&engine, &linker(&engine), &module, Box::new(()), &limits).unwrap();
+
+        // Act
+        let answers = (
+            instance.call::<i32, i32>("grow", 50).unwrap(),
+            instance.call::<i32, i32>("grow", 100).unwrap(),
+        );
+
+        // Assert
+        assert_eq!(
+            answers,
+            (1, -1),
+            "the first grow fits and the second is refused"
+        );
     }
 
     #[test]

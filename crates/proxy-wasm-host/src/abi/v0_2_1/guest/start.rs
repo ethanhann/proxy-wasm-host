@@ -50,11 +50,16 @@ impl Started {
 }
 
 impl Guest {
-    /// Creates a root context, runs `proxy_on_vm_start`, and runs
-    /// `proxy_on_configure` with `plugin`.
+    /// Creates a root context, runs `proxy_on_vm_start` if the VM has not
+    /// started, and runs `proxy_on_configure` with `plugin`.
     ///
     /// A root must pass three steps before it serves a request.
     /// This method runs them in one call.
+    /// The ABI starts the VM once, so the second root of a guest skips
+    /// `proxy_on_vm_start` and runs the configuration alone, and
+    /// [`Started::Refused`] with
+    /// [`Callback::VmStart`](crate::abi::v0_2_1::Callback::VmStart) can only
+    /// come from the first start.
     /// The method returns the guest to you whether the start succeeded or
     /// failed.
     /// After a refusal or a failure, [`Guest::open_callouts`] still lists the
@@ -116,11 +121,14 @@ fn run(
     plugin: PluginConfig,
 ) -> Result<Started, (Callback, GuestError)> {
     let failed = |callback| move |error| (callback, error);
-    if !scope.on_vm_start(root).map_err(failed(Callback::VmStart))? {
-        return Ok(Started::Refused {
-            root,
-            callback: Callback::VmStart,
-        });
+    if !scope.guest().vm_started() {
+        if !scope.on_vm_start(root).map_err(failed(Callback::VmStart))? {
+            return Ok(Started::Refused {
+                root,
+                callback: Callback::VmStart,
+            });
+        }
+        scope.mark_vm_started();
     }
     if !scope
         .on_configure(root, plugin)
@@ -176,6 +184,35 @@ mod tests {
             &Limits::default(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_second_start_runs_the_configuration_alone() {
+        // Arrange
+        let sink = Arc::new(RecordingSink::default());
+        let mut guest = guest(&engine(), &starter(ACCEPT, ACCEPT), &sink);
+        let first = guest
+            .start(PluginConfig::new().with_root_id(*b"http"))
+            .unwrap();
+
+        // Act
+        let started = guest.start(PluginConfig::new().with_root_id(*b"tcp"));
+
+        // Assert
+        assert_eq!(first, Started::Serving(ContextId::try_from(1).unwrap()));
+        assert_eq!(
+            started.unwrap(),
+            Started::Serving(ContextId::try_from(2).unwrap())
+        );
+        assert_eq!(
+            sink.entries(),
+            [
+                (LogLevel::Info, b"vm".to_vec()),
+                (LogLevel::Info, b"cf".to_vec()),
+                (LogLevel::Info, b"cf".to_vec()),
+            ],
+            "the VM started once, and each root was configured"
+        );
     }
 
     #[test]

@@ -140,4 +140,18 @@ mod tests {
         assert!(decode_path(&encodings[0]).is_empty());
         assert!(decode_path(&encodings[1]).is_empty());
     }
+
+    #[test]
+    fn a_trailing_empty_segment_does_not_survive_the_round_trip() {
+        // Arrange
+        let segments: [&[u8]; 2] = [b"a", b""];
+
+        let encoded = encode_path(&segments);
+
+        // Act
+        let decoded = decode_path(&encoded);
+
+        // Assert
+        assert_eq!(decoded, vec![b"a".as_slice()]);
+    }
 }

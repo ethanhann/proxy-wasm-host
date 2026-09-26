@@ -74,7 +74,7 @@ pub(super) fn proxy_get_header_map_size(
     return_size: i32,
 ) -> Result<(), Failure> {
     let map_type = MapType::try_from(map_id)?;
-    let return_size = GuestPtr::try_from(return_size)?;
+    let return_size = GuestPtr::from(return_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_size)?;
     let size = encoded_size_of(map(state, map_type, Access::Read)?);
@@ -91,8 +91,8 @@ pub(super) fn proxy_get_header_map_pairs(
     return_size: i32,
 ) -> Result<(), Failure> {
     let map_type = MapType::try_from(map_id)?;
-    let return_data = GuestPtr::try_from(return_data)?;
-    let return_size = GuestPtr::try_from(return_size)?;
+    let return_data = GuestPtr::from(return_data);
+    let return_size = GuestPtr::from(return_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_data)?;
     memory.read_u32(return_size)?;
@@ -126,8 +126,8 @@ pub(super) fn proxy_get_header_map_value(
 ) -> Result<(), Failure> {
     let map_type = MapType::try_from(map_id)?;
     let key = GuestSlice::try_from((key_data, key_size))?;
-    let return_data = GuestPtr::try_from(return_data)?;
-    let return_size = GuestPtr::try_from(return_size)?;
+    let return_data = GuestPtr::from(return_data);
+    let return_size = GuestPtr::from(return_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_data)?;
     memory.read_u32(return_size)?;

@@ -13,7 +13,7 @@ use crate::NotAllowed;
 ///
 /// `Vec<u8>` implements this trait, so a test or a simple embedder can lend a
 /// plain vector.
-/// The crate reads [`Buffer::len`] and clamps the range with [`clamp_range`]
+/// The crate reads [`Buffer::len`] and clamps the range with `clamp_range`
 /// before it calls you, so a `start` and a length you receive are inside the
 /// buffer even when the guest asked for the largest range the ABI allows.
 pub trait Buffer {
@@ -30,7 +30,7 @@ pub trait Buffer {
     /// The crate clamps the range before it calls this, so `start` and
     /// `max_size` are inside the buffer.
     /// If you call it yourself with a range you did not compute, use
-    /// [`clamp_range`], which cuts a range that runs past the end.
+    /// `clamp_range`, which cuts a range that runs past the end.
     fn copy_range_into(&self, start: usize, max_size: usize, out: &mut Vec<u8>);
 
     /// Copies up to `max_size` bytes that start at `start`.
@@ -52,7 +52,7 @@ pub trait Buffer {
     /// The crate clamps the range before it calls this, so an append arrives
     /// as an empty range at the end.
     /// If you call it yourself with a range you did not compute, use
-    /// [`clamp_range`], which cuts a range that runs past the end.
+    /// `clamp_range`, which cuts a range that runs past the end.
     ///
     /// # Errors
     ///

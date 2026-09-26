@@ -28,13 +28,12 @@ impl GuestPtr {
     }
 }
 
-impl TryFrom<i32> for GuestPtr {
-    type Error = MemoryError;
-
-    fn try_from(ptr: i32) -> Result<Self, MemoryError> {
-        u32::try_from(ptr)
-            .map(Self)
-            .map_err(|_| MemoryError::NegativePointer { ptr })
+impl From<i32> for GuestPtr {
+    /// Reads the raw bits as unsigned, because the ABI types every address
+    /// as unsigned and a guest memory above 2 GiB has addresses that arrive
+    /// negative.
+    fn from(ptr: i32) -> Self {
+        Self(ptr.cast_unsigned())
     }
 }
 
@@ -100,9 +99,7 @@ impl TryFrom<(i32, i32)> for GuestSlice {
     type Error = MemoryError;
 
     fn try_from((ptr, len): (i32, i32)) -> Result<Self, MemoryError> {
-        let ptr = GuestPtr::try_from(ptr)?;
-        let len = u32::try_from(len).map_err(|_| MemoryError::NegativeLength { len })?;
-        Self::new(ptr, len)
+        Self::new(GuestPtr::from(ptr), len.cast_unsigned())
     }
 }
 
@@ -244,26 +241,19 @@ mod tests {
     }
 
     #[test]
-    fn guest_ptr_accepts_non_negative_values_and_rejects_negative_ones() {
+    fn guest_ptr_reads_its_bits_as_an_unsigned_address() {
         // Arrange
         let values = [0, i32::MAX, -1];
 
         // Act
-        let results: Vec<_> = values.iter().map(|&v| GuestPtr::try_from(v)).collect();
+        let results: Vec<_> = values.iter().map(|&v| GuestPtr::from(v)).collect();
 
         // Assert
-        assert_eq!(
-            results,
-            vec![
-                Ok(ptr(0)),
-                Ok(ptr(2_147_483_647)),
-                Err(MemoryError::NegativePointer { ptr: -1 })
-            ]
-        );
+        assert_eq!(results, vec![ptr(0), ptr(2_147_483_647), ptr(u32::MAX)]);
     }
 
     #[test]
-    fn guest_slice_rejects_negative_and_overflowing_ranges_and_accepts_the_rest() {
+    fn guest_slice_rejects_an_overflowing_range_and_accepts_the_rest() {
         // Arrange
         let inputs = [(-1, 4), (4, -1), (i32::MAX, i32::MAX)];
 
@@ -274,8 +264,20 @@ mod tests {
             .collect();
 
         // Assert
-        assert_eq!(results[0], Err(MemoryError::NegativePointer { ptr: -1 }));
-        assert_eq!(results[1], Err(MemoryError::NegativeLength { len: -1 }));
+        assert_eq!(
+            results[0],
+            Err(MemoryError::RangeOverflow {
+                ptr: u32::MAX,
+                len: 4
+            })
+        );
+        assert_eq!(
+            results[1],
+            Err(MemoryError::RangeOverflow {
+                ptr: 4,
+                len: u32::MAX
+            })
+        );
         assert!(results[2].is_ok());
         assert_eq!(
             GuestSlice::new(ptr(u32::MAX), 1),

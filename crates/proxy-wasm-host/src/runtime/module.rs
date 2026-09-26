@@ -22,6 +22,14 @@ pub struct Module {
     exports: Arc<Exports>,
 }
 
+impl std::fmt::Debug for Module {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Module")
+            .field("abi_exports", &self.abi_exports())
+            .finish_non_exhaustive()
+    }
+}
+
 struct Exports {
     names: BTreeSet<String>,
     abi: Vec<String>,

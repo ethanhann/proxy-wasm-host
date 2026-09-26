@@ -117,7 +117,11 @@ mod tests {
         // Arrange
         let source = || -> Box<dyn std::error::Error + Send + Sync> { "refused".into() };
         let errors = [
-            Error::Memory(MemoryError::NegativePointer { ptr: -1 }),
+            Error::Memory(MemoryError::OutOfBounds {
+                ptr: 1,
+                len: 1,
+                memory_size: 1,
+            }),
             Error::ValueTooLarge { size: 1 },
             Error::AllocationFailed { size: 1 },
             Error::Compile { source: source() },
@@ -185,7 +189,11 @@ mod tests {
     fn errors_split_into_statuses_and_unwinds() {
         // Arrange
         let errors = [
-            Error::Memory(MemoryError::NegativePointer { ptr: -1 }),
+            Error::Memory(MemoryError::OutOfBounds {
+                ptr: 1,
+                len: 1,
+                memory_size: 1,
+            }),
             Error::ValueTooLarge { size: 5 },
             Error::AllocationFailed { size: 5 },
             Error::Poisoned,

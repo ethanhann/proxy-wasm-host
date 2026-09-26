@@ -41,8 +41,8 @@ pub(super) fn proxy_call_foreign_function(
 ) -> Result<(), Failure> {
     let name = GuestSlice::try_from((name_data, name_size))?;
     let arguments = GuestSlice::try_from((arguments_data, arguments_size))?;
-    let data_ptr = wanted(return_results_data)?;
-    let size_ptr = wanted(return_results_size)?;
+    let data_ptr = wanted(return_results_data);
+    let size_ptr = wanted(return_results_size);
     let (memory, state) = split(ctx)?;
     if let Some(pointer) = data_ptr {
         memory.read_u32(pointer)?;
@@ -70,11 +70,8 @@ pub(super) fn proxy_call_foreign_function(
 ///
 /// The ABI document calls the return values of this function optional, and
 /// the address zero is how a guest says so.
-fn wanted(pointer: i32) -> Result<Option<GuestPtr>, Failure> {
-    if pointer == 0 {
-        return Ok(None);
-    }
-    Ok(Some(GuestPtr::try_from(pointer)?))
+fn wanted(pointer: i32) -> Option<GuestPtr> {
+    (pointer != 0).then(|| GuestPtr::from(pointer))
 }
 
 #[cfg(test)]

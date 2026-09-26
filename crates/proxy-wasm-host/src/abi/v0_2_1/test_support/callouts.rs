@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::test_support::{RecordingSink, instance_with_limits, wat_bytes};
+use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{
     Callback, CalloutId, Callouts, ContextId, GrpcCall, GrpcOpenRefusal, GrpcStream, HttpCall,
     HttpCallRefusal, Invocation, VmServices,
@@ -111,12 +112,19 @@ impl Callouts for RecordingCallouts {
         self.grpc_refusal.map_or(Ok(()), Err)
     }
 
-    fn grpc_send(&self, call: Invocation, callout: CalloutId, message: &[u8], end_of_stream: bool) {
+    fn grpc_send(
+        &self,
+        call: Invocation,
+        callout: CalloutId,
+        message: &[u8],
+        end_of_stream: bool,
+    ) -> Result<(), Status> {
         let ask = GrpcAsk::Send {
             message: message.to_vec(),
             end_of_stream,
         };
         self.record_grpc(call, callout, ask);
+        Ok(())
     }
 
     fn grpc_cancel(&self, call: Invocation, callout: CalloutId) {

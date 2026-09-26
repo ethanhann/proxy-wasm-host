@@ -53,7 +53,7 @@ pub(super) fn proxy_http_call(
     let headers = GuestSlice::try_from((serialized_headers_data, serialized_headers_size))?;
     let body = GuestSlice::try_from((body_data, body_size))?;
     let trailers = GuestSlice::try_from((serialized_trailers_data, serialized_trailers_size))?;
-    let id_ptr = GuestPtr::try_from(return_call_id)?;
+    let id_ptr = GuestPtr::from(return_call_id);
     let timeout = Duration::from_millis(u64::from(timeout.cast_unsigned()));
     let (mut memory, state) = split(ctx)?;
     memory.read_u32(id_ptr)?;
@@ -131,9 +131,9 @@ pub(super) fn proxy_get_status(
     return_status_message_data: i32,
     return_status_message_size: i32,
 ) -> Result<(), Failure> {
-    let code_ptr = GuestPtr::try_from(return_status_code)?;
-    let data_ptr = GuestPtr::try_from(return_status_message_data)?;
-    let size_ptr = GuestPtr::try_from(return_status_message_size)?;
+    let code_ptr = GuestPtr::from(return_status_code);
+    let data_ptr = GuestPtr::from(return_status_message_data);
+    let size_ptr = GuestPtr::from(return_status_message_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(code_ptr)?;
     memory.read_u32(data_ptr)?;

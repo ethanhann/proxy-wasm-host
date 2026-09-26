@@ -47,9 +47,9 @@ pub(super) fn proxy_get_shared_data(
     return_cas: i32,
 ) -> Result<(), Failure> {
     let key = GuestSlice::try_from((key_data, key_size))?;
-    let data_ptr = GuestPtr::try_from(return_value_data)?;
-    let size_ptr = GuestPtr::try_from(return_value_size)?;
-    let cas_ptr = GuestPtr::try_from(return_cas)?;
+    let data_ptr = GuestPtr::from(return_value_data);
+    let size_ptr = GuestPtr::from(return_value_size);
+    let cas_ptr = GuestPtr::from(return_cas);
     let (memory, state) = split(ctx)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;

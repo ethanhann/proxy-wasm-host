@@ -21,9 +21,9 @@ pub(crate) mod test_support;
 
 pub use engine::{Engine, EngineConfig};
 pub(crate) use instance::Instance;
-pub use limits::Limits;
 #[cfg(test)]
 pub(crate) use limits::DEFAULT_MAX_OPEN_CALLOUTS;
+pub use limits::Limits;
 pub(crate) use memory::{GuestMemory, GuestPtr, GuestSlice};
 pub use module::Module;
 

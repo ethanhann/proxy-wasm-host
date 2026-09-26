@@ -1,5 +1,6 @@
 //! The engine that compiles modules and drives the epoch clock.
 
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -13,9 +14,9 @@ const DEFAULT_EPOCH_PERIOD: Duration = Duration::from_millis(10);
 
 /// The settings of an [`Engine`].
 ///
-/// Fuel metering and the wasm stack size are engine properties in wasmtime.
+/// Fuel metering and the Wasm stack size are engine properties in wasmtime.
 /// They live here and not in [`crate::Limits`].
-/// The struct is non exhaustive, so build it with [`EngineConfig::new`] and
+/// The struct is non-exhaustive, so build it with [`EngineConfig::new`] and
 /// the `with_*` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -38,8 +39,8 @@ impl Default for EngineConfig {
 }
 
 impl EngineConfig {
-    /// A ten millisecond epoch period, the built in ticker, fuel off, and
-    /// the default wasm stack.
+    /// A ten millisecond epoch period, the built-in ticker, fuel off, and
+    /// the default Wasm stack.
     pub fn new() -> Self {
         Self::default()
     }
@@ -76,7 +77,7 @@ impl EngineConfig {
         self
     }
 
-    /// Sets the wasm stack size in bytes, or restores the default with
+    /// Sets the Wasm stack size in bytes, or restores the default with
     /// `None`.
     #[must_use]
     pub fn with_max_wasm_stack(mut self, bytes: impl Into<Option<usize>>) -> Self {
@@ -136,6 +137,16 @@ pub struct Engine {
     inner: Arc<EngineInner>,
 }
 
+impl fmt::Debug for Engine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Engine")
+            .field("epoch_period", &self.epoch_period())
+            .field("fuel_enabled", &self.fuel_enabled())
+            .field("has_ticker", &self.has_ticker())
+            .finish_non_exhaustive()
+    }
+}
+
 struct EngineInner {
     engine: wasmtime::Engine,
     config: EngineConfig,
@@ -170,7 +181,7 @@ impl Engine {
 
     /// Advances the epoch by one tick.
     ///
-    /// The built in ticker calls this every epoch period.
+    /// The built-in ticker calls this every epoch period.
     /// Call it yourself only when you built the engine with external ticks.
     pub fn increment_epoch(&self) {
         self.inner.engine.increment_epoch();
@@ -328,6 +339,21 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Err(Error::Config { .. })));
+    }
+
+    #[test]
+    fn a_setting_wasmtime_rejects_is_a_configuration_error() {
+        // Arrange
+        let config = EngineConfig::new().with_max_wasm_stack(0);
+
+        // Act
+        let result = config.build();
+
+        // Assert
+        assert!(
+            matches!(result, Err(Error::Config { ref message, .. }) if message.contains("stack")),
+            "{result:?}"
+        );
     }
 
     #[test]

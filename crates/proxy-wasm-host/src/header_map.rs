@@ -26,6 +26,9 @@ pub trait HeaderMap {
     ///
     /// A map that stores its values returns a borrow.
     /// A map that computes them returns an owned value.
+    /// The crate passes this value to the guest unchanged for
+    /// `proxy_get_header_map_value`, so a map that joins repeated values
+    /// with a comma, as some hosts do, makes that choice here.
     fn get(&self, key: &[u8]) -> Option<Cow<'_, [u8]>>;
 
     /// Calls `f` with every pair in order until `f` breaks.
@@ -118,7 +121,6 @@ pub trait HeaderMapExt: HeaderMap {
         });
         pairs
     }
-
 }
 
 impl<M: HeaderMap + ?Sized> HeaderMapExt for M {}
@@ -514,10 +516,16 @@ mod tests {
             computed.pairs(),
             computed.get(b"x-computed").map(Cow::into_owned),
             computed.set(b"k", b"v"),
+            (computed.len(), computed.is_empty()),
         );
 
         // Assert
         assert_eq!(observed.0, owned_str(&[("x-computed", "yes-10")]));
+        assert_eq!(
+            observed.3,
+            (1, false),
+            "the default bodies count through the visitor"
+        );
         assert_eq!(observed.1, Some(b"yes-10".to_vec()));
         assert_eq!(observed.2, Err(NotAllowed));
         assert_eq!(

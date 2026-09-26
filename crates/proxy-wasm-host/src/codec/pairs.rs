@@ -460,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn hand_written_maps_round_trip() {
+    fn handwritten_maps_round_trip() {
         // Arrange
         let maps: Vec<Vec<(Vec<u8>, Vec<u8>)>> = vec![
             owned(&[]),
@@ -553,6 +553,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_source_that_changes_between_the_two_passes_is_refused() {
+        // Arrange
+        let mut passes = 0;
+        let mut source = |visitor: &mut PairVisitor<'_>| {
+            passes += 1;
+            let _ = visitor(b"k", b"v");
+            if passes == 1 {
+                let _ = visitor(b"k2", b"v2");
+            }
+            ControlFlow::Continue(())
+        };
+
+        // Act
+        let result = encode_visited(&mut source);
+
+        // Assert
+        assert_eq!(result, Err(EncodeError::Changed));
     }
 
     #[test]
@@ -830,7 +850,7 @@ mod tests {
                 "key",
                 "value",
                 "pair 2 value is not terminated by 0x00",
-                "7 pairs exceeds u32::MAX",
+                "7 pairs exceed u32::MAX",
             ]
         );
     }

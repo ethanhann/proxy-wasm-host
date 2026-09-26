@@ -33,7 +33,7 @@ pub(crate) fn allocate(
     })?;
     match allocator.call(&mut *ctx, requested) {
         Ok(0) => Err(Error::AllocationFailed { size }),
-        Ok(address) => Ok(GuestPtr::try_from(address)?),
+        Ok(address) => Ok(GuestPtr::from(address)),
         Err(error) => Err(fail(ctx.as_context_mut().data_mut(), error)),
     }
 }

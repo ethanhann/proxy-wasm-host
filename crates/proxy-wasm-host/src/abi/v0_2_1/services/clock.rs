@@ -1,4 +1,4 @@
-//! The time a guest reads, and the clock the crate uses when you name none.
+//! The time a guest reads, and the clock the crate uses when you set none.
 
 use std::sync::OnceLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};

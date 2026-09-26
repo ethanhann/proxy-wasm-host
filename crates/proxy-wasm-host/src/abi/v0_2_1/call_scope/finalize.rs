@@ -23,6 +23,7 @@ impl<H: StreamState> CallScope<'_, H> {
     /// [common runtime failures](CallScope#the-common-runtime-failures).
     pub fn on_done(&mut self, context: ContextId) -> Result<bool, GuestError> {
         self.guest.require_live()?;
+        self.require_served_stream(context)?;
         prologue::require(self.guest, context)?;
         let value = prologue::run(
             self.guest,
@@ -56,6 +57,7 @@ impl<H: StreamState> CallScope<'_, H> {
     /// [common runtime failures](CallScope#the-common-runtime-failures).
     pub fn on_log(&mut self, context: ContextId) -> Result<(), GuestError> {
         self.guest.require_live()?;
+        self.require_served_stream(context)?;
         prologue::require_done(self.guest, context)?;
         prologue::run(
             self.guest,
@@ -104,6 +106,7 @@ impl<H: StreamState> CallScope<'_, H> {
     /// each one and build a new guest.
     pub fn on_delete(&mut self, context: ContextId) -> Result<Vec<CalloutId>, GuestError> {
         self.guest.require_live()?;
+        self.require_served_stream(context)?;
         prologue::require_deletable(self.guest, context)?;
         self.mark_deleting(Some(context));
         let ended = self.delete(context);

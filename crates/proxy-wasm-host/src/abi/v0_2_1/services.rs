@@ -1,4 +1,4 @@
-//! The services and the VM scoped inputs an embedder gives to a guest.
+//! The services and the VM-scoped inputs an embedder gives to a guest.
 
 use std::sync::Arc;
 
@@ -11,7 +11,6 @@ pub use log_context::LogContext;
 use crate::abi::v0_2_1::callout_service::NoCallouts;
 use crate::abi::v0_2_1::types::LogLevel;
 use crate::abi::v0_2_1::{Callouts, InMemoryStore, SharedServices};
-
 
 /// Where guest log output goes.
 ///
@@ -32,10 +31,11 @@ pub trait LogSink: Send + Sync {
     fn log(&self, context: LogContext<'_>, level: LogLevel, message: &[u8]);
 }
 
-/// What the host performs for a guest, and the VM scoped inputs the guest
+/// What the host performs for a guest, and the VM-scoped inputs the guest
 /// reads.
 ///
-/// The services are the log sink and the clock.
+/// The services are the log sink, the clock, the shared services, and the
+/// callouts service.
 /// The inputs are the environment variables, the VM id, the VM configuration,
 /// and the log level the guest can ask for.
 /// Build one per instance and pass it to [`Guest::new`](crate::abi::v0_2_1::Guest::new).
@@ -74,7 +74,7 @@ impl std::fmt::Debug for VmServices {
 
 impl VmServices {
     /// Services that log to `log`, read [`SystemClock`], report
-    /// [`LogLevel::Info`], hold a [`InMemoryStore`], and have no
+    /// [`LogLevel::Info`], hold an [`InMemoryStore`], and have no
     /// environment, no VM id, and no VM configuration.
     ///
     /// The store this installs is private to the value you get back, so two
@@ -200,7 +200,6 @@ impl VmServices {
     pub fn callouts(&self) -> &Arc<dyn Callouts> {
         &self.callouts
     }
-
 
     /// The shared data, the shared queues, and the metrics.
     ///

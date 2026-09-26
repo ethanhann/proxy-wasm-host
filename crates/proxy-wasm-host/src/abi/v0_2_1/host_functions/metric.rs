@@ -12,6 +12,7 @@ use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::MetricId;
+use crate::abi::v0_2_1::SharedName;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::bounds::{within_name_bytes, within_shared_names};
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, settle, with_shared};
@@ -27,19 +28,23 @@ pub(super) fn proxy_define_metric(
 ) -> Result<(), Failure> {
     let kind = MetricType::try_from(metric_type)?;
     let name = GuestSlice::try_from((name_data, name_size))?;
-    let return_metric_id = GuestPtr::try_from(return_metric_id)?;
+    let return_metric_id = GuestPtr::from(return_metric_id);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_metric_id)?;
     let name = memory.read(name)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
     within_name_bytes(state, name, Status::InternalFailure)?;
-    within_shared_names(state)?;
+    let held = SharedName::Metric(i32::from(kind), name.to_vec());
+    if !state.abi().holds_shared_name(&held) {
+        within_shared_names(state)?;
+    }
     let vm_id = state.abi().services().vm_id();
     let metric = from_embedder(
         "define_metric",
         shared.define_metric(call, vm_id, kind, name),
     )?;
     state.abi_mut().grant_metric(metric);
+    state.abi_mut().hold_shared_name(held);
     let (mut memory, _) = split(ctx)?;
     memory.write_u32(return_metric_id, metric.get())?;
     Ok(())
@@ -87,7 +92,7 @@ pub(super) fn proxy_get_metric(
     return_value: i32,
 ) -> Result<(), Failure> {
     let metric = MetricId::try_from(metric_id.cast_unsigned()).map_err(|_| Status::NotFound)?;
-    let return_value = GuestPtr::try_from(return_value)?;
+    let return_value = GuestPtr::from(return_value);
     let (memory, state) = split(ctx)?;
     memory.read_u64(return_value)?;
     settle(state);
@@ -443,6 +448,30 @@ mod tests {
             1,
             "the store must not create a metric the crate refuses"
         );
+    }
+
+    #[test]
+    fn a_metric_the_guest_holds_is_accepted_at_the_limit() {
+        // Arrange
+        let engine = engine();
+        let recording = Arc::new(RecordingServices::new());
+        let limits = Limits::default().with_max_shared_names(2);
+        let (mut instance, _) =
+            shared_hosted_with_limits(&engine, GUEST, recording.clone(), &limits);
+        let kind = i32::from(MetricType::Counter);
+        assert_eq!(define(&mut instance, kind, b"first"), Status::Ok);
+        assert_eq!(define(&mut instance, kind, b"second"), Status::Ok);
+
+        // Act
+        let result = define(&mut instance, kind, b"first");
+
+        // Assert
+        assert_eq!(
+            result,
+            Status::Ok,
+            "the guest holds the name, so the limit is not spent"
+        );
+        assert_eq!(recording.calls().len(), 3, "the store answers the repeat");
     }
 
     #[test]

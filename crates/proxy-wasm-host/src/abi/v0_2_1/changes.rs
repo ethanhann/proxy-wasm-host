@@ -12,6 +12,9 @@ use crate::abi::v0_2_1::{ContextId, QueueId};
 /// Read [`Guest::take_changes`](crate::abi::v0_2_1::Guest::take_changes)
 /// after a group of callbacks.
 /// It saves you a question to each root.
+/// A context the guest finished with `proxy_done` is not reported here.
+/// Read [`Guest::context_state`](crate::abi::v0_2_1::Guest::context_state)
+/// for a context that answered false from `proxy_on_done`.
 ///
 /// The value holds one entry for each root and one for each registration, so
 /// its size does not depend on how many times the guest made the same

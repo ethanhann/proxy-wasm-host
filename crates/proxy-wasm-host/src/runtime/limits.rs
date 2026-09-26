@@ -1,4 +1,4 @@
-//! The per instance resource limits.
+//! The per-instance resource limits.
 
 use std::time::Duration;
 
@@ -23,7 +23,7 @@ const DEFAULT_TABLE_ELEMENTS: usize = 10_000;
 /// The last three bound the queues and the metrics one guest holds, the
 /// bytes of one name or key a guest sends, and the bytes of one line a guest
 /// logs.
-/// The struct is non exhaustive, so build it with [`Limits::new`] and the
+/// The struct is non-exhaustive, so build it with [`Limits::new`] and the
 /// `with_*` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -66,6 +66,11 @@ impl Limits {
     }
 
     /// Sets the CPU time each guest call may use.
+    ///
+    /// The engine measures it in epochs of wall clock time, so a call that
+    /// waits inside a host function of yours spends the budget without using
+    /// a processor, and the bound is reached between the time you set and
+    /// that time plus one epoch period.
     #[must_use]
     pub fn with_cpu_time(mut self, cpu_time: Duration) -> Self {
         self.cpu_time = cpu_time;

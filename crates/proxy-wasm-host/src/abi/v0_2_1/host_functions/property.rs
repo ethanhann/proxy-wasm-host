@@ -11,6 +11,7 @@ use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::PluginConfig;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::Served;
+use crate::abi::v0_2_1::host_functions::bounds::within_name_bytes;
 use crate::abi::v0_2_1::host_functions::call::{context, from_embedder, with_stream};
 use crate::abi::v0_2_1::types::Status;
 use crate::codec::path::decode_path;
@@ -77,12 +78,14 @@ pub(super) fn proxy_get_property(
     return_value_size: i32,
 ) -> Result<(), Failure> {
     let path = GuestSlice::try_from((path_data, path_size))?;
-    let data_ptr = GuestPtr::try_from(return_value_data)?;
-    let size_ptr = GuestPtr::try_from(return_value_size)?;
+    let data_ptr = GuestPtr::from(return_value_data);
+    let size_ptr = GuestPtr::from(return_value_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
-    let path = decode_path(memory.read(path)?);
+    let raw = memory.read(path)?;
+    within_name_bytes(state, raw, Status::NotFound)?;
+    let path = decode_path(raw);
     let value = match served(&path) {
         Served::Crate(name) => well_known(state, name)?,
         Served::Embedder => {
@@ -106,7 +109,9 @@ pub(super) fn proxy_set_property(
     let path = GuestSlice::try_from((path_data, path_size))?;
     let value = GuestSlice::try_from((value_data, value_size))?;
     let (memory, state) = split(ctx)?;
-    let path = decode_path(memory.read(path)?);
+    let raw = memory.read(path)?;
+    within_name_bytes(state, raw, Status::NotFound)?;
+    let path = decode_path(raw);
     let value = memory.read(value)?;
     match served(&path) {
         Served::Crate(_) => Err(Status::NotFound.into()),
@@ -266,6 +271,27 @@ mod tests {
         let (call, path) = &stream.property_reads()[0];
         assert_eq!(call.context.get(), 1);
         assert_eq!(path, &vec![b"route".to_vec(), b"name".to_vec()]);
+    }
+
+    #[test]
+    fn a_path_over_the_name_bound_is_not_found_before_the_stream_state_is_asked() {
+        // Arrange
+        let engine = engine();
+        let (mut instance, _) = hosted(&engine, GUEST, RecordingStream::new());
+        let path = vec![0u8; 4097];
+        let (_, len) = write(&mut instance, PATH, &path);
+
+        // Act
+        let result = status(
+            instance
+                .call::<(i32, i32, i32, i32), i32>("get", (PATH, len, RETURN_DATA, RETURN_SIZE))
+                .unwrap(),
+        );
+
+        // Assert
+        assert_eq!(result, Status::NotFound);
+        let stream = RecordingStream::take(instance.state_mut());
+        assert!(stream.property_reads().is_empty());
     }
 
     #[test]

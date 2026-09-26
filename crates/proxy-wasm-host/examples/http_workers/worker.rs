@@ -95,7 +95,9 @@ impl Worker {
                 match self.rebuild() {
                     Ok(()) => {}
                     Err(Failure::Build(error)) => {
-                        tracing::error!("the build failed, and this worker waits: {error}");
+                        tracing::error!("the build failed, and this worker stops: {error}");
+                        self.routes.forget(self.index);
+                        return;
                     }
                     Err(Failure::Refused(callback)) => {
                         tracing::error!("the plugin refused its start in {callback}");
@@ -143,11 +145,12 @@ impl Worker {
             scope.expect_stream_kind(stream, StreamKind::Http)?;
             let count = u32::try_from(scope.stream().headers.len()).unwrap_or(u32::MAX);
             let action = scope.on_request_headers(stream, count, true)?;
-            if !scope.on_done(stream)? {
-                tracing::info!("the guest holds the context, and the example deletes it anyway");
+            if scope.on_done(stream)? {
+                scope.on_log(stream)?;
+                scope.on_delete(stream)?;
+            } else {
+                tracing::info!("the guest holds the context, and this example never deletes it");
             }
-            scope.on_log(stream)?;
-            scope.on_delete(stream)?;
             Ok::<_, GuestError>(action)
         });
         match answer {

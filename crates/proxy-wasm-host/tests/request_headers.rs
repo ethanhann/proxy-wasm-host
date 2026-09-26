@@ -14,10 +14,10 @@ use proxy_wasm_host::abi::v0_2_1::{
     Access, ContextId, Guest, GuestError, Host, Invocation, LogContext, LogSink, PluginConfig,
     StreamState, VmServices,
 };
-use proxy_wasm_host::{HeaderMapExt, PairVisitor};
 use proxy_wasm_host::{
     AbiVersion, Engine, Error, HeaderMap, Limits, Module, NotAllowed, VecHeaderMap,
 };
+use proxy_wasm_host::{HeaderMapExt, PairVisitor};
 
 const RUST_SDK: &[u8] = include_bytes!("fixtures/add-request-header.wasm");
 const TINYGO: &[u8] = include_bytes!("fixtures/add-request-header-tinygo.wasm");

@@ -1,9 +1,9 @@
 //! What a guest exports beside the ABI's own callbacks.
 
 use crate::Error;
-use crate::abi::v0_2_1::{AbiAccess, Guest};
 #[cfg(test)]
 use crate::abi::v0_2_1::GuestError;
+use crate::abi::v0_2_1::{AbiAccess, Guest};
 
 /// Every callback and every allocator the ABI defines starts with this.
 #[cfg(test)]
@@ -31,7 +31,7 @@ impl Guest {
     /// longer serve.
     /// A guest is out of service when it is poisoned and when its VM start
     /// refused, because every later callback of that guest answers
-    /// [`GuestError::GuestRejected`].
+    /// [`GuestError::GuestRejected`](crate::abi::v0_2_1::GuestError::GuestRejected).
     /// [`Guest::is_poisoned`] answers false for a refused VM start, so check
     /// this method in a pool.
     pub fn is_serving(&self) -> bool {

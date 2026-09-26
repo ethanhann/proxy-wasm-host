@@ -75,7 +75,6 @@ macro_rules! host_functions {
             )*
         ];
 
-        /// Registers every host function under the `env` module.
         /// Registers the WASI functions and then every host function under
         /// the `env` module.
         ///

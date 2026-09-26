@@ -6,6 +6,7 @@ mod counting;
 mod exports;
 pub(crate) mod identity;
 mod recovery;
+mod scope;
 pub(crate) mod start;
 
 use std::fmt;
@@ -16,7 +17,7 @@ use crate::abi::AbiVersion;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::VmServices;
 use crate::abi::v0_2_1::guest_spec::BuildCounters;
-use crate::abi::v0_2_1::{CallScope, Callback, GuestError, Host, NoStream, StreamState};
+use crate::abi::v0_2_1::{Callback, GuestError, Host, StreamState};
 use crate::runtime::{Instance, Limits, Module};
 use callbacks::Callbacks;
 pub(crate) use callbacks::Select;
@@ -27,13 +28,13 @@ use wasmtime::{WasmParams, WasmResults};
 ///
 /// `Guest` wraps an instance, checks the module's ABI version before it
 /// is instantiated, resolves the callbacks once, and owns the context table.
-/// You drive the guest through a [`CallScope`].
+/// You drive the guest through a [`CallScope`](crate::abi::v0_2_1::CallScope).
 ///
 /// A root context is created first, because both SDKs look it up by the
 /// first parameter of `proxy_on_vm_start`.
 /// The stream state you give to [`Guest::enter`] is owned for the duration of
 /// the scope and must be `'static`, so move your request state in and take it
-/// back with [`CallScope::finish`].
+/// back with [`CallScope::finish`](crate::abi::v0_2_1::CallScope::finish).
 /// [`Guest::with`] does both for you, and it gives the request back when
 /// your code returns early.
 ///
@@ -195,44 +196,6 @@ impl Guest {
         &mut self.instance
     }
 
-    /// Runs a group of callbacks and gives the stream state back.
-    ///
-    /// Sometimes a callback fails in the middle of a group, and you want the
-    /// request back with the error.
-    /// With [`Guest::enter`], a question mark between `enter` and
-    /// [`CallScope::finish`] returns from your function before `finish` runs,
-    /// and the request stays on the guest until you call
-    /// [`Guest::take_stream`].
-    /// With this method, a question mark returns from the closure only, and
-    /// the tuple has both the answer of the closure and the request.
-    ///
-    /// For example, `request` comes back when `on_request_headers` fails:
-    ///
-    /// ```
-    /// # use proxy_wasm_host::abi::v0_2_1::types::Action;
-    /// # use proxy_wasm_host::abi::v0_2_1::{ContextId, Guest, GuestError, StreamState};
-    /// fn headers<H: StreamState>(
-    ///     guest: &mut Guest,
-    ///     stream: ContextId,
-    ///     request: H,
-    /// ) -> (Result<Action, GuestError>, H) {
-    ///     guest.with(request, |scope| {
-    ///         let action = scope.on_request_headers(stream, 0, false)?;
-    ///         scope.on_done(stream)?;
-    ///         Ok(action)
-    ///     })
-    /// }
-    /// ```
-    pub fn with<H: StreamState, R>(
-        &mut self,
-        stream: H,
-        body: impl FnOnce(&mut CallScope<'_, H>) -> R,
-    ) -> (R, H) {
-        let mut scope = self.enter(stream);
-        let answer = body(&mut scope);
-        (answer, scope.finish())
-    }
-
     /// The services this guest runs against.
     pub fn services(&self) -> &VmServices {
         self.instance.state().abi().services()
@@ -247,47 +210,20 @@ impl Guest {
         self.instance.state_mut().abi_mut().services_mut()
     }
 
+    pub(crate) fn vm_started(&self) -> bool {
+        self.instance.state().abi().vm_started()
+    }
+
+    pub(crate) fn mark_vm_started(&mut self) {
+        self.instance.state_mut().abi_mut().mark_vm_started();
+    }
+
     /// Whether the guest exports `callback`.
     ///
     /// A callback the guest does not export returns its default answer
     /// without entering the guest.
     pub fn exports_callback(&self, callback: Callback) -> bool {
         self.callbacks.exports(callback)
-    }
-
-    /// Lends `stream` to the guest for a group of callbacks.
-    ///
-    /// The guest owns the value until [`CallScope::finish`] returns it or
-    /// the scope drops, and the value must be `'static`, because wasmtime
-    /// requires that of store data.
-    /// Move your request state in and take it back out rather than lending a
-    /// borrow.
-    /// For the callbacks of a root context, which have no request,
-    /// [`Guest::enter_root`] enters with [`NoStream`].
-    /// The value replaces any stream state a forgotten scope left installed.
-    /// A value that a dropped scope left for [`Guest::take_stream`] is dropped
-    /// here, so take it back before you enter again.
-    pub fn enter<H: StreamState>(&mut self, stream: H) -> CallScope<'_, H> {
-        self.discard_detached();
-        self.instance
-            .state_mut()
-            .abi_mut()
-            .set_stream_state(Box::new(stream));
-        CallScope::new(self)
-    }
-
-    /// A scope with no stream, for the callbacks of a root context.
-    ///
-    /// [`NoStream`] serves nothing, so a root context that reads a property
-    /// or calls a foreign function reports the unavailable status of that
-    /// family to the guest.
-    /// A callout from a root works in this scope, because your
-    /// [`Callouts`](crate::abi::v0_2_1::Callouts) service receives it and no
-    /// stream state is asked.
-    /// If your root does either, enter the scope with a value of your own
-    /// through [`Guest::enter`] instead of this shortcut.
-    pub fn enter_root(&mut self) -> CallScope<'_, NoStream> {
-        self.enter(NoStream)
     }
 
     /// Calls the cached callback that `select` picks, or answers `default`

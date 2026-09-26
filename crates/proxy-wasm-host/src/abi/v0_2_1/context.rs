@@ -14,6 +14,10 @@ use std::num::NonZeroU32;
 /// The identifier of a root context or a stream context.
 ///
 /// Zero is never a context, because the ABI uses it for the absent parent.
+/// The crate numbers the contexts of a guest from one and reuses no number,
+/// so a guest that creates more than four billion contexts in its life meets
+/// [`GuestError::ContextIdsExhausted`](crate::abi::v0_2_1::GuestError::ContextIdsExhausted),
+/// and a pool replaces that guest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ContextId(NonZeroU32);
 

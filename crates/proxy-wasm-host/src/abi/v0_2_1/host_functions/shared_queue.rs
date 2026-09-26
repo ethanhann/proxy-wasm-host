@@ -10,11 +10,11 @@
 use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::AbiAccess;
-use crate::abi::v0_2_1::QueueId;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::bounds::{within_name_bytes, within_shared_names};
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, settle, with_shared};
 use crate::abi::v0_2_1::types::Status;
+use crate::abi::v0_2_1::{QueueId, SharedName};
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
 
 pub(super) fn proxy_register_shared_queue(
@@ -24,19 +24,23 @@ pub(super) fn proxy_register_shared_queue(
     return_queue_id: i32,
 ) -> Result<(), Failure> {
     let name = GuestSlice::try_from((name_data, name_size))?;
-    let return_queue_id = GuestPtr::try_from(return_queue_id)?;
+    let return_queue_id = GuestPtr::from(return_queue_id);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_queue_id)?;
     let name = memory.read(name)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
     within_name_bytes(state, name, Status::InternalFailure)?;
-    within_shared_names(state)?;
+    let held = SharedName::Registered(name.to_vec());
+    if !state.abi().holds_shared_name(&held) {
+        within_shared_names(state)?;
+    }
     let vm_id = state.abi().services().vm_id();
     let queue = from_embedder(
         "register_shared_queue",
         shared.register_shared_queue(call, vm_id, name),
     )?;
     state.abi_mut().grant_queue(queue);
+    state.abi_mut().hold_shared_name(held);
     if let Some(root) = state.abi().contexts().root_of(call.context) {
         state.abi_mut().register_queue(queue, root, name);
     }
@@ -55,24 +59,28 @@ pub(super) fn proxy_resolve_shared_queue(
 ) -> Result<(), Failure> {
     let vm_id = GuestSlice::try_from((vm_id_data, vm_id_size))?;
     let name = GuestSlice::try_from((name_data, name_size))?;
-    let return_queue_id = GuestPtr::try_from(return_queue_id)?;
+    let return_queue_id = GuestPtr::from(return_queue_id);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_queue_id)?;
     let vm_id = memory.read(vm_id)?;
     let name = memory.read(name)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
     within_name_bytes(state, name, Status::InternalFailure)?;
-    within_shared_names(state)?;
     // The C++ host reads an empty VM id as the VM of the caller.
     let vm_id = if vm_id.is_empty() {
         state.abi().services().vm_id()
     } else {
         vm_id
     };
+    let held = SharedName::Resolved(vm_id.to_vec(), name.to_vec());
+    if !state.abi().holds_shared_name(&held) {
+        within_shared_names(state)?;
+    }
     let queue = from_embedder(
         "resolve_shared_queue",
         shared.resolve_shared_queue(call, vm_id, name),
     )?;
+    state.abi_mut().hold_shared_name(held);
     state.abi_mut().grant_queue(queue);
     let (mut memory, _) = split(ctx)?;
     memory.write_u32(return_queue_id, queue.get())?;
@@ -107,8 +115,8 @@ pub(super) fn proxy_dequeue_shared_queue(
     return_value_size: i32,
 ) -> Result<(), Failure> {
     let queue = QueueId::try_from(queue_id.cast_unsigned()).map_err(|_| Status::NotFound)?;
-    let data_ptr = GuestPtr::try_from(return_value_data)?;
-    let size_ptr = GuestPtr::try_from(return_value_size)?;
+    let data_ptr = GuestPtr::from(return_value_data);
+    let size_ptr = GuestPtr::from(return_value_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
@@ -682,6 +690,27 @@ mod tests {
             result,
             Status::Ok,
             "the count is of identifiers, so the repeat spent nothing"
+        );
+    }
+
+    #[test]
+    fn a_queue_the_guest_holds_is_accepted_at_the_limit() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let limits = Limits::default().with_max_shared_names(2);
+        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, shared, &limits);
+        assert_eq!(register(&mut instance, b"first"), Status::Ok);
+        assert_eq!(register(&mut instance, b"second"), Status::Ok);
+
+        // Act
+        let result = register(&mut instance, b"first");
+
+        // Assert
+        assert_eq!(
+            result,
+            Status::Ok,
+            "the guest holds the name, so the limit is not spent"
         );
     }
 

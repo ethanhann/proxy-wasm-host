@@ -66,7 +66,14 @@ struct Metrics {
 ///
 /// A histogram takes an observation and keeps no value, because the ABI gives
 /// a guest no way to read one back, and a read of a histogram reports
-/// [`Status::BadArgument`], which is what the reference host does.
+/// [`Status::BadArgument`], which is what the most widely used Proxy-Wasm
+/// host does.
+///
+/// The store gives you no read of the metrics a guest records.
+/// To export them, wrap the store in a [`SharedServices`] of your own that
+/// forwards every method and observes `define_metric`, `record_metric`, and
+/// `increment_metric` on the way through, so your metric sink sees each
+/// name and each value.
 #[derive(Debug, Default)]
 pub struct InMemoryStore {
     data: Mutex<BTreeMap<Key, (Vec<u8>, NonZeroU32)>>,

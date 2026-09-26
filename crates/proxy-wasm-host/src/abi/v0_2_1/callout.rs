@@ -110,7 +110,7 @@ impl fmt::Display for CalloutProblem {
 pub struct OpenCallout {
     /// The identifier of the callout.
     pub callout: CalloutId,
-    /// The context that made the call, which you name when you deliver the
+    /// The context that made the call, which you pass when you deliver the
     /// result.
     pub caller: ContextId,
     /// The root of the caller.

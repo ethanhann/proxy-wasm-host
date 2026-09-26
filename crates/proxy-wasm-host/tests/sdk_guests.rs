@@ -315,8 +315,7 @@ fn the_auth_guest_opens_a_callout_and_resumes_on_an_even_byte() {
         scope.on_http_call_response(
             context,
             callout(1),
-            HttpCallResponse::received(vec![pair(":status", "200")])
-                .with_body(&b"\x02"[..]),
+            HttpCallResponse::received(vec![pair(":status", "200")]).with_body(&b"\x02"[..]),
         )
     });
 
@@ -352,8 +351,7 @@ fn the_auth_guest_answers_403_on_an_odd_byte() {
         scope.on_http_call_response(
             context,
             callout(1),
-            HttpCallResponse::received(vec![pair(":status", "200")])
-                .with_body(&b"\x03"[..]),
+            HttpCallResponse::received(vec![pair(":status", "200")]).with_body(&b"\x03"[..]),
         )
     });
 

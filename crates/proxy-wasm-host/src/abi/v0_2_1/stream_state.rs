@@ -224,6 +224,13 @@ pub trait StreamState: Any + Send {
     /// services, so you never see those three.
     /// The ABI says that properties are particular to a host, so you decide
     /// which ones you serve.
+    /// The ABI document lists the well known properties of a proxy, such as
+    /// `request.path` and `source.address`, with a type for each, and a
+    /// guest of the Rust SDK reads the bytes as follows: a string is its
+    /// bytes with no terminator, an int and a uint are eight bytes in little
+    /// endian order, a bool is one byte, a timestamp is the nanoseconds since
+    /// the epoch as eight bytes, and a duration is nanoseconds as eight
+    /// bytes.
     ///
     /// # Errors
     ///

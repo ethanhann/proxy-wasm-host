@@ -196,11 +196,7 @@ fn an_embedder_names_the_grpc_surface_in_its_own_signatures() {
             Ok(())
         }
     }
-    let request = GrpcCall::new(
-        &b"authz"[..],
-        &b"example.Authz"[..],
-        &b"Check"[..],
-    );
+    let request = GrpcCall::new(&b"authz"[..], &b"example.Authz"[..], &b"Check"[..]);
     let call = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
 
     // Act

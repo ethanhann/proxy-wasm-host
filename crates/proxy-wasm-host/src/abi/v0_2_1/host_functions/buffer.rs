@@ -179,8 +179,8 @@ pub(super) fn proxy_get_buffer_bytes(
     let buffer_type = BufferType::try_from(buffer_id)?;
     let start = as_usize(start);
     let max_size = as_usize(max_size);
-    let data_ptr = GuestPtr::try_from(return_value_data)?;
-    let size_ptr = GuestPtr::try_from(return_value_size)?;
+    let data_ptr = GuestPtr::from(return_value_data);
+    let size_ptr = GuestPtr::from(return_value_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
@@ -226,8 +226,8 @@ pub(super) fn proxy_get_buffer_status(
     return_unused: i32,
 ) -> Result<(), Failure> {
     let buffer_type = BufferType::try_from(buffer_id)?;
-    let size_ptr = GuestPtr::try_from(return_buffer_size)?;
-    let unused_ptr = GuestPtr::try_from(return_unused)?;
+    let size_ptr = GuestPtr::from(return_buffer_size);
+    let unused_ptr = GuestPtr::from(return_unused);
     let (memory, state) = split(ctx)?;
     memory.read_u32(size_ptr)?;
     memory.read_u32(unused_ptr)?;

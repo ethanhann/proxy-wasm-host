@@ -282,7 +282,13 @@ impl Callouts for Recorder {
         Ok(())
     }
 
-    fn grpc_send(&self, at: Invocation, callout: CalloutId, message: &[u8], end_of_stream: bool) {
+    fn grpc_send(
+        &self,
+        at: Invocation,
+        callout: CalloutId,
+        message: &[u8],
+        end_of_stream: bool,
+    ) -> Result<(), Status> {
         let message = text(message);
         let event = Event::GrpcSend {
             callout,
@@ -290,6 +296,7 @@ impl Callouts for Recorder {
             end_of_stream,
         };
         self.push(at, event);
+        Ok(())
     }
 
     fn grpc_cancel(&self, at: Invocation, callout: CalloutId) {
@@ -547,7 +554,10 @@ impl StreamState for StreamDouble {
         out: &mut Vec<u8>,
     ) -> Result<(), Status> {
         self.refused(StreamCall::Property)?;
-        let value = self.properties.get(&path(segments)).ok_or(Status::NotFound)?;
+        let value = self
+            .properties
+            .get(&path(segments))
+            .ok_or(Status::NotFound)?;
         out.extend_from_slice(value.as_bytes());
         Ok(())
     }

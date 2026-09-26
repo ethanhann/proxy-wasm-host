@@ -6,7 +6,7 @@ use std::fmt;
 ///
 /// A guest advertises its version with an exported function named
 /// `proxy_abi_version_<major>_<minor>_<patch>`.
-/// The enum is non exhaustive, because a later ABI version adds a variant.
+/// The enum is non-exhaustive, because a later ABI version adds a variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AbiVersion {

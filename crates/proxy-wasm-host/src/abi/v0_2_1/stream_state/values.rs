@@ -5,7 +5,7 @@ use std::borrow::Cow;
 /// Header or metadata pairs, in the order the guest serialized them.
 pub type HeaderPairs<'a> = Vec<(Cow<'a, [u8]>, Cow<'a, [u8]>)>;
 
-/// A call to a function of the embedder that the ABI does not name.
+/// A call to a function of the embedder that the ABI does not define.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ForeignCall<'a> {
@@ -184,7 +184,10 @@ mod tests {
         let name = b"compress".to_vec();
 
         // Act
-        let request = ForeignCall::new(Cow::Borrowed(name.as_slice()), Cow::Borrowed(&b"payload"[..]));
+        let request = ForeignCall::new(
+            Cow::Borrowed(name.as_slice()),
+            Cow::Borrowed(&b"payload"[..]),
+        );
 
         // Assert
         assert_eq!(request.name.as_ref(), b"compress");
@@ -195,7 +198,10 @@ mod tests {
     fn a_foreign_call_outlives_the_borrow_it_was_built_from() {
         // Arrange
         let name = b"compress".to_vec();
-        let borrowed = ForeignCall::new(Cow::Borrowed(name.as_slice()), Cow::Borrowed(&b"payload"[..]));
+        let borrowed = ForeignCall::new(
+            Cow::Borrowed(name.as_slice()),
+            Cow::Borrowed(&b"payload"[..]),
+        );
 
         // Act
         let owned = borrowed.into_owned();
