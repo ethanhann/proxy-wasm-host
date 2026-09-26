@@ -16,7 +16,7 @@ thiserror = "2"
 tiny_http = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi"] }
-wasmtime = { version = "49.0", default-features = false, features = ["runtime", "cranelift", "std", "addr2line", "demangle"] }
+wasmtime = { version = "49", default-features = false, features = ["runtime", "cranelift", "std", "addr2line", "demangle"] }
 wat = "1"
 
 [workspace.lints.rust]
