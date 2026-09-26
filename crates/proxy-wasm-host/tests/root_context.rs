@@ -2,7 +2,7 @@
 //! its queue, and its gRPC callouts.
 //!
 //! The helpers below are test code, and the allowance clippy makes for a test
-//! does not reach a function of an integration test that carries no test
+//! does not reach a function of an integration test that has no test
 //! attribute.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -264,7 +264,7 @@ fn a_grpc_stream_runs_from_its_metadata_to_its_close() {
     let stream = callout(2);
     let replies = Replies {
         initial: vec![pair("k", "v")],
-        message: Cow::Borrowed(b"reply"),
+        message: Cow::Borrowed(&b"reply"[..]),
         trailing: vec![pair("t", "done")],
         status: GrpcStatus::new(14, "unavailable"),
     };

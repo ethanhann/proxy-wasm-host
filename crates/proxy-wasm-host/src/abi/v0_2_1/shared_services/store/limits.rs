@@ -1,4 +1,4 @@
-//! What the in memory shared services allow a guest to store.
+//! What the in-memory shared services allow a guest to store.
 
 /// What [`InMemoryStore`] allows a guest to store.
 ///

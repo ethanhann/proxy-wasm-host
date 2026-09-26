@@ -66,12 +66,14 @@ impl PairLimits {
     }
 
     /// The pair limit, or `None` when there is none.
-    pub fn pairs(&self) -> Option<u32> {
+    #[cfg(test)]
+    pub(crate) fn pairs(&self) -> Option<u32> {
         self.pairs
     }
 
     /// The byte limit, or `None` when there is none.
-    pub fn bytes(&self) -> Option<usize> {
+    #[cfg(test)]
+    pub(crate) fn bytes(&self) -> Option<usize> {
         self.bytes
     }
 

@@ -14,6 +14,20 @@ const GUEST: &[u8] = include_bytes!("../tests/fixtures/add-request-header.wasm")
 /// A plugin that answers a request with the header `x-deny` by itself.
 const DENIER: &[u8] = include_bytes!("../tests/fixtures/http-example.wasm");
 
+/// A guest whose request body pauses the stream, and whose headers do not.
+const BODY_PAUSING: &str = r#"(module
+    (memory (export "memory") 1)
+    (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+    (func (export "proxy_abi_version_0_2_1"))
+    (func (export "proxy_on_request_body") (param i32 i32 i32) (result i32) i32.const 1))"#;
+
+/// A guest that keeps every stream context after `proxy_on_done`.
+const HOLDING: &str = r#"(module
+    (memory (export "memory") 1)
+    (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+    (func (export "proxy_abi_version_0_2_1"))
+    (func (export "proxy_on_done") (param i32) (result i32) i32.const 0))"#;
+
 /// A guest whose request headers pause the stream.
 const PAUSING: &str = r#"(module
     (memory (export "memory") 1)
@@ -68,8 +82,8 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Lines {
 fn a_request_gets_the_header_the_plugin_adds() {
     // Arrange
     let (mut guest, root) = guest_of(GUEST);
-    let request = Request::from(TestRequest::new().with_path("/"));
-    let state = request_state(&request);
+    let mut request = Request::from(TestRequest::new().with_path("/"));
+    let state = request_state(&mut request);
 
     // Act
     let answer = serve(&mut guest, root, state);
@@ -86,11 +100,58 @@ fn a_request_gets_the_header_the_plugin_adds() {
 }
 
 #[test]
+fn a_request_body_reaches_the_guest_after_the_headers() {
+    // Arrange
+    let (mut guest, root) = guest_of(&wat::parse_str(BODY_PAUSING).unwrap());
+    let mut with_body = Request::from(TestRequest::new().with_path("/").with_body("payload"));
+    let mut without = Request::from(TestRequest::new().with_path("/"));
+    let states = (request_state(&mut with_body), request_state(&mut without));
+
+    // Act
+    let answers = (
+        serve(&mut guest, root, states.0),
+        serve(&mut guest, root, states.1),
+    );
+
+    // Assert
+    assert_eq!(
+        answers.0.unwrap().status_code().0,
+        504,
+        "the body callback paused"
+    );
+    assert_eq!(
+        answers.1.unwrap().status_code().0,
+        200,
+        "no body, no body callback"
+    );
+}
+
+#[test]
+fn a_context_the_guest_holds_is_answered_and_kept() {
+    // Arrange
+    let (mut guest, root) = guest_of(&wat::parse_str(HOLDING).unwrap());
+    let mut request = Request::from(TestRequest::new().with_path("/"));
+    let state = request_state(&mut request);
+
+    // Act
+    let answer = serve(&mut guest, root, state);
+
+    // Assert
+    assert_eq!(answer.unwrap().status_code().0, 200);
+    let stream = ContextId::try_from(2).unwrap();
+    assert_eq!(
+        guest.context_state(stream),
+        Some(proxy_wasm_host::abi::v0_2_1::ContextState::Pending),
+        "the context waits for proxy_done"
+    );
+}
+
+#[test]
 fn a_paused_request_answers_504() {
     // Arrange
     let (mut guest, root) = guest_of(&wat::parse_str(PAUSING).unwrap());
-    let request = Request::from(TestRequest::new().with_path("/"));
-    let state = request_state(&request);
+    let mut request = Request::from(TestRequest::new().with_path("/"));
+    let state = request_state(&mut request);
 
     // Act
     let answer = serve(&mut guest, root, state);
@@ -146,12 +207,12 @@ fn the_sink_maps_each_level_to_its_tracing_level() {
 fn a_denied_request_gets_the_answer_of_the_plugin() {
     // Arrange
     let (mut guest, root) = guest_of(DENIER);
-    let source = Request::from(
+    let mut source = Request::from(
         TestRequest::new()
             .with_path("/")
             .with_header("x-deny: 1".parse::<Header>().unwrap()),
     );
-    let state = request_state(&source);
+    let state = request_state(&mut source);
 
     // Act
     let answer = serve(&mut guest, root, state);
@@ -164,12 +225,12 @@ fn a_denied_request_gets_the_answer_of_the_plugin() {
 fn the_answer_carries_no_length_or_type_of_the_request() {
     // Arrange
     let (mut guest, root) = guest_of(GUEST);
-    let source = Request::from(
+    let mut source = Request::from(
         TestRequest::new()
             .with_path("/")
             .with_header("content-type: application/json".parse::<Header>().unwrap()),
     );
-    let state = request_state(&source);
+    let state = request_state(&mut source);
 
     // Act
     let answer = serve(&mut guest, root, state);
@@ -201,10 +262,10 @@ fn the_answer_carries_no_length_or_type_of_the_request() {
 #[test]
 fn the_request_state_holds_the_three_pseudo_headers() {
     // Arrange
-    let source = Request::from(TestRequest::new().with_path("/example"));
+    let mut source = Request::from(TestRequest::new().with_path("/example"));
 
     // Act
-    let state = request_state(&source);
+    let state = request_state(&mut source);
 
     // Assert
     let names: Vec<String> = pairs(&state.headers)

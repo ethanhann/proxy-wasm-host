@@ -39,7 +39,7 @@ pub(super) fn proxy_get_log_level(
     ctx: &mut impl AsContextMut<Data = HostState>,
     return_log_level: i32,
 ) -> Result<(), Failure> {
-    let return_log_level = GuestPtr::try_from(return_log_level)?;
+    let return_log_level = GuestPtr::from(return_log_level);
     let (mut memory, state) = split(ctx)?;
     let level = i32::from(state.abi().services().log_level()).cast_unsigned();
     memory.write_u32(return_log_level, level)?;

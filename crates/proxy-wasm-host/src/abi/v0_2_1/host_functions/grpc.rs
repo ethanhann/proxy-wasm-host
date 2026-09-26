@@ -5,8 +5,10 @@
 //! The crate keeps the record of what is open, and the embedder answers
 //! through the four gRPC callbacks.
 //!
-//! The three functions that take an open callout answer `OK` for a callout
-//! that this guest opened and that has ended.
+//! The three functions that take an open callout answer `OK` for any
+//! identifier this guest was given that is no longer open, which covers a
+//! callout that ended, one of another context of this guest that ended, and
+//! one the service refused.
 //! A guest of the Rust SDK stops with a panic on any other status from them,
 //! and a plugin that closes its own stream inside `proxy_on_grpc_close` is
 //! ordinary code.
@@ -26,7 +28,7 @@ use wasmtime::AsContextMut;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::callout::Callout;
 use crate::abi::v0_2_1::host_functions::Failure;
-use crate::abi::v0_2_1::host_functions::call::{context, guest_pairs, invocation};
+use crate::abi::v0_2_1::host_functions::call::{context, from_embedder, guest_pairs, invocation};
 use crate::abi::v0_2_1::host_functions::callout::open_callout;
 use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::{CalloutId, CalloutKind, GrpcCall, GrpcStream, HeaderPairs};
@@ -75,7 +77,7 @@ pub(super) fn proxy_grpc_call(
         serialized_initial_metadata_size,
     ))?;
     let message = GuestSlice::try_from((message_data, message_size))?;
-    let id_ptr = GuestPtr::try_from(return_call_id)?;
+    let id_ptr = GuestPtr::from(return_call_id);
     let timeout = Duration::from_millis(u64::from(timeout.cast_unsigned()));
     let (mut memory, state) = split(ctx)?;
     memory.read_u32(id_ptr)?;
@@ -118,7 +120,7 @@ pub(super) fn proxy_grpc_stream(
         serialized_initial_metadata_data,
         serialized_initial_metadata_size,
     ))?;
-    let id_ptr = GuestPtr::try_from(return_stream_id)?;
+    let id_ptr = GuestPtr::from(return_stream_id);
     let (mut memory, state) = split(ctx)?;
     memory.read_u32(id_ptr)?;
     let request = GrpcStream::new(
@@ -156,7 +158,7 @@ enum Found {
 /// A guest can therefore learn that a number was given out, which the
 /// rustdoc of the three functions states.
 fn find(state: &HostState, id: i32) -> Result<Found, Failure> {
-    let callout = CalloutId::try_from(id).map_err(|_| Status::NotFound)?;
+    let callout = CalloutId::try_from(id.cast_unsigned()).map_err(|_| Status::NotFound)?;
     let abi = state.abi();
     let Some(entry) = abi.callouts().get(callout) else {
         if abi.callouts().issued(callout) {
@@ -197,7 +199,10 @@ pub(super) fn proxy_grpc_send(
     let caller = context(state, Status::NotFound)?;
     let call = invocation(state, caller);
     let service = Arc::clone(state.abi().services().callouts());
-    service.grpc_send(call, callout, bytes, end_of_stream);
+    from_embedder(
+        "grpc_send",
+        service.grpc_send(call, callout, bytes, end_of_stream),
+    )?;
     if end_of_stream {
         state.abi_mut().callouts_mut().close_by_guest(callout);
     }
@@ -269,8 +274,12 @@ mod tests {
     use crate::abi::v0_2_1::test_support::callouts::{
         GrpcAsk, RecordingCallouts, callout_hosted, callout_hosted_with_limits, services_with,
     };
-    use crate::abi::v0_2_1::test_support::{engine, instance_with, outcome, wat_bytes, write};
-    use crate::abi::v0_2_1::{Callback, ContextId, GrpcOpenRefusal, Invocation};
+    use crate::abi::v0_2_1::test_support::{
+        RecordingSink, engine, instance_with, instance_with_limits, outcome, wat_bytes, write,
+    };
+    use crate::abi::v0_2_1::{
+        Callback, Callouts, ContextId, GrpcOpenRefusal, Invocation, VmServices,
+    };
     use crate::codec::pairs::encode_pairs;
     use crate::runtime::{Engine, Instance, Limits, Module};
 
@@ -346,8 +355,8 @@ mod tests {
         encode_pairs(&pairs).unwrap()
     }
 
-    /// The arguments of a call whose initial metadata sits clear of the
-    /// other values.
+    /// The arguments of a call whose initial metadata is placed apart from
+    /// the other values.
     fn oversized(instance: &mut Instance) -> Call {
         let upstream = write(instance, UPSTREAM, b"authz");
         let service = write(instance, SERVICE, b"example.Authz");
@@ -629,8 +638,9 @@ mod tests {
         let engine = engine();
         let service = Arc::new(RecordingCallouts::new());
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
-        let services = services_with(service.clone()).with_max_open_callouts(2);
-        let mut instance = instance_with(&engine, &module, services).unwrap();
+        let services = services_with(service.clone());
+        let limits = Limits::default().with_max_open_callouts(2);
+        let mut instance = instance_with_limits(&engine, &module, services, &limits).unwrap();
         let root = instance
             .state_mut()
             .abi_mut()
@@ -750,6 +760,39 @@ mod tests {
         // Assert
         assert_eq!(answer, Status::InvalidMemoryAccess);
         assert!(service.grpc_calls().is_empty());
+    }
+
+    struct RefusingSend;
+
+    impl Callouts for RefusingSend {
+        fn grpc_send(&self, _: Invocation, _: CalloutId, _: &[u8], _: bool) -> Result<(), Status> {
+            Err(Status::InternalFailure)
+        }
+    }
+
+    #[test]
+    fn a_send_the_service_refuses_answers_the_status_of_the_refusal() {
+        // Arrange
+        let engine = engine();
+        let services = VmServices::new(Arc::new(RecordingSink::default()))
+            .with_callouts(Arc::new(RefusingSend));
+        let (mut instance, root) = callout_hosted(&engine, GUEST, services);
+        let stream = open(&mut instance, CalloutKind::GrpcStream, root, root);
+
+        // Act
+        let answer = outcome(proxy_grpc_send(instance.store_mut(), stream, 0, 0, 1));
+
+        // Assert
+        assert_eq!(answer, Status::InternalFailure);
+        let entry = instance
+            .state()
+            .abi()
+            .callouts()
+            .get(CalloutId::try_from(1).unwrap());
+        assert!(
+            entry.is_some_and(|entry| !entry.closed_by_guest),
+            "a refused send does not close the stream"
+        );
     }
 
     #[test]

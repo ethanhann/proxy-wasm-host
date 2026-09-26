@@ -2,7 +2,7 @@
 //! body, its response, its foreign function call, and its queue item.
 //!
 //! The helpers below are test code, and the allowance clippy makes for a test
-//! does not reach a function of an integration test that carries no test
+//! does not reach a function of an integration test that has no test
 //! attribute.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -195,7 +195,7 @@ fn an_http_call_response_resumes_the_request() {
     } = Request::with_headers(&[]);
     let callout = guest.open_callouts().last().unwrap().callout;
     let response = HttpCallResponse::received(vec![pair(":status", "200")])
-        .with_body(Cow::Borrowed(b"ok"))
+        .with_body(&b"ok"[..])
         .with_trailers(vec![pair("t", "1")]);
 
     // Act

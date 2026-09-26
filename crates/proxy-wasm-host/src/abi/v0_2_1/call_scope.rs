@@ -85,6 +85,10 @@ impl<'a, H: StreamState> CallScope<'a, H> {
         }
     }
 
+    pub(crate) fn mark_vm_started(&mut self) {
+        self.guest.mark_vm_started();
+    }
+
     /// The guest this scope drives.
     pub fn guest(&self) -> &Guest {
         self.guest

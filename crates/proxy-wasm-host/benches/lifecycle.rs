@@ -47,6 +47,28 @@ impl StreamState for Request {
     }
 }
 
+/// The headers of one request, which a proxy sends with every request.
+const HEADERS: [(&[u8], &[u8]); 5] = [
+    (b":method", b"GET"),
+    (b":path", b"/"),
+    (b":authority", b"127.0.0.1:2045"),
+    (b"user-agent", b"bench"),
+    (b"accept", b"*/*"),
+];
+
+#[allow(clippy::cast_possible_truncation)]
+const HEADER_COUNT: u32 = HEADERS.len() as u32;
+
+fn request() -> Request {
+    Request {
+        headers: HEADERS
+            .iter()
+            .map(|(name, value)| (name.to_vec(), value.to_vec()))
+            .collect::<Vec<_>>()
+            .into(),
+    }
+}
+
 fn spec(bytes: &[u8]) -> GuestSpec {
     let engine = Engine::new().unwrap();
     let module = Module::new(&engine, bytes).unwrap();
@@ -102,10 +124,10 @@ fn request_lifecycle(c: &mut Criterion) {
     let root = guest.start(PluginConfig::new()).unwrap().root();
     c.bench_function("request_lifecycle", |b| {
         b.iter(|| {
-            let (answer, request) = guest.with(Request::default(), |scope| {
+            let (answer, request) = guest.with(request(), |scope| {
                 let stream: ContextId = scope.on_context_create(Some(root))?;
                 scope.expect_stream_kind(stream, StreamKind::Http)?;
-                scope.on_request_headers(stream, 0, false)?;
+                scope.on_request_headers(stream, HEADER_COUNT, false)?;
                 scope.on_request_body(stream, 0, true)?;
                 scope.on_response_headers(stream, 0, false)?;
                 scope.on_response_body(stream, 0, true)?;

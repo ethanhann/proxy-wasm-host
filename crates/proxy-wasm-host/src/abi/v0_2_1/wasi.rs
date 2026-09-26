@@ -5,13 +5,14 @@
 //! `proxy_log` does, and reports every byte as written.
 //! A WASI libc that receives a smaller count writes the rest again, so a
 //! count of the cut bytes alone would repeat the call until the message ends.
-//! `fd_write` is a log call, the clock and randomness functions read the
-//! services in the host state, the environment functions serve the per guest
-//! variables, and the argument functions report no arguments.
+//! `fd_write` is a log call.
+//! The clock and randomness functions read the services in the host state.
+//! The environment functions serve the per-guest variables, and the argument
+//! functions report no arguments.
 //! A guest that imports any other WASI function fails to instantiate.
 //!
 //! A file descriptor maps to a log level, which is a Proxy-Wasm decision
-//! rather than a WASI one, so the module sits with the version that makes it.
+//! rather than a WASI one, so the module belongs to the version that makes it.
 //! This version's registrar adds these functions before its own.
 
 use std::fmt::Display;
@@ -39,6 +40,10 @@ pub(crate) const WASI_FUNCTIONS: &[&str] = &[
     "args_get",
     "proc_exit",
 ];
+/// The most entries one `fd_write` may pass, which is the bound WASI hosts
+/// apply, so a guest cannot make the host allocate one slice per byte of
+/// its memory.
+const MAX_IOVECS: u32 = 1024;
 const IOVEC_SIZE: u32 = 8;
 const MAX_RANDOM_BYTES: u32 = 64 * 1024;
 
@@ -85,8 +90,8 @@ fn fault(error: impl Display) -> WasiErrno {
     WasiErrno::Fault
 }
 
-fn pointer(raw: i32) -> Result<GuestPtr, WasiErrno> {
-    GuestPtr::try_from(raw).map_err(fault)
+fn pointer(raw: i32) -> GuestPtr {
+    GuestPtr::from(raw)
 }
 
 fn read_u32(entry: &[u8]) -> u32 {
@@ -116,11 +121,14 @@ fn fd_write_impl(
         Err(_) => return Err(WasiErrno::Badf),
     };
     let (mut memory, state) = split(caller).map_err(fault)?;
-    let written_ptr = pointer(nwritten)?;
+    let written_ptr = pointer(nwritten);
     memory.read_u32(written_ptr).map_err(fault)?;
     let count = u32::try_from(iovs_len).map_err(fault)?;
+    if count > MAX_IOVECS {
+        return Err(WasiErrno::Inval);
+    }
     let table_len = count.checked_mul(IOVEC_SIZE).ok_or(WasiErrno::Fault)?;
-    let table = GuestSlice::new(pointer(iovs)?, table_len).map_err(fault)?;
+    let table = GuestSlice::new(pointer(iovs), table_len).map_err(fault)?;
     let entries = memory
         .read(table)
         .map_err(fault)?
@@ -177,7 +185,7 @@ fn clock_time_get_impl(caller: &mut Caller<'_, HostState>, id: i32, time: i32) -
         WasiClockId::Realtime => state.abi().services().clock().realtime_nanos(),
         WasiClockId::Monotonic => state.abi().services().clock().monotonic_nanos(),
     };
-    memory.write_u64(pointer(time)?, nanos).map_err(fault)
+    memory.write_u64(pointer(time), nanos).map_err(fault)
 }
 
 fn random_get(mut caller: Caller<'_, HostState>, buf: i32, len: i32) -> i32 {
@@ -218,10 +226,8 @@ fn environ_sizes_get_impl(
     let (mut memory, state) = split(caller).map_err(fault)?;
     let count = u32::try_from(state.abi().services().environment().len()).map_err(fault)?;
     let size = u32::try_from(environment_block(state).len()).map_err(fault)?;
-    memory
-        .write_u32(pointer(count_ptr)?, count)
-        .map_err(fault)?;
-    memory.write_u32(pointer(size_ptr)?, size).map_err(fault)
+    memory.write_u32(pointer(count_ptr), count).map_err(fault)?;
+    memory.write_u32(pointer(size_ptr), size).map_err(fault)
 }
 
 fn environ_get(mut caller: Caller<'_, HostState>, array: i32, buffer: i32) -> i32 {
@@ -230,7 +236,7 @@ fn environ_get(mut caller: Caller<'_, HostState>, array: i32, buffer: i32) -> i3
 
 fn environ_get_impl(caller: &mut Caller<'_, HostState>, array: i32, buffer: i32) -> WasiResult {
     let (mut memory, state) = split(caller).map_err(fault)?;
-    let buffer_start = pointer(buffer)?;
+    let buffer_start = pointer(buffer);
     let block = environment_block(state);
     let mut pointers = Vec::new();
     let mut offset = buffer_start.address();
@@ -239,7 +245,7 @@ fn environ_get_impl(caller: &mut Caller<'_, HostState>, array: i32, buffer: i32)
         let entry_len = u32::try_from(key.len() + value.len() + 2).map_err(fault)?;
         offset = offset.checked_add(entry_len).ok_or(WasiErrno::Fault)?;
     }
-    write_block(&mut memory, pointer(array)?, &pointers)?;
+    write_block(&mut memory, pointer(array), &pointers)?;
     write_block(&mut memory, buffer_start, &block)
 }
 
@@ -255,8 +261,8 @@ fn args_sizes_get(mut caller: Caller<'_, HostState>, argc: i32, size: i32) -> i3
 
 fn args_sizes_get_impl(caller: &mut Caller<'_, HostState>, argc: i32, size: i32) -> WasiResult {
     let (mut memory, _) = split(caller).map_err(fault)?;
-    memory.write_u32(pointer(argc)?, 0).map_err(fault)?;
-    memory.write_u32(pointer(size)?, 0).map_err(fault)
+    memory.write_u32(pointer(argc), 0).map_err(fault)?;
+    memory.write_u32(pointer(size), 0).map_err(fault)
 }
 
 fn args_get(_argv: i32, _buf: i32) -> i32 {
@@ -428,6 +434,34 @@ mod tests {
     }
 
     #[test]
+    fn fd_write_refuses_more_entries_than_a_wasi_host_accepts() {
+        // Arrange
+        let engine = engine();
+        let sink = Arc::new(RecordingSink::default());
+        let wat = guest(
+            FD_WRITE_IMPORT,
+            r#"(func (export "write") (param i32) (result i32)
+                 (i32.store (i32.const 116) (i32.const 100)) (i32.store (i32.const 120) (i32.const 1))
+                 (call $w (i32.const 1) (i32.const 116) (local.get 0) (i32.const 200)))"#,
+        );
+        let mut instance = instance_with_sink(&engine, &wat, Arc::clone(&sink)).unwrap();
+
+        // Act
+        let results = [
+            instance.call::<i32, i32>("write", 1024).unwrap(),
+            instance.call::<i32, i32>("write", 1025).unwrap(),
+        ];
+
+        // Assert
+        assert_eq!(results, [0, i32::from(WasiErrno::Inval)]);
+        assert_eq!(
+            sink.entries().len(),
+            1,
+            "the accepted call logged, the refused one did not"
+        );
+    }
+
+    #[test]
     fn fd_write_cuts_a_message_at_the_bound_the_embedder_set() {
         // Arrange
         let engine = engine();
@@ -595,6 +629,42 @@ mod tests {
         let memory = instance.memory().unwrap();
         assert_eq!(memory.read_u64(ptr(64)), Ok(1_700_000_000_000_000_000));
         assert_eq!(memory.read_u64(ptr(72)), Ok(42));
+    }
+
+    #[test]
+    fn random_get_fills_a_request_at_the_bound_and_refuses_one_byte_more() {
+        // Arrange
+        let engine = engine();
+        let wat = r#"(module
+            (import "wasi_snapshot_preview1" "random_get" (func $r (param i32 i32) (result i32)))
+            (memory (export "memory") 2)
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+            (func (export "random") (param i32 i32) (result i32) (call $r (local.get 0) (local.get 1))))"#;
+        let mut instance = instance(&engine, wat).unwrap();
+
+        // Act
+        let results = [
+            instance
+                .call::<(i32, i32), i32>("random", (0, 2048))
+                .unwrap(),
+            instance
+                .call::<(i32, i32), i32>("random", (0, 65_536))
+                .unwrap(),
+            instance
+                .call::<(i32, i32), i32>("random", (0, 65_537))
+                .unwrap(),
+        ];
+
+        // Assert
+        assert_eq!(results, [0, 0, i32::from(WasiErrno::Inval)]);
+        let memory = instance.memory().unwrap();
+        let filled = memory
+            .read(GuestSlice::new(ptr(0), 65_536).unwrap())
+            .unwrap();
+        assert!(
+            filled.iter().any(|byte| *byte != 0),
+            "the bytes at the bound were filled"
+        );
     }
 
     #[test]

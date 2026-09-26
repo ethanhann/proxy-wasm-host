@@ -17,6 +17,7 @@ use crate::abi::v0_2_1::HeaderPairs;
 /// the guest, so the delivery refuses one.
 /// Keep the `:status` header of the response.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HttpCallResponse<'a> {
     received: bool,
     headers: HeaderPairs<'a>,
@@ -48,9 +49,9 @@ impl<'a> HttpCallResponse<'a> {
     /// Sets the body of a received response.
     /// A failed response keeps none.
     #[must_use]
-    pub fn with_body(mut self, body: Cow<'a, [u8]>) -> Self {
+    pub fn with_body(mut self, body: impl Into<Cow<'a, [u8]>>) -> Self {
         if self.received {
-            self.body = body;
+            self.body = body.into();
         }
         self
     }
@@ -115,7 +116,7 @@ mod tests {
 
         // Act
         let response = HttpCallResponse::received(headers)
-            .with_body(Cow::Borrowed(b"ok"))
+            .with_body(Cow::Borrowed(&b"ok"[..]))
             .with_trailers(pairs(&[(b"t", b"v")]));
 
         // Assert
@@ -132,7 +133,7 @@ mod tests {
 
         // Act
         let response = failed
-            .with_body(Cow::Borrowed(b"ignored"))
+            .with_body(Cow::Borrowed(&b"ignored"[..]))
             .with_trailers(pairs(&[(b"t", b"v")]));
 
         // Assert
@@ -147,7 +148,7 @@ mod tests {
         // Arrange
         let body = b"ok".to_vec();
         let response = HttpCallResponse::received(pairs(&[(b":status", b"200")]))
-            .with_body(Cow::Borrowed(&body));
+            .with_body(Cow::Borrowed(body.as_slice()));
         let expected = response.clone();
 
         // Act

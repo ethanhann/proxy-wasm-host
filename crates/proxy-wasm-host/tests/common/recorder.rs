@@ -111,7 +111,7 @@ impl Recorder {
 
     /// The context of each log line, in the order the lines arrived.
     ///
-    /// A log line carries no `Invocation` in its event, because the crate
+    /// A log line has no `Invocation` in its event, because the crate
     /// gives a sink a context of its own.
     pub fn log_contexts(&self) -> Vec<LogContext<'static>> {
         self.contexts
@@ -282,7 +282,13 @@ impl Callouts for Recorder {
         Ok(())
     }
 
-    fn grpc_send(&self, at: Invocation, callout: CalloutId, message: &[u8], end_of_stream: bool) {
+    fn grpc_send(
+        &self,
+        at: Invocation,
+        callout: CalloutId,
+        message: &[u8],
+        end_of_stream: bool,
+    ) -> Result<(), Status> {
         let message = text(message);
         let event = Event::GrpcSend {
             callout,
@@ -290,6 +296,7 @@ impl Callouts for Recorder {
             end_of_stream,
         };
         self.push(at, event);
+        Ok(())
     }
 
     fn grpc_cancel(&self, at: Invocation, callout: CalloutId) {
@@ -540,12 +547,19 @@ impl StreamState for StreamDouble {
         Ok(())
     }
 
-    fn property(&mut self, _: Invocation, segments: &[&[u8]]) -> Result<Vec<u8>, Status> {
+    fn property(
+        &mut self,
+        _: Invocation,
+        segments: &[&[u8]],
+        out: &mut Vec<u8>,
+    ) -> Result<(), Status> {
         self.refused(StreamCall::Property)?;
-        self.properties
+        let value = self
+            .properties
             .get(&path(segments))
-            .map(|value| value.as_bytes().to_vec())
-            .ok_or(Status::NotFound)
+            .ok_or(Status::NotFound)?;
+        out.extend_from_slice(value.as_bytes());
+        Ok(())
     }
 
     fn set_property(
@@ -565,13 +579,15 @@ impl StreamState for StreamDouble {
         &mut self,
         at: Invocation,
         request: ForeignCall<'_>,
-    ) -> Result<Vec<u8>, Status> {
+        out: &mut Vec<u8>,
+    ) -> Result<(), Status> {
         self.refused(StreamCall::CallForeignFunction)?;
         let event = Event::ForeignCall {
             name: text(&request.name),
             arguments: text(&request.arguments),
         };
         self.recorder.push(at, event);
-        Ok(b"pong".to_vec())
+        out.extend_from_slice(b"pong");
+        Ok(())
     }
 }

@@ -20,30 +20,31 @@ A vulnerability of this crate is a way for a guest to reach something the host d
 These are in scope.
 
 - A guest reads or writes the state of another guest, or of another request of the same guest.
-- A guest reaches a metric or a shared key of a virtual machine that is not its own.
+- A guest reaches a metric or a shared key of a VM that is not its own.
 - A guest makes the host read or write memory outside the guest's own memory.
 - A guest makes the host spend memory or time without a limit, through a call that the documented limits say is bounded.
 - The crate gives a guest a value that no service of yours supplied.
 
 These are not in scope.
 
-- A defect of wasmtime, which belongs to that project. Report it there.
-- A service of yours that gives a guest more than you meant to. The crate passes what your implementation answers.
-- An environment variable that you set on the guest. The guest reads every one of them.
-- A guest that opens a queue of another virtual machine by its name, which the ABI allows.
-- A guest that traps, or that spends its own limits. A trap is a normal end for a call, and your embedder builds a new guest.
+- A defect of wasmtime, which belongs to that project, so report it there.
+- A service of yours that gives a guest more than you meant to, since the crate passes what your implementation answers.
+- An environment variable that you set on the guest, because the guest reads every one of them.
+- A guest that opens a queue of another VM by its name, which the ABI allows.
+- A guest that traps or spends its own limits, because a trap is a normal end for a call and your embedder builds a new guest.
 - A denial of service that comes from the traffic you send to the plugin rather than from the plugin.
 
 ## Supported versions
 
-The crate is not published yet, so no version carries a security promise.
-The first release adds a table here that lists the versions that receive fixes.
+| Version | Receives fixes |
+|---|---|
+| 0.1.x | yes |
 
 ## What this crate defends
 
 The crate treats the guest as untrusted and your embedder as trusted.
 Every value a guest sends arrives as bytes of guest memory, and the crate reads them through bounds checks before any service of yours sees them.
-Every identifier a guest passes to the host is checked against the identifiers that guest obtained, so a small number that another virtual machine could guess reaches nothing.
+Every identifier a guest passes to the host is checked against the identifiers that guest obtained, so a small number that another VM could guess reaches nothing.
 The crate uses no `unsafe` code of its own.
 
 ## What your embedder must answer
@@ -64,6 +65,10 @@ If you run plugins you do not trust, give them a `SharedServices` store of their
 The crate limits what each guest sends, and `InMemoryStore` limits what it holds across all guests.
 If you write your own `SharedServices`, the crate cannot see inside it, so you will need to put limits on your store yourself.
 
+The header maps and the buffers you lend to a guest grow with what the guest writes into them.
+`VecHeaderMap` and `Vec<u8>` accept every write, so a guest can add a large header many times in one callback and the host holds every copy.
+If you serve plugins you do not trust, lend a map and a buffer of your own that refuse a write past the size you accept, with the `NotAllowed` error.
+
 ### Recover a guest that traps
 
 When a guest traps, its instance is poisoned and the crate refuses every later callback on it.
@@ -73,11 +78,13 @@ Use `Guest::open_callouts` to find those requests, end them, and then build a re
 ### Watch the rate of rebuilds
 
 A plugin that traps on every request costs you a rebuild on every request.
-`GuestSpec::poisoned_guests` counts the poisoned guests you have dropped, so you can compare it after each rebuild and stop serving the plugin if it climbs faster than you are comfortable with.
+`GuestSpec::poisoned_guests` counts the poisoned guests you have dropped, so you can compare it after each rebuild and stop serving the plugin when it rises faster than you accept.
 
 ## The limits you can change
 
-The module documentation of the ABI has a table of every limit, its default, and the method that changes it.
-Two types carry them.
-`Limits` carries what one instance and one guest may spend, and `InMemoryStore` carries what the reference store keeps.
-A limit set to `None` is removed, and a guest then meets no bound of the crate on that call.
+The module documentation of `proxy_wasm_host::abi::v0_2_1` has a table of every limit, its default, and the method that changes it.
+`Limits` sets what one guest may spend and how many callouts it may hold open.
+`EngineConfig` sets the fuel switch and the stack size of the engine.
+`InMemoryStoreLimits` sets what `InMemoryStore` keeps.
+You can remove most `Limits` values by passing `None`, and a guest then meets no bound of the crate on that call.
+The CPU time, the open callouts, and the store limits always have a value.

@@ -34,6 +34,106 @@ impl<H: StreamState> CallScope<'_, H> {
     /// The crate keeps `response` for the time of the callback.
     /// Bytes that `response` owns are moved, and borrowed bytes are copied.
     ///
+    /// For example, a guest opens a call in `proxy_on_request_headers` and
+    /// pauses, your service keeps the call, and a second scope delivers the
+    /// answer:
+    ///
+    /// ```
+    /// use std::sync::{Arc, Mutex};
+    ///
+    /// use proxy_wasm_host::abi::v0_2_1::types::{Action, LogLevel};
+    /// use proxy_wasm_host::abi::v0_2_1::{
+    ///     CalloutId, Callouts, Guest, GuestError, Host, HttpCall, HttpCallRefusal,
+    ///     HttpCallResponse, Invocation, LogContext, LogSink, NoStream, PluginConfig, Started,
+    ///     StreamKind, VmServices,
+    /// };
+    /// use proxy_wasm_host::{Engine, Limits, Module};
+    ///
+    /// struct Discard;
+    /// impl LogSink for Discard {
+    ///     fn log(&self, _: LogContext<'_>, _: LogLevel, _: &[u8]) {}
+    /// }
+    ///
+    /// /// Keeps the calls the guest opened, so the proxy can answer them later.
+    /// #[derive(Default)]
+    /// struct Pending(Mutex<Vec<(Invocation, CalloutId)>>);
+    /// impl Callouts for Pending {
+    ///     fn http_call(
+    ///         &self,
+    ///         call: Invocation,
+    ///         callout: CalloutId,
+    ///         _: HttpCall<'_>,
+    ///     ) -> Result<(), HttpCallRefusal> {
+    ///         self.0.lock().unwrap().push((call, callout));
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// /// A header map as the ABI serializes it, for the data segment of the guest.
+    /// fn pairs(map: &[(&[u8], &[u8])]) -> Vec<u8> {
+    ///     let mut out = (map.len() as u32).to_le_bytes().to_vec();
+    ///     for (key, value) in map {
+    ///         out.extend((key.len() as u32).to_le_bytes());
+    ///         out.extend((value.len() as u32).to_le_bytes());
+    ///     }
+    ///     for (key, value) in map {
+    ///         out.extend(*key);
+    ///         out.push(0);
+    ///         out.extend(*value);
+    ///         out.push(0);
+    ///     }
+    ///     out
+    /// }
+    ///
+    /// # fn main() -> Result<(), GuestError> {
+    /// let headers = pairs(&[(b":method", b"GET"), (b":path", b"/check"), (b":authority", b"authz")]);
+    /// let data: String = headers.iter().map(|byte| format!("\\{byte:02x}")).collect();
+    /// let wat = format!(
+    ///     r#"(module
+    ///     (import "env" "proxy_http_call"
+    ///         (func $call (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+    ///     (memory (export "memory") 1)
+    ///     (data (i32.const 1024) "authz")
+    ///     (data (i32.const 2048) "{data}")
+    ///     (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 8192)
+    ///     (func (export "proxy_abi_version_0_2_1"))
+    ///     (func (export "proxy_on_request_headers") (param i32 i32 i32) (result i32)
+    ///         (drop (call $call (i32.const 1024) (i32.const 5) (i32.const 2048) (i32.const {len})
+    ///             (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 1000)
+    ///             (i32.const 4096)))
+    ///         i32.const 1))"#,
+    ///     len = headers.len(),
+    /// );
+    /// let engine = Engine::new()?;
+    /// let module = Module::new(&engine, &wat::parse_str(&wat).unwrap())?;
+    /// let pending = Arc::new(Pending::default());
+    /// let services = VmServices::new(Arc::new(Discard)).with_callouts(pending.clone());
+    /// let mut guest = Guest::new(&Host::new(&engine)?, &module, services, &Limits::default())?;
+    /// let Started::Serving(root) = guest.start(PluginConfig::new())? else {
+    ///     panic!("the plugin refused its start");
+    /// };
+    ///
+    /// // The request pauses on its headers, because the guest waits for the call.
+    /// let (paused, _) = guest.with(NoStream, |scope| {
+    ///     let stream = scope.on_context_create(Some(root))?;
+    ///     scope.expect_stream_kind(stream, StreamKind::Http)?;
+    ///     scope.on_request_headers(stream, 0, true)
+    /// });
+    /// assert_eq!(paused?, Action::Pause);
+    /// let (call, callout) = pending.0.lock().unwrap().remove(0);
+    /// assert_eq!(guest.open_callout_count(), 1);
+    ///
+    /// // The proxy made the call, and it delivers the answer to the context that opened it.
+    /// let response = HttpCallResponse::received(vec![(b":status"[..].into(), b"200"[..].into())]);
+    /// let (delivered, _) = guest.with(NoStream, |scope| {
+    ///     scope.on_http_call_response(call.context, callout, response)
+    /// });
+    /// delivered?;
+    /// assert_eq!(guest.open_callout_count(), 0);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns [`GuestError::Callout`] when the callout is not open, when
@@ -429,7 +529,7 @@ mod tests {
 
     fn received() -> HttpCallResponse<'static> {
         HttpCallResponse::received(pairs(&[(b":status", b"200"), (b"x", b"y")]))
-            .with_body(Cow::Borrowed(b"hello"))
+            .with_body(Cow::Borrowed(&b"hello"[..]))
             .with_trailers(pairs(&[(b"t", b"v")]))
     }
 
@@ -484,7 +584,7 @@ mod tests {
         // Arrange
         let (mut guest, root, stream) = with_stream();
         let callout = open(&mut guest, stream, root);
-        let no_header = HttpCallResponse::received(Vec::new()).with_body(Cow::Borrowed(b"x"));
+        let no_header = HttpCallResponse::received(Vec::new()).with_body(Cow::Borrowed(&b"x"[..]));
         let mut scope = guest.enter_root();
 
         // Act

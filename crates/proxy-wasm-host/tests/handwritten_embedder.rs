@@ -5,7 +5,7 @@
 //! `tests/exports.rs` holds the list of names that surface is made of.
 //!
 //! The helpers below are test code, and the allowance clippy makes for a test
-//! does not reach a function of an integration test that carries no test
+//! does not reach a function of an integration test that has no test
 //! attribute.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -164,7 +164,7 @@ fn a_module_with_no_accepted_version_is_refused_by_name() {
     // Assert
     assert!(matches!(
         result,
-        Err(GuestError::UnsupportedAbi(UnsupportedAbi { found })) if found == ["proxy_abi_version_0_1_0"]
+        Err(GuestError::UnsupportedAbi(UnsupportedAbi { found, .. })) if found == ["proxy_abi_version_0_1_0"]
     ));
 }
 
@@ -196,11 +196,7 @@ fn an_embedder_names_the_grpc_surface_in_its_own_signatures() {
             Ok(())
         }
     }
-    let request = GrpcCall::new(
-        std::borrow::Cow::Borrowed(b"authz"),
-        std::borrow::Cow::Borrowed(b"example.Authz"),
-        std::borrow::Cow::Borrowed(b"Check"),
-    );
+    let request = GrpcCall::new(&b"authz"[..], &b"example.Authz"[..], &b"Check"[..]);
     let call = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
 
     // Act

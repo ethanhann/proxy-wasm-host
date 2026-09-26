@@ -33,12 +33,18 @@ pub enum Error {
         /// The runtime's own error.
         source: Box<dyn std::error::Error + Send + Sync>,
     },
-    /// The engine or the limits are configured in a way the runtime rejects.
-    #[error("invalid configuration: {message}")]
+    /// The engine or the limits are configured in a way the runtime rejects,
+    /// or a call asks the runtime for something it cannot do with the values
+    /// it was given.
+    #[error("the configuration is invalid: {message}")]
+    #[non_exhaustive]
     Config {
         /// What is wrong.
         message: String,
     },
+    /// The module was compiled on another engine than the host that runs it.
+    #[error("the module was compiled on another engine than the host")]
+    EngineMismatch,
     /// The module exports no memory named `memory`.
     #[error("the module exports no memory named \"memory\"")]
     MissingMemory,
@@ -59,6 +65,7 @@ pub enum Error {
     },
     /// The guest trapped.
     #[error("the guest trapped: {message}")]
+    #[non_exhaustive]
     Trap {
         /// The trap reason.
         message: String,
@@ -99,21 +106,21 @@ pub enum Error {
 }
 
 /// A resource limit that a guest can exceed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Limit {
     /// The CPU time limit, enforced through epoch interruption.
     Epoch,
     /// The fuel budget.
     Fuel,
-    /// The wasm stack.
+    /// The Wasm stack.
     Stack,
 }
 
 impl fmt::Display for Limit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Epoch => f.write_str("epoch"),
+            Self::Epoch => f.write_str("CPU time"),
             Self::Fuel => f.write_str("fuel"),
             Self::Stack => f.write_str("stack"),
         }
@@ -128,18 +135,6 @@ impl fmt::Display for Limit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum MemoryError {
-    /// The guest passed a negative address.
-    #[error("guest address {ptr} is negative")]
-    NegativePointer {
-        /// The value the guest passed.
-        ptr: i32,
-    },
-    /// The guest passed a negative length.
-    #[error("guest length {len} is negative")]
-    NegativeLength {
-        /// The value the guest passed.
-        len: i32,
-    },
     /// The address plus the length does not fit in 32 bits.
     #[error("guest range {ptr}+{len} does not fit in 32 bits")]
     RangeOverflow {
@@ -181,7 +176,7 @@ mod tests {
         let texts: Vec<String> = limits.iter().map(ToString::to_string).collect();
 
         // Assert
-        assert_eq!(texts, vec!["epoch", "fuel", "stack"]);
+        assert_eq!(texts, vec!["CPU time", "fuel", "stack"]);
     }
 
     #[test]
@@ -217,7 +212,7 @@ mod tests {
     #[test]
     fn memory_error_converts_into_error() {
         // Arrange
-        let memory_error = MemoryError::NegativePointer { ptr: -1 };
+        let memory_error = MemoryError::RangeOverflow { ptr: 1, len: 1 };
 
         // Act
         let error = Error::from(memory_error);
@@ -225,7 +220,7 @@ mod tests {
         // Assert
         assert!(matches!(
             error,
-            Error::Memory(MemoryError::NegativePointer { ptr: -1 })
+            Error::Memory(MemoryError::RangeOverflow { ptr: 1, len: 1 })
         ));
     }
 }

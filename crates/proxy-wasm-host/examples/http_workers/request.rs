@@ -168,7 +168,7 @@ pub fn pairs(map: &dyn HeaderMap) -> Vec<(String, String)> {
 ///
 /// A plugin that sent its own answer decides the status and the body.
 /// Otherwise the answer lists the headers the guest leaves behind, and it
-/// carries each header that the guest can change.
+/// includes each header that the guest can change.
 /// The length and the type of the answer belong to the answer, so the headers
 /// of the request do not reach it.
 pub fn answer_of(state: &HttpRequest, action: Action) -> Response<Cursor<Vec<u8>>> {

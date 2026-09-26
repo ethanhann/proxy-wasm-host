@@ -8,11 +8,10 @@
 //! and not that a guest of this project needs a fix.
 //!
 //! The helpers below are test code, and the allowance clippy makes for a test
-//! does not reach a function of an integration test that carries no test
+//! does not reach a function of an integration test that has no test
 //! attribute.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -316,8 +315,7 @@ fn the_auth_guest_opens_a_callout_and_resumes_on_an_even_byte() {
         scope.on_http_call_response(
             context,
             callout(1),
-            HttpCallResponse::received(vec![pair(":status", "200")])
-                .with_body(Cow::Borrowed(b"\x02")),
+            HttpCallResponse::received(vec![pair(":status", "200")]).with_body(&b"\x02"[..]),
         )
     });
 
@@ -353,8 +351,7 @@ fn the_auth_guest_answers_403_on_an_odd_byte() {
         scope.on_http_call_response(
             context,
             callout(1),
-            HttpCallResponse::received(vec![pair(":status", "200")])
-                .with_body(Cow::Borrowed(b"\x03")),
+            HttpCallResponse::received(vec![pair(":status", "200")]).with_body(&b"\x03"[..]),
         )
     });
 

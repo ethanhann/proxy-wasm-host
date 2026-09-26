@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn a_delivery_answers_the_buffer_it_holds_and_no_other() {
         // Arrange
-        let delivery = Delivery::grpc_message(callout(), Cow::Borrowed(b"hello"));
+        let delivery = Delivery::grpc_message(callout(), Cow::Borrowed(&b"hello"[..]));
 
         // Act
         let answers = [
@@ -308,7 +308,7 @@ mod tests {
         // Arrange
         let response = HttpCallResponse::received(pairs(b":status", b"200"))
             .with_trailers(pairs(b"grpc-status", b"0"))
-            .with_body(Cow::Borrowed(b"body"));
+            .with_body(Cow::Borrowed(&b"body"[..]));
         let mut delivery = Delivery::http_call_response(callout(), response);
 
         // Act
@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn a_foreign_function_delivery_holds_its_arguments_and_no_callout() {
         // Arrange
-        let delivery = Delivery::foreign_arguments(Cow::Borrowed(b"hello"));
+        let delivery = Delivery::foreign_arguments(Cow::Borrowed(&b"hello"[..]));
 
         // Act
         let arguments = delivery.buffer(DeliveredBuffer::ForeignFunctionArguments);

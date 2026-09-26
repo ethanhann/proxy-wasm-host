@@ -53,7 +53,7 @@ pub(super) fn proxy_http_call(
     let headers = GuestSlice::try_from((serialized_headers_data, serialized_headers_size))?;
     let body = GuestSlice::try_from((body_data, body_size))?;
     let trailers = GuestSlice::try_from((serialized_trailers_data, serialized_trailers_size))?;
-    let id_ptr = GuestPtr::try_from(return_call_id)?;
+    let id_ptr = GuestPtr::from(return_call_id);
     let timeout = Duration::from_millis(u64::from(timeout.cast_unsigned()));
     let (mut memory, state) = split(ctx)?;
     memory.read_u32(id_ptr)?;
@@ -102,7 +102,7 @@ pub(super) fn open_callout(
         tracing::warn!(context = %caller, "a context that is being deleted opens no callout");
         return Err(Status::InternalFailure.into());
     }
-    let maximum = state.abi().services().max_open_callouts();
+    let maximum = state.max_open_callouts();
     if state.abi().callouts().len() >= maximum {
         tracing::warn!(maximum, context = %caller, "the guest has its maximum of open callouts");
         return Err(Status::InternalFailure.into());
@@ -131,9 +131,9 @@ pub(super) fn proxy_get_status(
     return_status_message_data: i32,
     return_status_message_size: i32,
 ) -> Result<(), Failure> {
-    let code_ptr = GuestPtr::try_from(return_status_code)?;
-    let data_ptr = GuestPtr::try_from(return_status_message_data)?;
-    let size_ptr = GuestPtr::try_from(return_status_message_size)?;
+    let code_ptr = GuestPtr::from(return_status_code);
+    let data_ptr = GuestPtr::from(return_status_message_data);
+    let size_ptr = GuestPtr::from(return_status_message_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(code_ptr)?;
     memory.read_u32(data_ptr)?;
@@ -153,13 +153,14 @@ mod tests {
     use super::*;
     use crate::abi::v0_2_1::payload::Delivery;
     use crate::abi::v0_2_1::test_support::callouts::{
-        RecordingCallouts, callout_hosted, services_with,
+        RecordingCallouts, callout_hosted, callout_hosted_with_limits, services_with,
     };
     use crate::abi::v0_2_1::test_support::{
         engine, instance_with, outcome, returned, services, wat_bytes, write,
     };
     use crate::abi::v0_2_1::{Callback, CalloutId, HttpCallRefusal, HttpCallResponse, Invocation};
     use crate::codec::pairs::encode_pairs;
+    use crate::runtime::Limits;
     use crate::runtime::{Engine, Instance, Module};
 
     const GUEST: &str = r#"(module
@@ -518,8 +519,12 @@ mod tests {
 
     /// A case whose guest may have two open callouts and has `count`.
     fn at_most_two(service: &Arc<RecordingCallouts>, count: usize) -> (Instance, Arguments) {
-        let services = services_with(service.clone()).with_max_open_callouts(2);
-        let (mut instance, root) = callout_hosted(&engine(), GUEST, services);
+        let (mut instance, root) = callout_hosted_with_limits(
+            &engine(),
+            GUEST,
+            services_with(service.clone()),
+            &Limits::default().with_max_open_callouts(2),
+        );
         let arguments = arguments(&mut instance, &encode_pairs(&REQUEST).unwrap());
         let table = instance.state_mut().abi_mut().callouts_mut();
         for _ in 0..count {
@@ -563,8 +568,9 @@ mod tests {
         // Arrange
         let service = Arc::new(RecordingCallouts::new());
         let (mut instance, arguments) = at_most_two(&service, 2);
-        let services = instance.state_mut().abi_mut().services_mut();
-        *services = services.clone().with_max_open_callouts(1);
+        instance
+            .state_mut()
+            .set_guest_limits(&Limits::default().with_max_open_callouts(1));
 
         // Act
         let answer = http_call(&mut instance, &arguments);

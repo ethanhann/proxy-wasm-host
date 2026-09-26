@@ -21,7 +21,7 @@ impl<H: StreamState> CallScope<'_, H> {
     /// the ABI gives it no status.
     ///
     /// `context` may be a root context or a stream context.
-    /// The scope lends one stream state whatever context you name, so a call
+    /// The scope lends one stream state whatever context you pass, so a call
     /// on a root from inside a request scope lets the guest read the buffers
     /// and the properties of that request.
     ///

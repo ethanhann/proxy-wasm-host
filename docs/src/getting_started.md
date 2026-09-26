@@ -2,13 +2,13 @@
 
 ## Introduction
 
-`proxy-wasm-host` is a crate that allows WebAssembly modules to run as plugins in various proxy servers.
-It is a Rust implementation of the [proxy-wasm](https://github.com/proxy-wasm/spec) specification.
+`proxy-wasm-host` lets a proxy written in Rust run WebAssembly modules as plugins.
+It is a Rust implementation of the [Proxy-Wasm](https://github.com/proxy-wasm/spec) specification.
 
 The crate is a port of [proxy-wasm-go-host](https://github.com/mosn/proxy-wasm-go-host).
-Unlike the Golang implementation, `proxy-wasm-host` only supports version 2.0+ of the spec and has far more tests.
+It hosts guests built for ABI v0.2.1, and it also accepts guests built for v0.2.0.
 
-You do not need to use this crate unless you are building or maintaining a proxy written in Rust.
+If you build or maintain a proxy written in Rust and want it to run Proxy-Wasm plugins, this crate gives you the host side of the ABI.
 See [areweproxyyet.github.io](https://areweproxyyet.github.io/) for a list of proxies that might benefit from this crate.
 
 ## Installation
@@ -19,33 +19,44 @@ cargo add proxy-wasm-host
 
 ## Usage
 
-Usage of this crate assumes that you want to load and run a plugin in the host runtime this crate provides.
+To run a plugin you compile it into a `Module`, link the host functions once with `Host`, and bind a `Guest` to both.
 
-For example, given a pre-compiled plugin file called "foo.wasm", you would load it like this:
+For example, given a compiled plugin at `plugins/foo.wasm`, you load it like this:
 
 ```rust
+use std::sync::Arc;
+
+use proxy_wasm_host::abi::v0_2_1::types::LogLevel;
+use proxy_wasm_host::abi::v0_2_1::{Guest, Host, LogContext, LogSink, PluginConfig, VmServices};
+use proxy_wasm_host::{Engine, Limits, Module};
+
 const FOO_PLUGIN: &[u8] = include_bytes!("plugins/foo.wasm");
 
-fn main() {
-  // Our "foo.wasm" plugin.
-  let module = Module::new(&engine, FOO_PLUGIN).unwrap();
+// Where the log lines of the plugin go.
+struct Stderr;
 
-  // Set up the underlying host runtime.
-  let engine = Engine::new().unwrap();
+impl LogSink for Stderr {
+    fn log(&self, _: LogContext<'_>, _: LogLevel, message: &[u8]) {
+        eprintln!("{}", String::from_utf8_lossy(message));
+    }
+}
 
-  // Create services, e.g., logging, gRPC callouts, etc.
-  let sink = Arc::new(Sink::default());
-  let services = VmServices::new(sink.clone()).with_vm_configuration(vm_configuration);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Set up the runtime and compile the plugin.
+    let engine = Engine::new()?;
+    let module = Module::new(&engine, FOO_PLUGIN)?;
 
-  // Create the host from the runtime engine.
-  let host = Host::new(&engine).unwrap();
+    // Create the services the plugin reads, such as its log sink and its VM configuration.
+    let services = VmServices::new(Arc::new(Stderr)).with_vm_configuration(*b"{}");
 
-  // Create the guest from the host, module, services, and limits.
-  // The guest is a wrapper around the plugin that allows it to run on the host.
-  let guest = Guest::new(&host, &module, services, &Limits::default()).unwrap();
+    // Link the host functions once, then bind the guest to them with its limits.
+    let host = Host::new(&engine)?;
+    let mut guest = Guest::new(&host, &module, services, &Limits::default())?;
 
-  // Now start the proxy-wasm lifecycle of the guest/plugin to actually run it.
-  // ...
+    // Start the plugin, which creates its root context and runs its VM start and its configuration.
+    let started = guest.start(PluginConfig::new().with_name(*b"foo"))?;
+    println!("{started:?}");
+    Ok(())
 }
 ```
 

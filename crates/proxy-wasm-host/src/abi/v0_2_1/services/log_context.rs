@@ -62,14 +62,13 @@ pub struct LogContext<'a> {
     /// It holds the effective context, the callback, and the callout of a
     /// delivery.
     /// A sink that groups its lines by request reads the context from it.
-    /// A guest can also write a line when no callback is running, through
-    /// [`Guest::call_export`](crate::abi::v0_2_1::Guest::call_export) or from
-    /// its own start up code, and this is `None` there.
+    /// A guest can also write a line when no callback is running, from its
+    /// own startup code, and this is `None` there.
     pub call: Option<Invocation>,
 }
 
 impl<'a> LogContext<'a> {
-    /// A line from `guest` in the virtual machine `vm_id`, with no plugin
+    /// A line from `guest` in the VM `vm_id`, with no plugin
     /// and no call.
     ///
     /// Build one this way when you test a sink of your own.

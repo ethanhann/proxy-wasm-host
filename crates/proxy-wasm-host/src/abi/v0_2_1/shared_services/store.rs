@@ -50,9 +50,10 @@ struct Metrics {
 /// so a guest works without any shared state of your own.
 ///
 /// It serves one process.
-/// A metric recorded into it reaches no metric sink of your proxy, a value
-/// written into it is gone when the process ends, and a proxy that runs
-/// several processes supplies an implementation that reaches across them.
+/// A metric recorded into it reaches no metric sink of your proxy.
+/// A value written into it is gone when the process ends.
+/// A proxy that runs several processes supplies an implementation that
+/// reaches across them.
 ///
 /// Each family has its own lock, so a metric does not wait behind a queue,
 /// and a panic while a lock is held does not stop the other instances.
@@ -60,13 +61,20 @@ struct Metrics {
 /// A guest drives every one of these families directly, so the store bounds
 /// what it holds.
 /// [`InMemoryStoreLimits::default`] allows 4096 keys of at most 64 KiB each,
-/// 1024 items on a queue, 4096 queues, and 4096 metrics, and a write past a
-/// bound reports [`Status::InternalFailure`].
+/// 1024 items on a queue, 4096 queues, and 4096 metrics.
+/// A write past a bound reports [`Status::InternalFailure`].
 /// Change them with [`InMemoryStore::with_limits`].
 ///
 /// A histogram takes an observation and keeps no value, because the ABI gives
 /// a guest no way to read one back, and a read of a histogram reports
-/// [`Status::BadArgument`], which is what the reference host does.
+/// [`Status::BadArgument`], which is what the most widely used Proxy-Wasm
+/// host does.
+///
+/// The store gives you no read of the metrics a guest records.
+/// To export them, wrap the store in a [`SharedServices`] of your own that
+/// forwards every method and observes `define_metric`, `record_metric`, and
+/// `increment_metric` on the way through, so your metric sink sees each
+/// name and each value.
 #[derive(Debug, Default)]
 pub struct InMemoryStore {
     data: Mutex<BTreeMap<Key, (Vec<u8>, NonZeroU32)>>,
@@ -436,6 +444,78 @@ mod tests {
     }
 
     #[test]
+    fn a_second_write_moves_the_number_and_retires_the_first() {
+        // Arrange
+        let services = InMemoryStore::new();
+        services
+            .set_shared_data(call(), VM, b"k", b"v1", None)
+            .unwrap();
+        let first = services.get_shared_data(call(), VM, b"k").unwrap().cas;
+        services
+            .set_shared_data(call(), VM, b"k", b"v2", Some(first.get()))
+            .unwrap();
+
+        // Act
+        let second = services.get_shared_data(call(), VM, b"k").unwrap().cas;
+
+        // Assert
+        assert_ne!(first, second);
+        assert_eq!(
+            services.set_shared_data(call(), VM, b"k", b"v3", Some(first.get())),
+            Err(Status::CasMismatch)
+        );
+    }
+
+    #[test]
+    fn a_value_at_the_limit_is_stored_and_one_byte_more_is_refused() {
+        // Arrange
+        let services =
+            InMemoryStore::new().with_limits(InMemoryStoreLimits::new().with_value_bytes(4));
+
+        // Act
+        let results = (
+            services.set_shared_data(call(), VM, b"k", b"1234", None),
+            services.set_shared_data(call(), VM, b"j", b"12345", None),
+        );
+
+        // Assert
+        assert_eq!(results, (Ok(()), Err(Status::InternalFailure)));
+        assert_eq!(
+            services.get_shared_data(call(), VM, b"k").unwrap().bytes,
+            b"1234"
+        );
+    }
+
+    #[test]
+    fn an_item_at_the_limit_is_queued_and_a_larger_one_is_refused() {
+        // Arrange
+        let services =
+            InMemoryStore::new().with_limits(InMemoryStoreLimits::new().with_value_bytes(4));
+        let id = queue(&services, VM);
+
+        // Act
+        let results = (
+            services.enqueue_shared_queue(call(), id, b"1234"),
+            services.enqueue_shared_queue(call(), id, b"12345"),
+            services.enqueue_shared_queue(call(), id, b"123456789"),
+        );
+
+        // Assert
+        assert_eq!(
+            results,
+            (
+                Ok(()),
+                Err(Status::InternalFailure),
+                Err(Status::InternalFailure)
+            )
+        );
+        assert_eq!(
+            services.dequeue_shared_queue(call(), id),
+            Ok(b"1234".to_vec())
+        );
+    }
+
+    #[test]
     fn a_value_past_the_limit_is_refused() {
         // Arrange
         let services =
@@ -698,6 +778,21 @@ mod tests {
 
         // Assert
         assert_eq!(refused, Err(Status::BadArgument));
+        assert_eq!(services.get_metric(call(), metric), Ok(5));
+    }
+
+    #[test]
+    fn a_counter_accepts_a_delta_of_zero() {
+        // Arrange
+        let services = InMemoryStore::new();
+        let metric = counter(&services);
+        services.increment_metric(call(), metric, 5).unwrap();
+
+        // Act
+        let result = services.increment_metric(call(), metric, 0);
+
+        // Assert
+        assert_eq!(result, Ok(()));
         assert_eq!(services.get_metric(call(), metric), Ok(5));
     }
 

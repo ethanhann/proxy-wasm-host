@@ -1,5 +1,6 @@
 //! The state the ABI layer keeps in the wasmtime store.
 
+mod names;
 mod serving;
 
 use std::any::Any;
@@ -16,6 +17,7 @@ use crate::abi::v0_2_1::{
     VmServices,
 };
 use crate::runtime::HostState;
+pub(crate) use names::SharedName;
 
 /// Reaches the ABI state the store data holds.
 ///
@@ -59,6 +61,8 @@ pub(crate) struct AbiState {
     current_callback: Option<Callback>,
     queues: BTreeSet<QueueId>,
     metrics: BTreeSet<MetricId>,
+    held_names: BTreeSet<SharedName>,
+    vm_started: bool,
     granted_against: Option<Arc<dyn SharedServices>>,
     registrants: BTreeMap<QueueId, BTreeSet<ContextId>>,
     callouts: CalloutTable,
@@ -78,6 +82,8 @@ impl AbiState {
             current_callback: None,
             queues: BTreeSet::new(),
             metrics: BTreeSet::new(),
+            held_names: BTreeSet::new(),
+            vm_started: false,
             granted_against: None,
             registrants: BTreeMap::new(),
             callouts: CalloutTable::new(),
@@ -105,6 +111,7 @@ impl AbiState {
         }
         self.queues.clear();
         self.metrics.clear();
+        self.held_names.clear();
         self.registrants.clear();
         self.changes.queues.clear();
         self.granted_against = Some(Arc::clone(shared));

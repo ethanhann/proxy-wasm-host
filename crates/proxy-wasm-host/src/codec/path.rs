@@ -15,7 +15,8 @@ const SEPARATOR: u8 = 0;
 /// `[""]` encodes to no bytes.
 /// `["", ""]` encodes to one `0x00` byte.
 /// Both decode to no segments.
-pub fn encode_path<S: AsRef<[u8]>>(segments: &[S]) -> Vec<u8> {
+#[cfg(test)]
+pub(crate) fn encode_path<S: AsRef<[u8]>>(segments: &[S]) -> Vec<u8> {
     segments
         .iter()
         .map(AsRef::as_ref)
@@ -138,5 +139,19 @@ mod tests {
         assert_eq!(encodings[1], vec![0x00]);
         assert!(decode_path(&encodings[0]).is_empty());
         assert!(decode_path(&encodings[1]).is_empty());
+    }
+
+    #[test]
+    fn a_trailing_empty_segment_does_not_survive_the_round_trip() {
+        // Arrange
+        let segments: [&[u8]; 2] = [b"a", b""];
+
+        let encoded = encode_path(&segments);
+
+        // Act
+        let decoded = decode_path(&encoded);
+
+        // Assert
+        assert_eq!(decoded, vec![b"a".as_slice()]);
     }
 }

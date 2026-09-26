@@ -1,6 +1,6 @@
 //! Serialization of a map of byte string pairs.
 //!
-//! A non empty map is a `u32` pair count, then a `u32` key length and a `u32`
+//! A map with at least one pair is a `u32` pair count, then a `u32` key length and a `u32`
 //! value length for each pair, then each key and value in turn with a `0x00`
 //! byte after each one.
 //! An empty map is either no bytes or a single `0x00` byte.
@@ -78,7 +78,8 @@ pub const fn total_size(count: usize, pairs_size: usize) -> usize {
 }
 
 /// The size that [`encode_pairs`] would produce, without building it.
-pub fn encoded_size<K: AsRef<[u8]>, V: AsRef<[u8]>>(pairs: &[(K, V)]) -> usize {
+#[cfg(test)]
+pub(crate) fn encoded_size<K: AsRef<[u8]>, V: AsRef<[u8]>>(pairs: &[(K, V)]) -> usize {
     let pairs_size = pairs.iter().fold(0usize, |sum, (key, value)| {
         sum.saturating_add(pair_encoded_size(key.as_ref().len(), value.as_ref().len()))
     });
@@ -94,7 +95,8 @@ pub fn encoded_size<K: AsRef<[u8]>, V: AsRef<[u8]>>(pairs: &[(K, V)]) -> usize {
 ///
 /// Returns [`EncodeError`] when a key or a value is longer than `u32::MAX`
 /// bytes or when there are more than `u32::MAX` pairs.
-pub fn encode_pairs<K: AsRef<[u8]>, V: AsRef<[u8]>>(
+#[cfg(test)]
+pub(crate) fn encode_pairs<K: AsRef<[u8]>, V: AsRef<[u8]>>(
     pairs: &[(K, V)],
 ) -> Result<Vec<u8>, EncodeError> {
     encode_visited(&mut |visitor| {
@@ -458,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn hand_written_maps_round_trip() {
+    fn handwritten_maps_round_trip() {
         // Arrange
         let maps: Vec<Vec<(Vec<u8>, Vec<u8>)>> = vec![
             owned(&[]),
@@ -551,6 +553,66 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_source_that_grows_on_the_second_pass_encodes_the_measured_pairs() {
+        // Arrange
+        let mut passes = 0;
+        let mut source = |visitor: &mut PairVisitor<'_>| {
+            passes += 1;
+            let _ = visitor(b"k", b"v");
+            if passes > 1 {
+                let _ = visitor(b"k2", b"v2");
+            }
+            ControlFlow::Continue(())
+        };
+
+        // Act
+        let result = encode_visited(&mut source);
+
+        // Assert
+        assert_eq!(result, encode_pairs(&[(b"k".as_slice(), b"v".as_slice())]));
+    }
+
+    #[test]
+    fn a_decode_error_reports_the_index_of_the_pair_it_found() {
+        // Arrange
+        let mut bytes = encode_pairs(&[(b"a".as_slice(), b"1".as_slice()), (b"b", b"2")]).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] = b'x';
+
+        // Act
+        let result = decode_pairs(&bytes, PairLimits::unlimited());
+
+        // Assert
+        assert_eq!(
+            result,
+            Err(DecodeError::MissingTerminator {
+                pair: 1,
+                field: Field::Value,
+            })
+        );
+    }
+
+    #[test]
+    fn a_source_that_changes_between_the_two_passes_is_refused() {
+        // Arrange
+        let mut passes = 0;
+        let mut source = |visitor: &mut PairVisitor<'_>| {
+            passes += 1;
+            let _ = visitor(b"k", b"v");
+            if passes == 1 {
+                let _ = visitor(b"k2", b"v2");
+            }
+            ControlFlow::Continue(())
+        };
+
+        // Act
+        let result = encode_visited(&mut source);
+
+        // Assert
+        assert_eq!(result, Err(EncodeError::Changed));
     }
 
     #[test]
@@ -828,7 +890,7 @@ mod tests {
                 "key",
                 "value",
                 "pair 2 value is not terminated by 0x00",
-                "7 pairs exceeds u32::MAX",
+                "7 pairs exceed u32::MAX",
             ]
         );
     }

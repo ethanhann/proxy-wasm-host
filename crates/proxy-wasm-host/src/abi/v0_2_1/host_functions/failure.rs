@@ -26,45 +26,45 @@ impl From<Status> for Failure {
 }
 
 impl From<MemoryError> for Failure {
-    fn from(error: MemoryError) -> Self {
-        Self::Status(Status::from(error))
+    fn from(_: MemoryError) -> Self {
+        Self::Status(Status::InvalidMemoryAccess)
     }
 }
 
 impl From<UnknownValue> for Failure {
-    fn from(error: UnknownValue) -> Self {
-        Self::Status(Status::from(error))
+    fn from(_: UnknownValue) -> Self {
+        Self::Status(Status::BadArgument)
     }
 }
 
 impl From<InvalidContextId> for Failure {
-    fn from(error: InvalidContextId) -> Self {
-        Self::Status(Status::from(error))
+    fn from(_: InvalidContextId) -> Self {
+        Self::Status(Status::BadArgument)
     }
 }
 
 impl From<DecodeError> for Failure {
-    fn from(error: DecodeError) -> Self {
-        Self::Status(Status::from(error))
+    fn from(_: DecodeError) -> Self {
+        Self::Status(Status::BadArgument)
     }
 }
 
 impl From<EncodeError> for Failure {
-    fn from(error: EncodeError) -> Self {
-        Self::Status(Status::from(error))
+    fn from(_: EncodeError) -> Self {
+        Self::Status(Status::SerializationFailure)
     }
 }
 
 impl From<NotAllowed> for Failure {
-    fn from(error: NotAllowed) -> Self {
-        Self::Status(Status::from(error))
+    fn from(_: NotAllowed) -> Self {
+        Self::Status(Status::BadArgument)
     }
 }
 
 impl From<Error> for Failure {
     fn from(error: Error) -> Self {
         match error {
-            Error::Memory(memory) => Self::Status(Status::from(memory)),
+            Error::Memory(_) => Self::Status(Status::InvalidMemoryAccess),
             Error::ValueTooLarge { .. } | Error::AllocationFailed { .. } => {
                 Self::Status(Status::InternalFailure)
             }
@@ -77,6 +77,7 @@ impl From<Error> for Failure {
             | Error::Compile { .. }
             | Error::Instantiate { .. }
             | Error::Config { .. }
+            | Error::EngineMismatch
             | Error::MissingExport { .. }
             | Error::ExportTypeMismatch { .. } => Self::Unwind(error),
         }
@@ -116,7 +117,11 @@ mod tests {
         // Arrange
         let source = || -> Box<dyn std::error::Error + Send + Sync> { "refused".into() };
         let errors = [
-            Error::Memory(MemoryError::NegativePointer { ptr: -1 }),
+            Error::Memory(MemoryError::OutOfBounds {
+                ptr: 1,
+                len: 1,
+                memory_size: 1,
+            }),
             Error::ValueTooLarge { size: 1 },
             Error::AllocationFailed { size: 1 },
             Error::Compile { source: source() },
@@ -184,7 +189,11 @@ mod tests {
     fn errors_split_into_statuses_and_unwinds() {
         // Arrange
         let errors = [
-            Error::Memory(MemoryError::NegativePointer { ptr: -1 }),
+            Error::Memory(MemoryError::OutOfBounds {
+                ptr: 1,
+                len: 1,
+                memory_size: 1,
+            }),
             Error::ValueTooLarge { size: 5 },
             Error::AllocationFailed { size: 5 },
             Error::Poisoned,

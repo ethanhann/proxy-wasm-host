@@ -10,7 +10,7 @@ pub(super) fn proxy_get_current_time_nanoseconds(
     ctx: &mut impl AsContextMut<Data = HostState>,
     return_time: i32,
 ) -> Result<(), Failure> {
-    let return_time = GuestPtr::try_from(return_time)?;
+    let return_time = GuestPtr::from(return_time);
     let (mut memory, state) = split(ctx)?;
     let now = state.abi().services().clock().realtime_nanos();
     memory.write_u64(return_time, now)?;

@@ -14,14 +14,14 @@
 //! The address zero is a legal address for every host function but
 //! `proxy_call_foreign_function`, where the ABI document calls the return
 //! values optional and the crate reads zero as "I do not want this value".
-//! A guest cannot lose a value that way, because the toolchains leave the
-//! first page of memory unused so that a null pointer traps.
+//! A guest cannot lose a value that way, because a write to address zero
+//! lands in the low bytes that the toolchains leave unused, and a value the
+//! guest asked for is written there like anywhere else.
 //!
 //! # The host functions
 //!
 //! A guest imports 39 functions from the module `env`.
 //! The crate registers every one of them for every guest.
-//! The table says who answers each call.
 //!
 //! The second column shows who answers.
 //! "The crate" means that no method of yours runs.
@@ -46,9 +46,6 @@
 //! to the guest.
 //! [`StreamState`] and [`SharedServices`] list the status each one gives when
 //! you do not implement it.
-//!
-//! The last column is written by hand, and the test that reads this table
-//! compares the names and the shape of each row and not that column.
 //!
 //! | Function | Served by | Method | Also answers |
 //! |---|---|---|---|
@@ -80,11 +77,11 @@
 //! | `proxy_grpc_close` | the callouts | [`Callouts::grpc_close`] and [`Callouts::grpc_cancel`] | `NOT_FOUND` |
 //! | `proxy_set_shared_data` | the shared services | [`SharedServices::set_shared_data`] | `NOT_FOUND` |
 //! | `proxy_get_shared_data` | the shared services | [`SharedServices::get_shared_data`] | `NOT_FOUND` |
-//! | `proxy_register_shared_queue` | the shared services | [`SharedServices::register_shared_queue`] | `NOT_FOUND` |
-//! | `proxy_resolve_shared_queue` | the shared services | [`SharedServices::resolve_shared_queue`] | `NOT_FOUND` |
+//! | `proxy_register_shared_queue` | the shared services | [`SharedServices::register_shared_queue`] | `NOT_FOUND`, `INTERNAL_FAILURE` |
+//! | `proxy_resolve_shared_queue` | the shared services | [`SharedServices::resolve_shared_queue`] | `NOT_FOUND`, `INTERNAL_FAILURE` |
 //! | `proxy_enqueue_shared_queue` | the shared services | [`SharedServices::enqueue_shared_queue`] | `NOT_FOUND` |
 //! | `proxy_dequeue_shared_queue` | the shared services | [`SharedServices::dequeue_shared_queue`] | `NOT_FOUND` |
-//! | `proxy_define_metric` | the shared services | [`SharedServices::define_metric`] | `NOT_FOUND` |
+//! | `proxy_define_metric` | the shared services | [`SharedServices::define_metric`] | `NOT_FOUND`, `INTERNAL_FAILURE` |
 //! | `proxy_record_metric` | the shared services | [`SharedServices::record_metric`] | `NOT_FOUND` |
 //! | `proxy_increment_metric` | the shared services | [`SharedServices::increment_metric`] | `NOT_FOUND` |
 //! | `proxy_get_metric` | the shared services | [`SharedServices::get_metric`] | `NOT_FOUND` |
@@ -101,7 +98,7 @@
 //! |---|---|---|
 //! | The pairs one map a guest sends may declare | 1024 | [`Limits::with_max_decoded_pairs`](crate::Limits::with_max_decoded_pairs) |
 //! | The bytes one map a guest sends may hold | 1 MiB | [`Limits::with_max_decoded_map_bytes`](crate::Limits::with_max_decoded_map_bytes) |
-//! | The callouts one guest may hold open | 1024 | [`VmServices::with_max_open_callouts`] |
+//! | The callouts one guest may hold open | 1024 | [`Limits::with_max_open_callouts`](crate::Limits::with_max_open_callouts) |
 //! | The shared queues and metrics one guest may hold | 1024 | [`Limits::with_max_shared_names`](crate::Limits::with_max_shared_names) |
 //! | The bytes of one name or key a guest sends | 4096 | [`Limits::with_max_name_bytes`](crate::Limits::with_max_name_bytes) |
 //! | The bytes of one message a guest logs | 1 MiB | [`Limits::with_max_log_bytes`](crate::Limits::with_max_log_bytes) |
@@ -111,14 +108,18 @@
 //! | The queues of the shared store | 4096 | [`InMemoryStore::with_limits`] |
 //! | The metrics of the shared store | 4096 | [`InMemoryStore::with_limits`] |
 //! | The CPU time of one guest call | one second | [`Limits::with_cpu_time`](crate::Limits::with_cpu_time) |
-//! | The memory of one instance | 128 MiB | [`Limits::with_memory_bytes`](crate::Limits::with_memory_bytes) |
+//! | The memory of one instance, which has one linear memory | 128 MiB | [`Limits::with_memory_bytes`](crate::Limits::with_memory_bytes) |
+//! | The elements of the table of one instance | 10,000 | [`Limits::with_table_elements`](crate::Limits::with_table_elements) |
 //! | The WASI functions a guest may import | the eight the ABI defines | fixed |
 //!
-//! The first three rows match the most widely used Proxy-Wasm host, so a
+//! The first two rows match the most widely used Proxy-Wasm host, so a
 //! plugin that works there is not refused here.
-//! The three rows after them, the store rows, and the two instance rows are
-//! limits of this crate.
-//! No other host applies them.
+//! The rows after them are limits of this crate, and the numbers are its own.
+//! Other hosts bound the memory of an instance too, with numbers of their
+//! own.
+//! The CPU time is measured in epochs of wall clock time, so a guest that
+//! waits inside a host function of yours spends the budget without using a
+//! processor.
 //!
 //! A guest over the shared name limit or the name byte limit receives
 //! `INTERNAL_FAILURE` from the call it made, and the service is not asked.
@@ -136,9 +137,8 @@
 //! `environ_get`, `args_sizes_get`, `args_get`, and `proc_exit`.
 //! A guest that imports any other name from `wasi_snapshot_preview1` fails to
 //! instantiate.
-//! Every guest this project builds imports at most those eight, which covers
-//! its own three guests, a `TinyGo` fixture, and seven example plugins of the
-//! Rust SDK.
+//! Every guest built with the Rust SDK or with `TinyGo` imports at most those
+//! eight.
 //! A guest built by the Go compiler imports more and does not load.
 //!
 //! # Where answers can differ from other hosts
@@ -151,8 +151,11 @@
 //!    the running callback. A host that accepts any context of the virtual
 //!    machine lets a request of one plugin read the configuration of another
 //!    plugin in the same machine.
-//! 2. A callout belongs to the context that opened it, so one request cannot
-//!    cancel or feed the callout of another request of the same plugin.
+//! 2. A callout belongs to the context that opened it, so a callout
+//!    identifier that another request of the same plugin passes by mistake
+//!    is refused. A guest that switches to a sibling context with
+//!    `proxy_set_effective_context` acts for that context on purpose, and
+//!    the crate does not stop it.
 //! 3. A callout whose headers lack `:authority`, `:method`, or `:path` is
 //!    refused with `BAD_ARGUMENT`, as the ABI document requires. Some hosts
 //!    leave that check to the proxy.
@@ -217,9 +220,10 @@
 //! [`InMemoryStoreLimits`], and the values involved are [`SharedValue`],
 //! [`QueueId`], [`MetricId`], [`InvalidQueueId`], and [`InvalidMetricId`].
 //! The enumerations the ABI defines are under [`types`].
-//! [`WasmParams`] and [`WasmResults`] bound the types of
-//! [`Guest::call_export`].
 
+// The last column of the host function table is written by hand, and the
+// test that reads the table compares the names and the shape of each row and
+// not that column.
 pub mod types;
 
 mod call_scope;
@@ -269,16 +273,9 @@ pub use shared_services::{
 };
 pub use stream_state::values::{ForeignCall, HeaderPairs, LocalResponse};
 pub use stream_state::{Access, Invocation, NoStream, StreamState};
-/// The traits that bound the parameters and the results of
-/// [`Guest::call_export`].
-///
-/// A change of the wasmtime major version is a breaking change of this
-/// crate.
-#[doc(no_inline)]
-pub use wasmtime::{WasmParams, WasmResults};
 
 pub(crate) use context::table::ContextTable;
-pub(crate) use state::{AbiAccess, AbiState};
+pub(crate) use state::{AbiAccess, AbiState, SharedName};
 
 /// Builds the ABI state of one instance, boxed for the store data to hold.
 ///

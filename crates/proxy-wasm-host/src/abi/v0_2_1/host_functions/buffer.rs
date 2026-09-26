@@ -179,8 +179,8 @@ pub(super) fn proxy_get_buffer_bytes(
     let buffer_type = BufferType::try_from(buffer_id)?;
     let start = as_usize(start);
     let max_size = as_usize(max_size);
-    let data_ptr = GuestPtr::try_from(return_value_data)?;
-    let size_ptr = GuestPtr::try_from(return_value_size)?;
+    let data_ptr = GuestPtr::from(return_value_data);
+    let size_ptr = GuestPtr::from(return_value_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
@@ -226,8 +226,8 @@ pub(super) fn proxy_get_buffer_status(
     return_unused: i32,
 ) -> Result<(), Failure> {
     let buffer_type = BufferType::try_from(buffer_id)?;
-    let size_ptr = GuestPtr::try_from(return_buffer_size)?;
-    let unused_ptr = GuestPtr::try_from(return_unused)?;
+    let size_ptr = GuestPtr::from(return_buffer_size);
+    let unused_ptr = GuestPtr::from(return_unused);
     let (memory, state) = split(ctx)?;
     memory.read_u32(size_ptr)?;
     memory.read_u32(unused_ptr)?;
@@ -859,8 +859,8 @@ mod tests {
     #[test]
     fn a_guest_under_a_refused_root_is_not_served_the_plugin_configuration() {
         // Arrange
-        // The existing test drives the body. This one drives a guest, so it
-        // dies if the rejection is not consulted before the read.
+        // This test drives a guest rather than the body, so it fails when
+        // the rejection is not consulted before the read.
         let mut instance = configured(b"vm", b"plugin bytes");
         let root = instance.state().abi().contexts().effective().unwrap();
         instance.state_mut().abi_mut().contexts_mut().reject(root);

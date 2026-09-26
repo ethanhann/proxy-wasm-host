@@ -1,4 +1,4 @@
-//! The per instance resource limits.
+//! The per-instance resource limits.
 
 use std::time::Duration;
 
@@ -9,6 +9,8 @@ const DEFAULT_MEMORY_BYTES: usize = 128 * 1024 * 1024;
 const DEFAULT_MAX_SHARED_NAMES: usize = 1024;
 const DEFAULT_MAX_NAME_BYTES: usize = 4096;
 const DEFAULT_MAX_LOG_BYTES: usize = 1024 * 1024;
+pub(crate) const DEFAULT_MAX_OPEN_CALLOUTS: usize = 1024;
+const DEFAULT_TABLE_ELEMENTS: usize = 10_000;
 
 /// The resources one instance may use.
 ///
@@ -21,7 +23,7 @@ const DEFAULT_MAX_LOG_BYTES: usize = 1024 * 1024;
 /// The last three bound the queues and the metrics one guest holds, the
 /// bytes of one name or key a guest sends, and the bytes of one line a guest
 /// logs.
-/// The struct is non exhaustive, so build it with [`Limits::new`] and the
+/// The struct is non-exhaustive, so build it with [`Limits::new`] and the
 /// `with_*` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -34,6 +36,8 @@ pub struct Limits {
     max_shared_names: Option<usize>,
     max_name_bytes: Option<usize>,
     max_log_bytes: Option<usize>,
+    max_open_callouts: usize,
+    table_elements: Option<usize>,
 }
 
 impl Default for Limits {
@@ -47,6 +51,8 @@ impl Default for Limits {
             max_shared_names: Some(DEFAULT_MAX_SHARED_NAMES),
             max_name_bytes: Some(DEFAULT_MAX_NAME_BYTES),
             max_log_bytes: Some(DEFAULT_MAX_LOG_BYTES),
+            max_open_callouts: DEFAULT_MAX_OPEN_CALLOUTS,
+            table_elements: Some(DEFAULT_TABLE_ELEMENTS),
         }
     }
 }
@@ -60,6 +66,11 @@ impl Limits {
     }
 
     /// Sets the CPU time each guest call may use.
+    ///
+    /// The engine measures it in epochs of wall clock time, so a call that
+    /// waits inside a host function of yours spends the budget without using
+    /// a processor, and the bound is reached between the time you set and
+    /// that time plus one epoch period.
     #[must_use]
     pub fn with_cpu_time(mut self, cpu_time: Duration) -> Self {
         self.cpu_time = cpu_time;
@@ -173,6 +184,35 @@ impl Limits {
         self
     }
 
+    /// Sets how many callouts the guest may have open at one time.
+    ///
+    /// The default is 1024.
+    /// A guest at the maximum gets `INTERNAL_FAILURE` for a new callout.
+    /// The crate reports that refusal through `tracing` at the warn level.
+    /// It reads the value at each new callout, and a value below the number
+    /// of open callouts keeps them and refuses a new one.
+    #[must_use]
+    pub fn with_max_open_callouts(mut self, maximum: usize) -> Self {
+        self.max_open_callouts = maximum;
+        self
+    }
+
+    /// Sets how many elements the table of the guest may hold, or removes
+    /// the bound with `None`.
+    ///
+    /// The default is 10,000.
+    /// A guest keeps its function pointers in a table, and `table.grow`
+    /// past the bound fails in the same way as `memory.grow` past the memory
+    /// ceiling.
+    /// Each element costs the host memory outside the memory ceiling, so a
+    /// guest with no table bound can grow the table without limit.
+    /// The guests of the Rust SDK need a few thousand elements at most.
+    #[must_use]
+    pub fn with_table_elements(mut self, table_elements: impl Into<Option<usize>>) -> Self {
+        self.table_elements = table_elements.into();
+        self
+    }
+
     /// The CPU time each guest call may use.
     pub fn cpu_time(&self) -> Duration {
         self.cpu_time
@@ -214,12 +254,18 @@ impl Limits {
         self.max_log_bytes
     }
 
-    /// The two decode limits as one value, which
-    /// [`decode_pairs`](crate::codec::pairs::decode_pairs) takes.
-    ///
-    /// Pass it when you decode a map of your own, so your rule and the rule
-    /// the crate applies to a guest are the same one.
-    pub fn pair_limits(&self) -> PairLimits {
+    /// How many callouts the guest may have open at one time.
+    pub fn max_open_callouts(&self) -> usize {
+        self.max_open_callouts
+    }
+
+    /// The elements the table of the guest may hold, if bounded.
+    pub fn table_elements(&self) -> Option<usize> {
+        self.table_elements
+    }
+
+    /// The two decode limits as one value for the pair codec.
+    pub(crate) fn pair_limits(&self) -> PairLimits {
         PairLimits::unlimited()
             .with_pairs(self.max_decoded_pairs)
             .with_bytes(self.max_decoded_map_bytes)

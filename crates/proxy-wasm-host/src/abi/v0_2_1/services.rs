@@ -1,4 +1,4 @@
-//! The services and the VM scoped inputs an embedder gives to a guest.
+//! The services and the VM-scoped inputs an embedder gives to a guest.
 
 use std::sync::Arc;
 
@@ -11,8 +11,6 @@ pub use log_context::LogContext;
 use crate::abi::v0_2_1::callout_service::NoCallouts;
 use crate::abi::v0_2_1::types::LogLevel;
 use crate::abi::v0_2_1::{Callouts, InMemoryStore, SharedServices};
-
-pub(crate) const DEFAULT_MAX_OPEN_CALLOUTS: usize = 1024;
 
 /// Where guest log output goes.
 ///
@@ -33,10 +31,11 @@ pub trait LogSink: Send + Sync {
     fn log(&self, context: LogContext<'_>, level: LogLevel, message: &[u8]);
 }
 
-/// What the host performs for a guest, and the VM scoped inputs the guest
+/// What the host performs for a guest, and the VM-scoped inputs the guest
 /// reads.
 ///
-/// The services are the log sink and the clock.
+/// The services are the log sink, the clock, the shared services, and the
+/// callouts service.
 /// The inputs are the environment variables, the VM id, the VM configuration,
 /// and the log level the guest can ask for.
 /// Build one per instance and pass it to [`Guest::new`](crate::abi::v0_2_1::Guest::new).
@@ -60,7 +59,6 @@ pub struct VmServices {
     vm_configuration: Vec<u8>,
     shared: Arc<dyn SharedServices>,
     callouts: Arc<dyn Callouts>,
-    max_open_callouts: usize,
 }
 
 impl std::fmt::Debug for VmServices {
@@ -76,7 +74,7 @@ impl std::fmt::Debug for VmServices {
 
 impl VmServices {
     /// Services that log to `log`, read [`SystemClock`], report
-    /// [`LogLevel::Info`], hold a [`InMemoryStore`], and have no
+    /// [`LogLevel::Info`], hold an [`InMemoryStore`], and have no
     /// environment, no VM id, and no VM configuration.
     ///
     /// The store this installs is private to the value you get back, so two
@@ -97,7 +95,6 @@ impl VmServices {
             vm_configuration: Vec::new(),
             shared: Arc::new(InMemoryStore::new()),
             callouts: Arc::new(NoCallouts),
-            max_open_callouts: DEFAULT_MAX_OPEN_CALLOUTS,
         }
     }
 
@@ -154,7 +151,7 @@ impl VmServices {
     /// `CallScope::on_vm_start` reports the length of these bytes to the
     /// guest.
     /// If you replace them after the guest started, the guest reads bytes
-    /// whose length it was never told, so that is yours to manage.
+    /// whose length it was never told, so replace them before the start.
     #[must_use]
     pub fn with_vm_configuration(mut self, configuration: impl Into<Vec<u8>>) -> Self {
         self.vm_configuration = configuration.into();
@@ -192,19 +189,6 @@ impl VmServices {
         self
     }
 
-    /// Sets how many callouts the guest may have open at one time.
-    ///
-    /// The default is 1024.
-    /// A guest at the maximum gets `INTERNAL_FAILURE` for a new callout.
-    /// The crate reports that refusal through `tracing` at the warn level.
-    /// It reads the value at each new callout, and a value below the number
-    /// of open callouts keeps them and refuses a new one.
-    #[must_use]
-    pub fn with_max_open_callouts(mut self, maximum: usize) -> Self {
-        self.max_open_callouts = maximum;
-        self
-    }
-
     /// The service that receives the callouts of the guest.
     ///
     /// The `Arc` is returned rather than the value behind it, because you
@@ -215,11 +199,6 @@ impl VmServices {
     /// only a callout function of the guest enters one in its record.
     pub fn callouts(&self) -> &Arc<dyn Callouts> {
         &self.callouts
-    }
-
-    /// How many callouts the guest may have open at one time.
-    pub fn max_open_callouts(&self) -> usize {
-        self.max_open_callouts
     }
 
     /// The shared data, the shared queues, and the metrics.

@@ -75,7 +75,6 @@ macro_rules! host_functions {
             )*
         ];
 
-        /// Registers every host function under the `env` module.
         /// Registers the WASI functions and then every host function under
         /// the `env` module.
         ///
@@ -138,11 +137,11 @@ mod tests {
 
     use super::*;
     use crate::abi::v0_2_1::InMemoryStoreLimits;
-    use crate::abi::v0_2_1::services::DEFAULT_MAX_OPEN_CALLOUTS;
     use crate::abi::v0_2_1::test_support::{engine, import_everything, instance, status};
     use crate::abi::v0_2_1::types::Status;
     use crate::abi::v0_2_1::wasi::WASI_FUNCTIONS;
     use crate::codec::pairs::{DEFAULT_MAX_DECODED_MAP_BYTES, DEFAULT_MAX_DECODED_PAIRS};
+    use crate::runtime::DEFAULT_MAX_OPEN_CALLOUTS;
     use crate::runtime::Limits;
 
     /// The module rustdoc that documents this table.

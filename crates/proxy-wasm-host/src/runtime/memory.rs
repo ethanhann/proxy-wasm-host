@@ -11,14 +11,14 @@ use crate::runtime::HostState;
 
 /// One address in guest memory.
 ///
-/// A guest passes an address as a signed 32 bit value, and the crate rejects
-/// a negative one, so it serves the first two gibibytes of a guest memory.
+/// A guest passes an address as a signed 32-bit value, and the crate reads
+/// its bits as unsigned, so it serves the whole memory of a guest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GuestPtr(u32);
+pub(crate) struct GuestPtr(u32);
 
 impl GuestPtr {
     /// The address as an unsigned offset.
-    pub fn address(self) -> u32 {
+    pub(crate) fn address(self) -> u32 {
         self.0
     }
 
@@ -28,19 +28,18 @@ impl GuestPtr {
     }
 }
 
-impl TryFrom<i32> for GuestPtr {
-    type Error = MemoryError;
-
-    fn try_from(ptr: i32) -> Result<Self, MemoryError> {
-        u32::try_from(ptr)
-            .map(Self)
-            .map_err(|_| MemoryError::NegativePointer { ptr })
+impl From<i32> for GuestPtr {
+    /// Reads the raw bits as unsigned, because the ABI types every address
+    /// as unsigned and a guest memory above 2 GiB has addresses that arrive
+    /// negative.
+    fn from(ptr: i32) -> Self {
+        Self(ptr.cast_unsigned())
     }
 }
 
 /// A range in guest memory, as an address and a length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GuestSlice {
+pub(crate) struct GuestSlice {
     ptr: u32,
     len: u32,
 }
@@ -52,7 +51,7 @@ impl GuestSlice {
     ///
     /// Returns [`MemoryError::RangeOverflow`] when the end does not fit in
     /// 32 bits.
-    pub fn new(ptr: GuestPtr, len: u32) -> Result<Self, MemoryError> {
+    pub(crate) fn new(ptr: GuestPtr, len: u32) -> Result<Self, MemoryError> {
         ptr.0
             .checked_add(len)
             .map(|_| Self { ptr: ptr.0, len })
@@ -60,18 +59,18 @@ impl GuestSlice {
     }
 
     /// The start of the range.
-    pub fn ptr(self) -> GuestPtr {
+    pub(crate) fn ptr(self) -> GuestPtr {
         GuestPtr(self.ptr)
     }
 
     /// The length of the range in bytes.
-    pub fn len(self) -> u32 {
+    pub(crate) fn len(self) -> u32 {
         self.len
     }
 
     /// Whether the range spans no bytes.
     #[cfg(test)]
-    pub fn is_empty(self) -> bool {
+    pub(crate) fn is_empty(self) -> bool {
         self.len == 0
     }
 
@@ -100,9 +99,7 @@ impl TryFrom<(i32, i32)> for GuestSlice {
     type Error = MemoryError;
 
     fn try_from((ptr, len): (i32, i32)) -> Result<Self, MemoryError> {
-        let ptr = GuestPtr::try_from(ptr)?;
-        let len = u32::try_from(len).map_err(|_| MemoryError::NegativeLength { len })?;
-        Self::new(ptr, len)
+        Self::new(GuestPtr::from(ptr), len.cast_unsigned())
     }
 }
 
@@ -110,7 +107,7 @@ impl TryFrom<(i32, i32)> for GuestSlice {
 ///
 /// Never keep it across a call into the guest, because the guest may grow
 /// its memory.
-pub struct GuestMemory<'a> {
+pub(crate) struct GuestMemory<'a> {
     bytes: &'a mut [u8],
 }
 
@@ -120,7 +117,7 @@ impl<'a> GuestMemory<'a> {
     }
 
     /// The memory size in bytes.
-    pub fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         self.bytes.len()
     }
 
@@ -130,7 +127,7 @@ impl<'a> GuestMemory<'a> {
     ///
     /// Returns [`MemoryError::OutOfBounds`] when the range ends past the
     /// memory.
-    pub fn read(&self, slice: GuestSlice) -> Result<&[u8], MemoryError> {
+    pub(crate) fn read(&self, slice: GuestSlice) -> Result<&[u8], MemoryError> {
         let range = slice.bounds(self.bytes.len())?;
         Ok(&self.bytes[range])
     }
@@ -141,7 +138,7 @@ impl<'a> GuestMemory<'a> {
     ///
     /// Returns [`MemoryError::OutOfBounds`] when the range ends past the
     /// memory.
-    pub fn slice_mut(&mut self, slice: GuestSlice) -> Result<&mut [u8], MemoryError> {
+    pub(crate) fn slice_mut(&mut self, slice: GuestSlice) -> Result<&mut [u8], MemoryError> {
         let range = slice.bounds(self.bytes.len())?;
         Ok(&mut self.bytes[range])
     }
@@ -153,7 +150,7 @@ impl<'a> GuestMemory<'a> {
     /// Returns [`MemoryError::LengthMismatch`] when `bytes` is not exactly as
     /// long as the range, and [`MemoryError::OutOfBounds`] when the range
     /// ends past the memory.
-    pub fn write(&mut self, slice: GuestSlice, bytes: &[u8]) -> Result<(), MemoryError> {
+    pub(crate) fn write(&mut self, slice: GuestSlice, bytes: &[u8]) -> Result<(), MemoryError> {
         if bytes.len() != usize::try_from(slice.len).unwrap_or(usize::MAX) {
             return Err(MemoryError::LengthMismatch {
                 expected: slice.len,
@@ -169,7 +166,7 @@ impl<'a> GuestMemory<'a> {
     /// # Errors
     ///
     /// Returns [`MemoryError`] when the four bytes are not inside the memory.
-    pub fn read_u32(&self, ptr: GuestPtr) -> Result<u32, MemoryError> {
+    pub(crate) fn read_u32(&self, ptr: GuestPtr) -> Result<u32, MemoryError> {
         let bytes = self.read(GuestSlice::new(ptr, 4)?)?;
         Ok(u32::from_le_bytes(word::<4>(bytes)))
     }
@@ -179,7 +176,7 @@ impl<'a> GuestMemory<'a> {
     /// # Errors
     ///
     /// Returns [`MemoryError`] when the four bytes are not inside the memory.
-    pub fn write_u32(&mut self, ptr: GuestPtr, value: u32) -> Result<(), MemoryError> {
+    pub(crate) fn write_u32(&mut self, ptr: GuestPtr, value: u32) -> Result<(), MemoryError> {
         self.write(GuestSlice::new(ptr, 4)?, &value.to_le_bytes())
     }
 
@@ -188,7 +185,7 @@ impl<'a> GuestMemory<'a> {
     /// # Errors
     ///
     /// Returns [`MemoryError`] when the eight bytes are not inside the memory.
-    pub fn read_u64(&self, ptr: GuestPtr) -> Result<u64, MemoryError> {
+    pub(crate) fn read_u64(&self, ptr: GuestPtr) -> Result<u64, MemoryError> {
         let bytes = self.read(GuestSlice::new(ptr, 8)?)?;
         Ok(u64::from_le_bytes(word::<8>(bytes)))
     }
@@ -198,7 +195,7 @@ impl<'a> GuestMemory<'a> {
     /// # Errors
     ///
     /// Returns [`MemoryError`] when the eight bytes are not inside the memory.
-    pub fn write_u64(&mut self, ptr: GuestPtr, value: u64) -> Result<(), MemoryError> {
+    pub(crate) fn write_u64(&mut self, ptr: GuestPtr, value: u64) -> Result<(), MemoryError> {
         self.write(GuestSlice::new(ptr, 8)?, &value.to_le_bytes())
     }
 }
@@ -244,26 +241,19 @@ mod tests {
     }
 
     #[test]
-    fn guest_ptr_accepts_non_negative_values_and_rejects_negative_ones() {
+    fn guest_ptr_reads_its_bits_as_an_unsigned_address() {
         // Arrange
         let values = [0, i32::MAX, -1];
 
         // Act
-        let results: Vec<_> = values.iter().map(|&v| GuestPtr::try_from(v)).collect();
+        let results: Vec<_> = values.iter().map(|&v| GuestPtr::from(v)).collect();
 
         // Assert
-        assert_eq!(
-            results,
-            vec![
-                Ok(ptr(0)),
-                Ok(ptr(2_147_483_647)),
-                Err(MemoryError::NegativePointer { ptr: -1 })
-            ]
-        );
+        assert_eq!(results, vec![ptr(0), ptr(2_147_483_647), ptr(u32::MAX)]);
     }
 
     #[test]
-    fn guest_slice_rejects_negative_and_overflowing_ranges_and_accepts_the_rest() {
+    fn guest_slice_rejects_an_overflowing_range_and_accepts_the_rest() {
         // Arrange
         let inputs = [(-1, 4), (4, -1), (i32::MAX, i32::MAX)];
 
@@ -274,8 +264,20 @@ mod tests {
             .collect();
 
         // Assert
-        assert_eq!(results[0], Err(MemoryError::NegativePointer { ptr: -1 }));
-        assert_eq!(results[1], Err(MemoryError::NegativeLength { len: -1 }));
+        assert_eq!(
+            results[0],
+            Err(MemoryError::RangeOverflow {
+                ptr: u32::MAX,
+                len: 4
+            })
+        );
+        assert_eq!(
+            results[1],
+            Err(MemoryError::RangeOverflow {
+                ptr: 4,
+                len: u32::MAX
+            })
+        );
         assert!(results[2].is_ok());
         assert_eq!(
             GuestSlice::new(ptr(u32::MAX), 1),

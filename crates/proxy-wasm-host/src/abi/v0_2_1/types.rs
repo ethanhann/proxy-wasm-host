@@ -4,17 +4,13 @@
 //! document.
 //! A value crosses the guest boundary as an `i32`, so every enum converts in
 //! both directions.
-//! `TryFrom<i32>` rejects a value that the ABI document does not list.
-//! A rejection converts into [`Status::BadArgument`] for a host function.
-
-use crate::NotAllowed;
-use crate::abi::v0_2_1::InvalidContextId;
-use crate::codec::pairs::{DecodeError, EncodeError};
-use crate::error::MemoryError;
+//! `TryFrom<i32>` rejects a value that the ABI document does not list, and
+//! a host function answers [`Status::BadArgument`] for such a value.
 
 /// An `i32` that is not a listed value of an ABI enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("{value} is not a known {type_name} value")]
+#[non_exhaustive]
 pub struct UnknownValue {
     /// The Rust name of the enum.
     pub type_name: &'static str,
@@ -72,43 +68,9 @@ mod proxy;
 mod wasi;
 
 pub use proxy::{Action, BufferType, LogLevel, MapType, MetricType, PeerType, Status, StreamType};
-pub use wasi::{WasiClockId, WasiErrno, WasiFdId};
+pub(crate) use wasi::{WasiClockId, WasiErrno, WasiFdId};
 
-impl From<UnknownValue> for Status {
-    fn from(_: UnknownValue) -> Self {
-        Self::BadArgument
-    }
-}
-
-impl From<DecodeError> for Status {
-    fn from(_: DecodeError) -> Self {
-        Self::BadArgument
-    }
-}
-
-impl From<MemoryError> for Status {
-    fn from(_: MemoryError) -> Self {
-        Self::InvalidMemoryAccess
-    }
-}
-
-impl From<EncodeError> for Status {
-    fn from(_: EncodeError) -> Self {
-        Self::SerializationFailure
-    }
-}
-
-impl From<NotAllowed> for Status {
-    fn from(_: NotAllowed) -> Self {
-        Self::BadArgument
-    }
-}
-
-impl From<InvalidContextId> for Status {
-    fn from(_: InvalidContextId) -> Self {
-        Self::BadArgument
-    }
-}
+impl std::error::Error for Status {}
 
 #[cfg(test)]
 pub(super) mod test_support {
@@ -144,7 +106,7 @@ pub(super) mod test_support {
             .collect()
     }
 
-    /// Whether a hand written table lists every variant in `all` exactly once.
+    /// Whether a handwritten table lists every variant in `all` exactly once.
     pub(crate) fn covers<E: Copy + PartialEq>(table: &[(E, i32)], all: &[E]) -> bool {
         table.len() == all.len() && all.iter().all(|v| table.iter().any(|(t, _)| t == v))
     }
@@ -167,60 +129,6 @@ mod tests {
 
         // Assert
         assert_eq!(text, "7 is not a known Action value");
-    }
-
-    #[test]
-    fn unknown_value_converts_to_bad_argument() {
-        // Arrange
-        let error = UnknownValue {
-            type_name: "MapType",
-            value: 9,
-        };
-
-        // Act
-        let status = Status::from(error);
-
-        // Assert
-        assert_eq!(status, Status::BadArgument);
-    }
-
-    #[test]
-    fn decode_error_converts_to_bad_argument() {
-        // Arrange
-        let error = DecodeError::TruncatedCount;
-
-        // Act
-        let status = Status::from(error);
-
-        // Assert
-        assert_eq!(status, Status::BadArgument);
-    }
-
-    #[test]
-    fn every_failure_converts_to_its_status() {
-        // Arrange
-        let memory = MemoryError::NegativePointer { ptr: -1 };
-        let encode = EncodeError::TooManyPairs { count: 5 };
-        let context = InvalidContextId { value: 0 };
-
-        // Act
-        let statuses = (
-            Status::from(memory),
-            Status::from(encode),
-            Status::from(NotAllowed),
-            Status::from(context),
-        );
-
-        // Assert
-        assert_eq!(
-            statuses,
-            (
-                Status::InvalidMemoryAccess,
-                Status::SerializationFailure,
-                Status::BadArgument,
-                Status::BadArgument
-            )
-        );
     }
 
     #[test]

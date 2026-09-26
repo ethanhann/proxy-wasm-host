@@ -9,6 +9,7 @@ pub use grpc::{GrpcCall, GrpcOpenRefusal, GrpcStatus, GrpcStream};
 pub use http::{HttpCall, HttpCallRefusal};
 pub use response::HttpCallResponse;
 
+use crate::abi::v0_2_1::types::Status;
 use crate::abi::v0_2_1::unserved::unserved;
 use crate::abi::v0_2_1::{CalloutId, Invocation};
 
@@ -80,7 +81,7 @@ use crate::abi::v0_2_1::{CalloutId, Invocation};
 pub trait Callouts: Send + Sync {
     /// Accepts or refuses an HTTP call.
     ///
-    /// `call.context` is the context that made the call, which you name when
+    /// `call.context` is the context that made the call, which you pass when
     /// you deliver the response.
     /// The callout is open from the moment you return `Ok`.
     /// It ends when you deliver a response, and when its context is
@@ -119,7 +120,7 @@ pub trait Callouts: Send + Sync {
     /// The default body refuses with `Failed` and reports itself through
     /// `tracing` at the warn level.
     ///
-    /// `call.context` is the context that made the callout, which you name
+    /// `call.context` is the context that made the callout, which you pass
     /// when you deliver a result.
     fn grpc_call(
         &self,
@@ -148,7 +149,7 @@ pub trait Callouts: Send + Sync {
     /// The default body refuses with `Failed` and reports itself through
     /// `tracing` at the warn level.
     ///
-    /// `call.context` is the context that made the callout, which you name
+    /// `call.context` is the context that made the callout, which you pass
     /// when you deliver a result.
     fn grpc_stream(
         &self,
@@ -163,13 +164,15 @@ pub trait Callouts: Send + Sync {
 
     /// Sends one message on a gRPC stream that the guest opened.
     ///
-    /// The guest reads `OK` whenever the crate reaches you, so a message you
-    /// cannot send is a message you drop.
-    /// You then deliver
+    /// The default body answers `Ok(())`, and the guest reads `OK`.
+    /// When you have lost the upstream stream, answer
+    /// [`Status::BadArgument`] or [`Status::InternalFailure`], which the ABI
+    /// lists for this call, and then deliver
     /// [`CallScope::on_grpc_close`](crate::abi::v0_2_1::CallScope::on_grpc_close),
     /// which ends the callout.
-    /// The reason is that a guest of the Rust SDK stops with a panic on any
-    /// other answer.
+    /// A guest of the Rust SDK stops with a panic on any answer but `OK`, so
+    /// a refusal ends that guest, and a message you drop
+    /// with `Ok(())` keeps it running until the close.
     ///
     /// `end_of_stream` says that the guest sends no more on this stream.
     /// The server may still send, so the callout stays open until you close
@@ -179,9 +182,21 @@ pub trait Callouts: Send + Sync {
     ///
     /// `call.context` is the context that opened the callout, because the
     /// crate serves this function for that context alone.
-    fn grpc_send(&self, call: Invocation, callout: CalloutId, message: &[u8], end_of_stream: bool) {
+    ///
+    /// # Errors
+    ///
+    /// The status you return goes to the guest unchanged, except that
+    /// `Err(Status::Ok)` is reported as [`Status::InternalFailure`].
+    fn grpc_send(
+        &self,
+        call: Invocation,
+        callout: CalloutId,
+        message: &[u8],
+        end_of_stream: bool,
+    ) -> Result<(), Status> {
         let _ = (call, callout, message, end_of_stream);
         unserved("grpc_send");
+        Ok(())
     }
 
     /// Ends a gRPC call or stream that the guest gave up.
@@ -245,7 +260,7 @@ mod tests {
     #[test]
     fn the_default_service_refuses_an_http_call_as_failed() {
         // Arrange
-        let request = HttpCall::new(Cow::Borrowed(b"authz"));
+        let request = HttpCall::new(Cow::Borrowed(&b"authz"[..]));
 
         // Act
         let answer = NoCallouts.http_call(call(), callout(), request);
@@ -258,14 +273,14 @@ mod tests {
     fn the_two_grpc_openers_refuse_as_failed() {
         // Arrange
         let unary = GrpcCall::new(
-            Cow::Borrowed(b"authz"),
-            Cow::Borrowed(b"svc"),
-            Cow::Borrowed(b"Check"),
+            Cow::Borrowed(&b"authz"[..]),
+            Cow::Borrowed(&b"svc"[..]),
+            Cow::Borrowed(&b"Check"[..]),
         );
         let stream = GrpcStream::new(
-            Cow::Borrowed(b"authz"),
-            Cow::Borrowed(b"svc"),
-            Cow::Borrowed(b"Watch"),
+            Cow::Borrowed(&b"authz"[..]),
+            Cow::Borrowed(&b"svc"[..]),
+            Cow::Borrowed(&b"Watch"[..]),
         );
 
         // Act
@@ -287,26 +302,26 @@ mod tests {
 
         // Act
         let counted = warnings(|| {
-            let _ = service.http_call(call(), callout(), HttpCall::new(Cow::Borrowed(b"a")));
+            let _ = service.http_call(call(), callout(), HttpCall::new(Cow::Borrowed(&b"a"[..])));
             let _ = service.grpc_call(
                 call(),
                 callout(),
                 GrpcCall::new(
-                    Cow::Borrowed(b"a"),
-                    Cow::Borrowed(b"s"),
-                    Cow::Borrowed(b"m"),
+                    Cow::Borrowed(&b"a"[..]),
+                    Cow::Borrowed(&b"s"[..]),
+                    Cow::Borrowed(&b"m"[..]),
                 ),
             );
             let _ = service.grpc_stream(
                 call(),
                 callout(),
                 GrpcStream::new(
-                    Cow::Borrowed(b"a"),
-                    Cow::Borrowed(b"s"),
-                    Cow::Borrowed(b"m"),
+                    Cow::Borrowed(&b"a"[..]),
+                    Cow::Borrowed(&b"s"[..]),
+                    Cow::Borrowed(&b"m"[..]),
                 ),
             );
-            service.grpc_send(call(), callout(), message, true);
+            let _ = service.grpc_send(call(), callout(), message, true);
             service.grpc_cancel(call(), callout());
             service.grpc_close(call(), callout());
         });

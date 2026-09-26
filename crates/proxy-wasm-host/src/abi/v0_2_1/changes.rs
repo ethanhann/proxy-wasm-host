@@ -12,6 +12,9 @@ use crate::abi::v0_2_1::{ContextId, QueueId};
 /// Read [`Guest::take_changes`](crate::abi::v0_2_1::Guest::take_changes)
 /// after a group of callbacks.
 /// It saves you a question to each root.
+/// A context the guest finished with `proxy_done` is not reported here.
+/// Read [`Guest::context_state`](crate::abi::v0_2_1::Guest::context_state)
+/// for a context that answered false from `proxy_on_done`.
 ///
 /// The value holds one entry for each root and one for each registration, so
 /// its size does not depend on how many times the guest made the same
@@ -55,5 +58,44 @@ impl QueueRegistration {
             root,
             name: name.to_vec(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::time::Duration;
+
+    use super::*;
+
+    fn context(value: u32) -> ContextId {
+        ContextId::try_from(value).unwrap()
+    }
+
+    #[test]
+    fn a_change_of_either_kind_makes_the_value_not_empty() {
+        // Arrange
+        let with_period = Changes {
+            tick_periods: BTreeMap::from([(context(1), Some(Duration::from_secs(1)))]),
+            queues: BTreeSet::new(),
+        };
+        let with_queue = Changes {
+            tick_periods: BTreeMap::new(),
+            queues: BTreeSet::from([QueueRegistration::new(
+                QueueId::try_from(1).unwrap(),
+                context(1),
+                b"q",
+            )]),
+        };
+
+        // Act
+        let observed = (
+            Changes::default().is_empty(),
+            with_period.is_empty(),
+            with_queue.is_empty(),
+        );
+
+        // Assert
+        assert_eq!(observed, (true, false, false));
     }
 }

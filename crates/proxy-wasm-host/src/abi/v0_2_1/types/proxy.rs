@@ -30,7 +30,7 @@ abi_enum! {
     ///
     /// Every host function returns one of these to the guest.
     /// The values 5, 9, and 11 are gaps in the ABI document.
-    /// The enum is non exhaustive, because the vNEXT draft adds values.
+    /// The enum is non-exhaustive, because the vNEXT draft adds values.
     #[non_exhaustive]
     Status {
         /// `OK` = 0.

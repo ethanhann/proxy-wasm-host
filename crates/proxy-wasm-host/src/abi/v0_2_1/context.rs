@@ -14,6 +14,10 @@ use std::num::NonZeroU32;
 /// The identifier of a root context or a stream context.
 ///
 /// Zero is never a context, because the ABI uses it for the absent parent.
+/// The crate numbers the contexts of a guest from one and reuses no number,
+/// so a guest that creates more than four billion contexts in its life meets
+/// [`GuestError::ContextIdsExhausted`](crate::abi::v0_2_1::GuestError::ContextIdsExhausted),
+/// and a pool replaces that guest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ContextId(NonZeroU32);
 
@@ -37,23 +41,9 @@ impl TryFrom<u32> for ContextId {
     type Error = InvalidContextId;
 
     fn try_from(value: u32) -> Result<Self, InvalidContextId> {
-        NonZeroU32::new(value).map(Self).ok_or(InvalidContextId {
-            value: i64::from(value),
-        })
-    }
-}
-
-impl TryFrom<i32> for ContextId {
-    type Error = InvalidContextId;
-
-    fn try_from(value: i32) -> Result<Self, InvalidContextId> {
-        u32::try_from(value)
-            .ok()
-            .and_then(NonZeroU32::new)
+        NonZeroU32::new(value)
             .map(Self)
-            .ok_or(InvalidContextId {
-                value: i64::from(value),
-            })
+            .ok_or(InvalidContextId { value })
     }
 }
 
@@ -66,9 +56,10 @@ impl fmt::Display for ContextId {
 /// A value that cannot be a context identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("{value} is not a valid context identifier")]
+#[non_exhaustive]
 pub struct InvalidContextId {
     /// The value that was rejected.
-    pub value: i64,
+    pub value: u32,
 }
 
 /// Which kind of context an identifier refers to.
@@ -184,24 +175,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn zero_and_negative_values_are_not_identifiers() {
+    fn zero_is_not_an_identifier_and_the_high_bit_is() {
         // Arrange
-        let values = (0u32, 0i32, -1i32);
+        let values = (0u32, u32::MAX);
 
         // Act
-        let results = (
-            ContextId::try_from(values.0),
-            ContextId::try_from(values.1),
-            ContextId::try_from(values.2),
-        );
+        let results = (ContextId::try_from(values.0), ContextId::try_from(values.1));
 
         // Assert
         assert_eq!(results.0, Err(InvalidContextId { value: 0 }));
-        assert_eq!(results.1, Err(InvalidContextId { value: 0 }));
-        assert_eq!(results.2, Err(InvalidContextId { value: -1 }));
+        assert_eq!(results.1.map(ContextId::get), Ok(u32::MAX));
         assert_eq!(
-            results.2.unwrap_err().to_string(),
-            "-1 is not a valid context identifier"
+            results.0.unwrap_err().to_string(),
+            "0 is not a valid context identifier"
         );
     }
 

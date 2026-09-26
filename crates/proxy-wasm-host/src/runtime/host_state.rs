@@ -14,7 +14,7 @@ use crate::runtime::Limits;
 /// supplied.
 /// Everything the ABI layer keeps is in one opaque slot, which the ABI layer
 /// fills and only the ABI layer reads inside.
-/// The type is crate private, so nothing outside the crate can clear the
+/// The type is crate-private, so nothing outside the crate can clear the
 /// poison flag or replace the cached handles.
 pub(crate) struct HostState {
     store_limits: StoreLimits,
@@ -22,6 +22,7 @@ pub(crate) struct HostState {
     max_shared_names: Option<usize>,
     max_name_bytes: Option<usize>,
     max_log_bytes: Option<usize>,
+    max_open_callouts: usize,
     memory: Option<Memory>,
     allocator: Option<TypedFunc<i32, i32>>,
     poisoned: bool,
@@ -36,6 +37,7 @@ impl HostState {
             max_shared_names: None,
             max_name_bytes: None,
             max_log_bytes: None,
+            max_open_callouts: 0,
             memory: None,
             allocator: None,
             poisoned: false,
@@ -80,11 +82,16 @@ impl HostState {
     }
 
     /// Copies the limits a host function reads from the embedder's value.
+    pub(crate) fn max_open_callouts(&self) -> usize {
+        self.max_open_callouts
+    }
+
     pub(crate) fn set_guest_limits(&mut self, limits: &Limits) {
         self.pair_limits = limits.pair_limits();
         self.max_shared_names = limits.max_shared_names();
         self.max_name_bytes = limits.max_name_bytes();
         self.max_log_bytes = limits.max_log_bytes();
+        self.max_open_callouts = limits.max_open_callouts();
     }
 
     pub(crate) fn set_memory(&mut self, memory: Memory) {

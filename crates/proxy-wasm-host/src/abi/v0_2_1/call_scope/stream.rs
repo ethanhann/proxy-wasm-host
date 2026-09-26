@@ -13,7 +13,7 @@ use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
 use crate::abi::v0_2_1::guest::Select;
 use crate::abi::v0_2_1::types::{Action, BufferType};
 use crate::abi::v0_2_1::{
-    Callback, ContextId, ContextProblem, GuestError, StreamKind, StreamState,
+    Callback, ContextId, ContextProblem, ContextType, GuestError, StreamKind, StreamState,
 };
 
 impl<H: StreamState> CallScope<'_, H> {
@@ -22,6 +22,15 @@ impl<H: StreamState> CallScope<'_, H> {
     ///
     /// The stream state you lent belongs to one request, and a callback of
     /// another request would give the guest the data of the wrong one.
+    /// Applies the one stream rule to a stream context, and lets a root
+    /// context through.
+    pub(super) fn require_served_stream(&mut self, context: ContextId) -> Result<(), GuestError> {
+        if self.guest.context_type(context) == Some(ContextType::Stream) {
+            self.require_served(context)?;
+        }
+        Ok(())
+    }
+
     fn require_served(&mut self, context: ContextId) -> Result<(), GuestError> {
         match self.served {
             Some(lent) if lent != context => Err(GuestError::Context {
@@ -280,7 +289,7 @@ pub(super) mod tests {
     use super::*;
     use crate::Error;
     use crate::abi::v0_2_1::test_support::{RecordingSink, RecordingStream, engine, wat_bytes};
-    use crate::abi::v0_2_1::{Guest, Host, VmServices};
+    use crate::abi::v0_2_1::{ContextState, Guest, Host, VmServices};
     use crate::runtime::{GuestPtr, Limits, Module};
 
     /// A guest that records each HTTP callback it gets.
@@ -606,6 +615,41 @@ pub(super) mod tests {
         drop(scope.finish());
         assert_eq!(guest.context_stream_kind(first), Some(StreamKind::Http));
         assert_eq!(guest.context_stream_kind(second), Some(StreamKind::Tcp));
+    }
+
+    /// Whether `answer` is the refusal of a callback for a context other than
+    /// `first`, the one the scope serves.
+    fn other<T>(answer: &Result<T, GuestError>, first: ContextId) -> bool {
+        matches!(
+            answer,
+            Err(GuestError::Context {
+                problem: ContextProblem::OtherStream { lent },
+                ..
+            }) if *lent == first
+        )
+    }
+
+    #[test]
+    fn a_scope_refuses_to_finish_another_stream_context() {
+        // Arrange
+        let (mut guest, root, first) = with_stream(HTTP);
+        let second = guest.enter_root().on_context_create(Some(root)).unwrap();
+        let mut scope = guest.enter(RecordingStream::new());
+        scope.on_request_headers(first, 0, false).unwrap();
+
+        // Act
+        let answers = (
+            scope.on_done(second),
+            scope.on_log(second),
+            scope.on_delete(second),
+        );
+
+        // Assert
+        assert!(other(&answers.0, first), "{:?}", answers.0);
+        assert!(other(&answers.1, first), "{:?}", answers.1);
+        assert!(other(&answers.2, first), "{:?}", answers.2);
+        drop(scope.finish());
+        assert_eq!(guest.context_state(second), Some(ContextState::Active));
     }
 
     #[test]

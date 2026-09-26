@@ -169,7 +169,7 @@ impl Guest {
     /// How many callouts the guest has open.
     ///
     /// Compare it with
-    /// [`VmServices::max_open_callouts`](crate::abi::v0_2_1::VmServices::max_open_callouts)
+    /// [`Limits::max_open_callouts`](crate::Limits::max_open_callouts)
     /// to see how near the guest is to the maximum.
     pub fn open_callout_count(&self) -> usize {
         self.instance.state().abi().callouts().len()

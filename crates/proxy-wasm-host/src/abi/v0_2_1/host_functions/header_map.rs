@@ -15,7 +15,7 @@ use crate::abi::v0_2_1::host_functions::call::{from_embedder, guest_pairs, with_
 use crate::abi::v0_2_1::host_functions::{Failure, Served};
 use crate::abi::v0_2_1::payload::{DeliveredMap, serves_map};
 use crate::abi::v0_2_1::types::{MapType, Status};
-use crate::header_map::HeaderMap;
+use crate::header_map::{HeaderMap, encode_map, encoded_size_of};
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
 
 /// Whether the crate serves this map itself.
@@ -74,10 +74,10 @@ pub(super) fn proxy_get_header_map_size(
     return_size: i32,
 ) -> Result<(), Failure> {
     let map_type = MapType::try_from(map_id)?;
-    let return_size = GuestPtr::try_from(return_size)?;
+    let return_size = GuestPtr::from(return_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_size)?;
-    let size = map(state, map_type, Access::Read)?.encoded_size();
+    let size = encoded_size_of(map(state, map_type, Access::Read)?);
     let size = u32::try_from(size).map_err(|_| Status::InternalFailure)?;
     let (mut memory, _) = split(ctx)?;
     memory.write_u32(return_size, size)?;
@@ -91,12 +91,12 @@ pub(super) fn proxy_get_header_map_pairs(
     return_size: i32,
 ) -> Result<(), Failure> {
     let map_type = MapType::try_from(map_id)?;
-    let return_data = GuestPtr::try_from(return_data)?;
-    let return_size = GuestPtr::try_from(return_size)?;
+    let return_data = GuestPtr::from(return_data);
+    let return_size = GuestPtr::from(return_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_data)?;
     memory.read_u32(return_size)?;
-    let bytes = map(state, map_type, Access::Read)?.encode()?;
+    let bytes = encode_map(map(state, map_type, Access::Read)?)?;
     write_return(ctx, &bytes, return_data, return_size)?;
     Ok(())
 }
@@ -126,8 +126,8 @@ pub(super) fn proxy_get_header_map_value(
 ) -> Result<(), Failure> {
     let map_type = MapType::try_from(map_id)?;
     let key = GuestSlice::try_from((key_data, key_size))?;
-    let return_data = GuestPtr::try_from(return_data)?;
-    let return_size = GuestPtr::try_from(return_size)?;
+    let return_data = GuestPtr::from(return_data);
+    let return_size = GuestPtr::from(return_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_data)?;
     memory.read_u32(return_size)?;

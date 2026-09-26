@@ -1,45 +1,49 @@
 //! A proxy with a pool of workers, one guest on each worker thread.
 //!
-//! It shows the two policies the crate leaves to you.
 //! A queue item wakes the worker whose root registered the queue last, and a
 //! worker that loses its guest builds a new one.
 //! Send `curl -H 'x-trap: 1' http://127.0.0.1:2045/` to see the second policy.
 //!
 //! With no arguments, it runs the plugin that ships with the example.
-//! You can name another plugin with a path, or run with no plugin:
+//! You can pass the path of another plugin, or run with no plugin:
 //!
 //! ```text
 //! http_workers [PATH | --wasm PATH | --no-wasm] [--workers N] [--port N]
 //! ```
 //!
 //! `--workers` sets how many worker threads serve requests, and the default is
-//! four. `--port` sets the port on 127.0.0.1, and the default is 2045. `--help`
-//! prints the usage line. An option it cannot use prints the reason and the
-//! usage line, and the process exits with status 2.
+//! four.
+//! `--port` sets the port on 127.0.0.1, and the default is 2045.
+//! `--help` prints the usage line.
+//! An option it cannot use prints the reason and the usage line, and the
+//! process exits with status 2.
 //!
-//! The request headers follow the rules of a proxy. A name is stored in lower
-//! case and compared without regard to case, and a header the guest replaces
-//! moves to the end.
+//! The request headers follow the rules of a proxy.
+//! A name is stored in lower case and compared without regard to case, and a
+//! header the guest replaces moves to the end.
 //!
 //! # Measuring
 //!
-//! `--no-wasm` runs no plugin. Each request still goes through the dispatch to
-//! a worker thread, and the worker answers it as it arrived. You can measure
-//! the HTTP server and the dispatch on their own this way, and subtract that
-//! from a run with a plugin.
+//! `--no-wasm` runs no plugin.
+//! Each request still goes through the dispatch to a worker thread, and the
+//! worker answers it as it arrived.
+//! You can measure the HTTP server and the dispatch on their own this way,
+//! and subtract that from a run with a plugin.
 //!
 //! The example logs two lines for each request at the info level, so set
 //! `RUST_LOG=error` before you measure, or the log becomes part of the cost.
 //!
 //! One thread accepts every request and hands it to a worker, and the worker
-//! writes the answer to the socket. A server that answers on the thread of the
-//! connection spends its time in other places, so compare the difference to
-//! each server's own `--no-wasm` run rather than the raw numbers.
+//! writes the answer to the socket.
+//! A server that answers on the thread of the connection spends its time in
+//! other places, so compare the difference to each server's own `--no-wasm`
+//! run rather than the raw numbers.
 //!
 //! `tiny_http` starts one thread for each open connection and holds two file
-//! descriptors for each one. Before you put the example under load, raise the
-//! open file limit with `ulimit -n`, or the server stops with "Too many open
-//! files". If you compare it with a server that has a fixed pool of connection
+//! descriptors for each one.
+//! Before you put the example under load, raise the open file limit with
+//! `ulimit -n`, or the server stops with "Too many open files".
+//! If you compare it with a server that has a fixed pool of connection
 //! threads, keep the number of connections at or below the size of that pool,
 //! so both servers run one thread for each connection.
 

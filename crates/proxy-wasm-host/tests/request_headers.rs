@@ -1,7 +1,7 @@
 //! The request header lifecycle against the two committed guests.
 //!
 //! The helpers below are test code, and the allowance clippy makes for a test
-//! does not reach a function of an integration test that carries no test
+//! does not reach a function of an integration test that has no test
 //! attribute.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -14,10 +14,10 @@ use proxy_wasm_host::abi::v0_2_1::{
     Access, ContextId, Guest, GuestError, Host, Invocation, LogContext, LogSink, PluginConfig,
     StreamState, VmServices,
 };
-use proxy_wasm_host::codec::pairs::PairVisitor;
 use proxy_wasm_host::{
     AbiVersion, Engine, Error, HeaderMap, Limits, Module, NotAllowed, VecHeaderMap,
 };
+use proxy_wasm_host::{HeaderMapExt, PairVisitor};
 
 const RUST_SDK: &[u8] = include_bytes!("fixtures/add-request-header.wasm");
 const TINYGO: &[u8] = include_bytes!("fixtures/add-request-header-tinygo.wasm");

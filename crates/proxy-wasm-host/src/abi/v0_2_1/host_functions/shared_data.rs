@@ -47,9 +47,9 @@ pub(super) fn proxy_get_shared_data(
     return_cas: i32,
 ) -> Result<(), Failure> {
     let key = GuestSlice::try_from((key_data, key_size))?;
-    let data_ptr = GuestPtr::try_from(return_value_data)?;
-    let size_ptr = GuestPtr::try_from(return_value_size)?;
-    let cas_ptr = GuestPtr::try_from(return_cas)?;
+    let data_ptr = GuestPtr::from(return_value_data);
+    let size_ptr = GuestPtr::from(return_value_size);
+    let cas_ptr = GuestPtr::from(return_cas);
     let (memory, state) = split(ctx)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
@@ -389,8 +389,8 @@ mod tests {
     #[test]
     fn a_key_of_one_vm_is_not_visible_to_a_guest_of_another() {
         // Arrange
-        // The existing test drives the store directly. This one drives two
-        // guests, so it dies if the VM id is dropped from the key.
+        // This test drives two guests rather than the store, so it fails
+        // when the VM id is dropped from the key.
         let engine = engine();
         let store: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut mine, _) = shared_hosted(&engine, GUEST, Arc::clone(&store));

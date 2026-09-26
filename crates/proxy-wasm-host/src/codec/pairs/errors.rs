@@ -3,7 +3,7 @@
 use std::fmt;
 
 /// Which half of a pair an error refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Field {
     /// The key of the pair.
     Key,
@@ -36,19 +36,19 @@ pub enum DecodeError {
     /// The input ends inside a key or before its terminator.
     #[error("input ends inside the key of pair {pair}")]
     TruncatedKey {
-        /// The zero based index of the pair.
+        /// The zero-based index of the pair.
         pair: u32,
     },
     /// The input ends inside a value or before its terminator.
     #[error("input ends inside the value of pair {pair}")]
     TruncatedValue {
-        /// The zero based index of the pair.
+        /// The zero-based index of the pair.
         pair: u32,
     },
     /// The byte after a key or a value is not `0x00`.
     #[error("pair {pair} {field} is not terminated by 0x00")]
     MissingTerminator {
-        /// The zero based index of the pair.
+        /// The zero-based index of the pair.
         pair: u32,
         /// Which half of the pair lacks its terminator.
         field: Field,
@@ -82,15 +82,7 @@ pub enum DecodeError {
     },
 }
 
-impl DecodeError {
-    /// Whether a limit refused the input rather than its shape.
-    ///
-    /// A map that breaks a limit is well formed, so an embedder that wants
-    /// to raise a limit rather than refuse a guest reads this.
-    pub fn is_limit(&self) -> bool {
-        matches!(self, Self::PairLimit { .. } | Self::ByteLimit { .. })
-    }
-}
+impl DecodeError {}
 
 /// Why a map could not be encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -99,7 +91,7 @@ pub enum EncodeError {
     /// A key or a value is longer than a `u32` length can express.
     #[error("pair {pair} {field} is {len} bytes long, which exceeds u32::MAX")]
     TooLong {
-        /// The zero based index of the pair.
+        /// The zero-based index of the pair.
         pair: usize,
         /// Which half of the pair is too long.
         field: Field,
@@ -107,7 +99,7 @@ pub enum EncodeError {
         len: usize,
     },
     /// There are more pairs than a `u32` count can express.
-    #[error("{count} pairs exceeds u32::MAX")]
+    #[error("{count} pairs exceed u32::MAX")]
     TooManyPairs {
         /// The pair count.
         count: usize,

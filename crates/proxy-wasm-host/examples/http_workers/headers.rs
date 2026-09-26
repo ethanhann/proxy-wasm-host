@@ -3,11 +3,12 @@
 use std::borrow::Cow;
 use std::ops::ControlFlow;
 
-use proxy_wasm_host::codec::pairs::PairVisitor;
+use proxy_wasm_host::PairVisitor;
 use proxy_wasm_host::{HeaderMap, NotAllowed};
 
-/// Request headers with the rules of a proxy: names are stored in lower case,
-/// compared without regard to case, and a replaced header moves to the end.
+/// Request headers kept the way a proxy keeps them.
+/// Names are stored in lower case and compared without regard to case, and a
+/// replaced header moves to the end.
 ///
 /// The crate's own `VecHeaderMap` keeps names exactly as they were written,
 /// which suits a host that wants to show the guest what it sent. A proxy

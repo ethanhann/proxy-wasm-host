@@ -10,11 +10,11 @@
 use wasmtime::AsContextMut;
 
 use crate::abi::v0_2_1::AbiAccess;
-use crate::abi::v0_2_1::QueueId;
 use crate::abi::v0_2_1::host_functions::Failure;
 use crate::abi::v0_2_1::host_functions::bounds::{within_name_bytes, within_shared_names};
 use crate::abi::v0_2_1::host_functions::call::{from_embedder, settle, with_shared};
 use crate::abi::v0_2_1::types::Status;
+use crate::abi::v0_2_1::{QueueId, SharedName};
 use crate::runtime::{GuestPtr, GuestSlice, HostState, split, write_return};
 
 pub(super) fn proxy_register_shared_queue(
@@ -24,19 +24,23 @@ pub(super) fn proxy_register_shared_queue(
     return_queue_id: i32,
 ) -> Result<(), Failure> {
     let name = GuestSlice::try_from((name_data, name_size))?;
-    let return_queue_id = GuestPtr::try_from(return_queue_id)?;
+    let return_queue_id = GuestPtr::from(return_queue_id);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_queue_id)?;
     let name = memory.read(name)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
     within_name_bytes(state, name, Status::InternalFailure)?;
-    within_shared_names(state)?;
+    let held = SharedName::Registered(name.to_vec());
+    if !state.abi().holds_shared_name(&held) {
+        within_shared_names(state)?;
+    }
     let vm_id = state.abi().services().vm_id();
     let queue = from_embedder(
         "register_shared_queue",
         shared.register_shared_queue(call, vm_id, name),
     )?;
     state.abi_mut().grant_queue(queue);
+    state.abi_mut().hold_shared_name(held);
     if let Some(root) = state.abi().contexts().root_of(call.context) {
         state.abi_mut().register_queue(queue, root, name);
     }
@@ -55,24 +59,28 @@ pub(super) fn proxy_resolve_shared_queue(
 ) -> Result<(), Failure> {
     let vm_id = GuestSlice::try_from((vm_id_data, vm_id_size))?;
     let name = GuestSlice::try_from((name_data, name_size))?;
-    let return_queue_id = GuestPtr::try_from(return_queue_id)?;
+    let return_queue_id = GuestPtr::from(return_queue_id);
     let (memory, state) = split(ctx)?;
     memory.read_u32(return_queue_id)?;
     let vm_id = memory.read(vm_id)?;
     let name = memory.read(name)?;
     let (call, shared) = with_shared(state, Status::NotFound)?;
     within_name_bytes(state, name, Status::InternalFailure)?;
-    within_shared_names(state)?;
     // The C++ host reads an empty VM id as the VM of the caller.
     let vm_id = if vm_id.is_empty() {
         state.abi().services().vm_id()
     } else {
         vm_id
     };
+    let held = SharedName::Resolved(vm_id.to_vec(), name.to_vec());
+    if !state.abi().holds_shared_name(&held) {
+        within_shared_names(state)?;
+    }
     let queue = from_embedder(
         "resolve_shared_queue",
         shared.resolve_shared_queue(call, vm_id, name),
     )?;
+    state.abi_mut().hold_shared_name(held);
     state.abi_mut().grant_queue(queue);
     let (mut memory, _) = split(ctx)?;
     memory.write_u32(return_queue_id, queue.get())?;
@@ -85,7 +93,7 @@ pub(super) fn proxy_enqueue_shared_queue(
     value_data: i32,
     value_size: i32,
 ) -> Result<(), Failure> {
-    let queue = QueueId::try_from(queue_id).map_err(|_| Status::NotFound)?;
+    let queue = QueueId::try_from(queue_id.cast_unsigned()).map_err(|_| Status::NotFound)?;
     let value = GuestSlice::try_from((value_data, value_size))?;
     let (memory, state) = split(ctx)?;
     let value = memory.read(value)?;
@@ -106,9 +114,9 @@ pub(super) fn proxy_dequeue_shared_queue(
     return_value_data: i32,
     return_value_size: i32,
 ) -> Result<(), Failure> {
-    let queue = QueueId::try_from(queue_id).map_err(|_| Status::NotFound)?;
-    let data_ptr = GuestPtr::try_from(return_value_data)?;
-    let size_ptr = GuestPtr::try_from(return_value_size)?;
+    let queue = QueueId::try_from(queue_id.cast_unsigned()).map_err(|_| Status::NotFound)?;
+    let data_ptr = GuestPtr::from(return_value_data);
+    let size_ptr = GuestPtr::from(return_value_size);
     let (memory, state) = split(ctx)?;
     memory.read_u32(data_ptr)?;
     memory.read_u32(size_ptr)?;
@@ -570,8 +578,9 @@ mod tests {
     fn a_queue_one_guest_registered_is_not_granted_to_another_of_the_same_vm() {
         // Arrange
         // The grant is per instance, so a second guest of the same VM that
-        // never registered the queue cannot reach it by passing its identifier. This dies
-        // if the grant set is shared between instances.
+        // never registered the queue cannot reach it by passing its
+        // identifier, and the test fails when the grant set is shared between
+        // instances.
         let engine = engine();
         let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
         let (mut mine, _) = shared_hosted(&engine, GUEST, Arc::clone(&shared));
@@ -591,7 +600,7 @@ mod tests {
         assert!(
             mine.state()
                 .abi()
-                .holds_queue(QueueId::try_from(queue).unwrap())
+                .holds_queue(QueueId::try_from(queue.cast_unsigned()).unwrap())
         );
     }
 
@@ -683,6 +692,61 @@ mod tests {
             Status::Ok,
             "the count is of identifiers, so the repeat spent nothing"
         );
+    }
+
+    #[test]
+    fn a_queue_the_guest_holds_is_accepted_at_the_limit() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let limits = Limits::default().with_max_shared_names(2);
+        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, shared, &limits);
+        assert_eq!(register(&mut instance, b"first"), Status::Ok);
+        assert_eq!(register(&mut instance, b"second"), Status::Ok);
+
+        // Act
+        let result = register(&mut instance, b"first");
+
+        // Assert
+        assert_eq!(
+            result,
+            Status::Ok,
+            "the guest holds the name, so the limit is not spent"
+        );
+    }
+
+    #[test]
+    fn a_resolve_at_the_limit_refuses_a_new_name_and_accepts_a_held_one() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let other = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
+        shared.register_shared_queue(other, VM_ID, b"one").unwrap();
+        shared.register_shared_queue(other, VM_ID, b"two").unwrap();
+        let limits = Limits::default().with_max_shared_names(1);
+        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, shared, &limits);
+        let (_, vm_len) = write(&mut instance, VM, VM_ID);
+        let (_, one_len) = write(&mut instance, NAME, b"one");
+        let resolve = |instance: &mut Instance, name_len: i32| {
+            status(
+                instance
+                    .call::<(i32, i32, i32, i32, i32), i32>(
+                        "resolve",
+                        (VM, vm_len, NAME, name_len, RETURN_ID),
+                    )
+                    .unwrap(),
+            )
+        };
+        assert_eq!(resolve(&mut instance, one_len), Status::Ok);
+
+        // Act
+        let (_, two_len) = write(&mut instance, NAME, b"two");
+        let new_name = resolve(&mut instance, two_len);
+        let (_, one_len) = write(&mut instance, NAME, b"one");
+        let held_name = resolve(&mut instance, one_len);
+
+        // Assert
+        assert_eq!((new_name, held_name), (Status::InternalFailure, Status::Ok));
     }
 
     #[test]

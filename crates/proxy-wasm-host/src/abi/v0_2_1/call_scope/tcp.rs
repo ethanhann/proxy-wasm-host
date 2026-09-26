@@ -1,6 +1,6 @@
 //! The callbacks of a TCP stream context.
 //!
-//! A TCP stream carries bytes in two directions.
+//! A TCP stream moves bytes in two directions.
 //! The downstream side is the connection between the client and the proxy,
 //! and the upstream side is the connection between the proxy and the
 //! backend.

@@ -1,5 +1,6 @@
 //! The engine that compiles modules and drives the epoch clock.
 
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -13,9 +14,9 @@ const DEFAULT_EPOCH_PERIOD: Duration = Duration::from_millis(10);
 
 /// The settings of an [`Engine`].
 ///
-/// Fuel metering and the wasm stack size are engine properties in wasmtime.
-/// They live here and not in [`crate::runtime::Limits`].
-/// The struct is non exhaustive, so build it with [`EngineConfig::new`] and
+/// Fuel metering and the Wasm stack size are engine properties in wasmtime.
+/// They live here and not in [`crate::Limits`].
+/// The struct is non-exhaustive, so build it with [`EngineConfig::new`] and
 /// the `with_*` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -38,8 +39,8 @@ impl Default for EngineConfig {
 }
 
 impl EngineConfig {
-    /// A ten millisecond epoch period, the built in ticker, fuel off, and
-    /// the default wasm stack.
+    /// A ten millisecond epoch period, the built-in ticker, fuel off, and
+    /// the default Wasm stack.
     pub fn new() -> Self {
         Self::default()
     }
@@ -65,7 +66,7 @@ impl EngineConfig {
         self
     }
 
-    /// Enables fuel metering, so that [`crate::runtime::Limits::with_fuel`]
+    /// Enables fuel metering, so that [`crate::Limits::with_fuel`]
     /// can bound a guest call.
     ///
     /// A store on a metered engine starts with no fuel, so every guest you
@@ -76,7 +77,7 @@ impl EngineConfig {
         self
     }
 
-    /// Sets the wasm stack size in bytes, or restores the default with
+    /// Sets the Wasm stack size in bytes, or restores the default with
     /// `None`.
     #[must_use]
     pub fn with_max_wasm_stack(mut self, bytes: impl Into<Option<usize>>) -> Self {
@@ -88,8 +89,8 @@ impl EngineConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Config`] for a zero epoch period, and
-    /// [`Error::Instantiate`] when wasmtime rejects the configuration.
+    /// Returns [`Error::Config`] for a zero epoch period and when wasmtime
+    /// rejects the configuration.
     pub fn build(self) -> Result<Engine, Error> {
         if self.epoch_period.is_zero() {
             return Err(Error::Config {
@@ -98,12 +99,13 @@ impl EngineConfig {
         }
         let mut config = Config::new();
         config.epoch_interruption(true);
+        config.wasm_multi_memory(false);
         config.consume_fuel(self.fuel_enabled);
         if let Some(bytes) = self.max_wasm_stack {
             config.max_wasm_stack(bytes);
         }
-        let engine = wasmtime::Engine::new(&config).map_err(|source| Error::Instantiate {
-            source: source.into(),
+        let engine = wasmtime::Engine::new(&config).map_err(|source| Error::Config {
+            message: source.to_string(),
         })?;
         let ticks = Arc::new(AtomicU64::new(0));
         let ticker = if self.external_ticks {
@@ -133,6 +135,16 @@ impl EngineConfig {
 #[derive(Clone)]
 pub struct Engine {
     inner: Arc<EngineInner>,
+}
+
+impl fmt::Debug for Engine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Engine")
+            .field("epoch_period", &self.epoch_period())
+            .field("fuel_enabled", &self.fuel_enabled())
+            .field("has_ticker", &self.has_ticker())
+            .finish_non_exhaustive()
+    }
 }
 
 struct EngineInner {
@@ -169,7 +181,7 @@ impl Engine {
 
     /// Advances the epoch by one tick.
     ///
-    /// The built in ticker calls this every epoch period.
+    /// The built-in ticker calls this every epoch period.
     /// Call it yourself only when you built the engine with external ticks.
     pub fn increment_epoch(&self) {
         self.inner.engine.increment_epoch();
@@ -330,6 +342,21 @@ mod tests {
     }
 
     #[test]
+    fn a_setting_wasmtime_rejects_is_a_configuration_error() {
+        // Arrange
+        let config = EngineConfig::new().with_max_wasm_stack(0);
+
+        // Act
+        let result = config.build();
+
+        // Assert
+        assert!(
+            matches!(result, Err(Error::Config { ref message, .. }) if message.contains("stack")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
     fn the_stack_setter_accepts_a_size_and_none() {
         // Arrange
         let base = EngineConfig::new();
@@ -344,6 +371,49 @@ mod tests {
         assert_eq!(configs[0].max_wasm_stack, Some(1 << 20));
         assert_eq!(configs[1], base);
         assert!(configs[0].clone().build().is_ok());
+    }
+
+    #[test]
+    fn a_dropped_ticker_moves_the_counter_no_more() {
+        // Arrange
+        let period = Duration::from_millis(10);
+        let engine = EngineConfig::new()
+            .with_external_ticks(true)
+            .build()
+            .unwrap();
+        let ticks = Arc::new(AtomicU64::new(0));
+        let ticker = Ticker::start(engine.wasmtime().clone(), Arc::clone(&ticks), period);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while ticks.load(Ordering::Relaxed) == 0 && Instant::now() < deadline {
+            std::thread::sleep(period);
+        }
+
+        // Act
+        drop(ticker);
+
+        // Assert
+        let after_drop = ticks.load(Ordering::Relaxed);
+        assert!(after_drop > 0, "the ticker ran before the drop");
+        std::thread::sleep(period * 5);
+        assert_eq!(ticks.load(Ordering::Relaxed), after_drop);
+    }
+
+    #[test]
+    fn an_engine_describes_its_settings_in_debug_output() {
+        // Arrange
+        let engine = EngineConfig::new()
+            .with_external_ticks(true)
+            .build()
+            .unwrap();
+
+        // Act
+        let text = format!("{engine:?}");
+
+        // Assert
+        assert_eq!(
+            text,
+            "Engine { epoch_period: 10ms, fuel_enabled: false, has_ticker: false, .. }"
+        );
     }
 
     #[test]

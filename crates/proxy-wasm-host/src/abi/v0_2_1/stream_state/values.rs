@@ -5,7 +5,7 @@ use std::borrow::Cow;
 /// Header or metadata pairs, in the order the guest serialized them.
 pub type HeaderPairs<'a> = Vec<(Cow<'a, [u8]>, Cow<'a, [u8]>)>;
 
-/// A call to a function of the embedder that the ABI does not name.
+/// A call to a function of the embedder that the ABI does not define.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ForeignCall<'a> {
@@ -17,8 +17,11 @@ pub struct ForeignCall<'a> {
 
 impl<'a> ForeignCall<'a> {
     /// A call to `name` with `arguments`.
-    pub fn new(name: Cow<'a, [u8]>, arguments: Cow<'a, [u8]>) -> Self {
-        Self { name, arguments }
+    pub fn new(name: impl Into<Cow<'a, [u8]>>, arguments: impl Into<Cow<'a, [u8]>>) -> Self {
+        Self {
+            name: name.into(),
+            arguments: arguments.into(),
+        }
     }
 
     /// The same call with no borrow left in it.
@@ -64,8 +67,8 @@ impl<'a> LocalResponse<'a> {
     pub fn new(status_code: u32) -> Self {
         Self {
             status_code,
-            status_code_details: Cow::Borrowed(b""),
-            body: Cow::Borrowed(b""),
+            status_code_details: Cow::Borrowed(&b""[..]),
+            body: Cow::Borrowed(&b""[..]),
             headers: Vec::new(),
             grpc_status: None,
         }
@@ -73,15 +76,15 @@ impl<'a> LocalResponse<'a> {
 
     /// Sets the detail string for the status code.
     #[must_use]
-    pub fn with_status_code_details(mut self, details: Cow<'a, [u8]>) -> Self {
-        self.status_code_details = details;
+    pub fn with_status_code_details(mut self, details: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.status_code_details = details.into();
         self
     }
 
     /// Sets the response body.
     #[must_use]
-    pub fn with_body(mut self, body: Cow<'a, [u8]>) -> Self {
-        self.body = body;
+    pub fn with_body(mut self, body: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.body = body.into();
         self
     }
 
@@ -133,7 +136,7 @@ mod tests {
 
     fn response(body: &[u8]) -> LocalResponse<'_> {
         LocalResponse::new(403)
-            .with_status_code_details(Cow::Borrowed(b"denied"))
+            .with_status_code_details(Cow::Borrowed(&b"denied"[..]))
             .with_body(Cow::Borrowed(body))
             .with_headers(vec![(
                 Cow::Borrowed(b"k".as_slice()),
@@ -181,7 +184,10 @@ mod tests {
         let name = b"compress".to_vec();
 
         // Act
-        let request = ForeignCall::new(Cow::Borrowed(&name), Cow::Borrowed(b"payload"));
+        let request = ForeignCall::new(
+            Cow::Borrowed(name.as_slice()),
+            Cow::Borrowed(&b"payload"[..]),
+        );
 
         // Assert
         assert_eq!(request.name.as_ref(), b"compress");
@@ -192,7 +198,10 @@ mod tests {
     fn a_foreign_call_outlives_the_borrow_it_was_built_from() {
         // Arrange
         let name = b"compress".to_vec();
-        let borrowed = ForeignCall::new(Cow::Borrowed(&name), Cow::Borrowed(b"payload"));
+        let borrowed = ForeignCall::new(
+            Cow::Borrowed(name.as_slice()),
+            Cow::Borrowed(&b"payload"[..]),
+        );
 
         // Act
         let owned = borrowed.into_owned();

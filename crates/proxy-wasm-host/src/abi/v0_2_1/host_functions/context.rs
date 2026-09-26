@@ -31,7 +31,7 @@ pub(super) fn proxy_set_effective_context(
     ctx: &mut impl AsContextMut<Data = HostState>,
     context_id: i32,
 ) -> Result<(), Failure> {
-    let id = ContextId::try_from(context_id)?;
+    let id = ContextId::try_from(context_id.cast_unsigned())?;
     let mut ctx = ctx.as_context_mut();
     let contexts = ctx.data_mut().abi_mut().contexts_mut();
     let Some(current) = contexts.effective() else {
@@ -195,8 +195,8 @@ mod tests {
     #[test]
     fn the_effective_context_never_moves_to_another_root_through_the_body() {
         // Arrange
-        // The existing test drives a guest. This one drives the body, so it
-        // dies if the two roots are no longer compared.
+        // This test drives the body rather than a guest, so it fails when
+        // the two roots are no longer compared.
         let engine = engine();
         let mut instance = instance(&engine, CALLERS).unwrap();
         let contexts = instance.state_mut().abi_mut().contexts_mut();

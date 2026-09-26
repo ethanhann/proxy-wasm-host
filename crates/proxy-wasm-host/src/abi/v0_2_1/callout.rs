@@ -37,16 +37,6 @@ impl TryFrom<u32> for CalloutId {
     }
 }
 
-impl TryFrom<i32> for CalloutId {
-    type Error = InvalidCalloutId;
-
-    /// Reads the raw bits as unsigned, because the ABI types the argument as
-    /// unsigned, and rejects zero.
-    fn try_from(value: i32) -> Result<Self, InvalidCalloutId> {
-        Self::try_from(value.cast_unsigned())
-    }
-}
-
 impl fmt::Display for CalloutId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -56,6 +46,7 @@ impl fmt::Display for CalloutId {
 /// A value that cannot be a callout identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("{value} is not a valid callout identifier")]
+#[non_exhaustive]
 pub struct InvalidCalloutId {
     /// The value that was rejected.
     pub value: u32,
@@ -119,7 +110,7 @@ impl fmt::Display for CalloutProblem {
 pub struct OpenCallout {
     /// The identifier of the callout.
     pub callout: CalloutId,
-    /// The context that made the call, which you name when you deliver the
+    /// The context that made the call, which you pass when you deliver the
     /// result.
     pub caller: ContextId,
     /// The root of the caller.
@@ -264,7 +255,7 @@ mod tests {
     #[test]
     fn a_callout_identifier_reads_its_bits_as_unsigned_and_rejects_zero() {
         // Arrange
-        let values = [1_i32, -1, 0];
+        let values = [1_u32, u32::MAX, 0];
 
         // Act
         let converted = values.map(CalloutId::try_from);
@@ -394,5 +385,17 @@ mod tests {
 
         // Assert
         assert_eq!(answers, [true, true, false], "{first} {second} {third}");
+    }
+
+    #[test]
+    fn a_callout_identifier_displays_its_number() {
+        // Arrange
+        let id = CalloutId::try_from(7_u32).unwrap();
+
+        // Act
+        let text = id.to_string();
+
+        // Assert
+        assert_eq!(text, "7");
     }
 }

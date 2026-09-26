@@ -4,27 +4,38 @@
 //! the log of the host.
 //! The guest log goes to `tracing`, so both reach the same subscriber.
 //!
-//! `tiny_http` holds two file descriptors for each open connection. If you put
-//! the example under load, raise the open file limit first with `ulimit -n`,
-//! or the server stops with "Too many open files".
+//! `tiny_http` holds two file descriptors for each open connection.
+//! If you put the example under load, raise the open file limit first with
+//! `ulimit -n`, or the server stops with "Too many open files".
 //!
-//! The sink, the request type, and the answer of this file are written again in
-//! `examples/http_workers/request.rs`, so each example reads on its own. That
-//! copy keeps header names in lower case, as a proxy does, and this one keeps
-//! them as the guest wrote them.
+//! The request headers stay in the `tiny_http` type, and
+//! `http_server_headers.rs` lends them to the guest through the `HeaderMap`
+//! trait, so the answer includes them with no second conversion.
+//! A request body reaches the guest through `proxy_on_request_body` after the
+//! headers, and the guest reads it as the request body buffer.
+//!
+//! The sink and the answer of this file are written again in
+//! `examples/http_workers/request.rs`, so each example reads on its own.
+//! That copy keeps header names in lower case, as a proxy does, and this one
+//! keeps them as the guest wrote them.
 
 use std::borrow::Cow;
 use std::io::Cursor;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use proxy_wasm_host::abi::v0_2_1::types::{Action, LogLevel, MapType, Status};
+use proxy_wasm_host::abi::v0_2_1::types::{Action, BufferType, LogLevel, MapType, Status};
 use proxy_wasm_host::abi::v0_2_1::{
     Access, Callback, ContextId, Guest, GuestError, GuestSpec, Host, Invocation, LocalResponse,
     LogContext, LogSink, PluginConfig, Started, StreamKind, StreamState, VmServices,
 };
-use proxy_wasm_host::{Engine, HeaderMap, Limits, Module, VecHeaderMap};
+use proxy_wasm_host::{Buffer, Engine, HeaderMap, Limits, Module};
 use tiny_http::{Header, Request, Response, Server};
+
+use crate::headers::RequestHeaders;
+
+#[path = "http_server_headers.rs"]
+mod headers;
 
 /// The plugin this example runs when no path is given.
 const DEFAULT_GUEST: &str = concat!(
@@ -114,7 +125,8 @@ struct Local {
 /// The request a guest reads through its header map.
 #[derive(Default)]
 struct HttpRequest {
-    headers: VecHeaderMap,
+    headers: RequestHeaders,
+    body: Vec<u8>,
     local: Option<Local>,
 }
 
@@ -127,6 +139,18 @@ impl StreamState for HttpRequest {
     ) -> Result<&mut dyn HeaderMap, Status> {
         match map {
             MapType::HttpRequestHeaders => Ok(&mut self.headers),
+            _ => Err(Status::NotFound),
+        }
+    }
+
+    fn buffer(
+        &mut self,
+        _: Invocation,
+        _: Access,
+        buffer: BufferType,
+    ) -> Result<&mut dyn Buffer, Status> {
+        match buffer {
+            BufferType::HttpRequestBody => Ok(&mut self.body),
             _ => Err(Status::NotFound),
         }
     }
@@ -145,20 +169,21 @@ impl StreamState for HttpRequest {
 }
 
 /// The request headers, with the pseudo headers a guest expects first.
-fn request_state(request: &Request) -> HttpRequest {
-    let mut headers: Vec<(Vec<u8>, Vec<u8>)> = vec![
-        (b":method".to_vec(), request.method().as_str().into()),
-        (b":path".to_vec(), request.url().into()),
-        (b":authority".to_vec(), ADDRESS.into()),
-    ];
-    for header in request.headers() {
-        headers.push((
-            header.field.as_str().as_str().to_lowercase().into(),
-            header.value.as_str().into(),
-        ));
+/// The state of one request, with its body read to the end.
+fn request_state(request: &mut Request) -> HttpRequest {
+    let headers = RequestHeaders::new(
+        request.method().as_str(),
+        request.url(),
+        ADDRESS,
+        request.headers().to_vec(),
+    );
+    let mut body = Vec::new();
+    if let Err(error) = request.as_reader().read_to_end(&mut body) {
+        tracing::warn!("the body of the request did not arrive whole: {error}");
     }
     HttpRequest {
-        headers: headers.into(),
+        headers,
+        body,
         local: None,
     }
 }
@@ -192,12 +217,17 @@ fn serve(
         let stream = scope.on_context_create(Some(root))?;
         scope.expect_stream_kind(stream, StreamKind::Http)?;
         let count = u32::try_from(scope.stream().headers.len()).unwrap_or(u32::MAX);
-        let action = scope.on_request_headers(stream, count, true)?;
-        if !scope.on_done(stream)? {
-            tracing::info!("the guest holds the context, and the example deletes it anyway");
+        let body_size = u32::try_from(scope.stream().body.len()).unwrap_or(u32::MAX);
+        let mut action = scope.on_request_headers(stream, count, body_size == 0)?;
+        if action == Action::Continue && body_size > 0 {
+            action = scope.on_request_body(stream, body_size, true)?;
         }
-        scope.on_log(stream)?;
-        scope.on_delete(stream)?;
+        if scope.on_done(stream)? {
+            scope.on_log(stream)?;
+            scope.on_delete(stream)?;
+        } else {
+            tracing::info!("the guest holds the context, and this example never deletes it");
+        }
         Ok::<_, GuestError>(action)
     });
     Ok(answer_of(&state, answer?))
@@ -207,7 +237,7 @@ fn serve(
 ///
 /// A plugin that sent its own answer decides the status and the body.
 /// Otherwise the answer lists the headers the guest leaves behind, and it
-/// carries each header that the guest can change.
+/// includes each header that the guest can change.
 /// The length and the type of the answer belong to the answer, so the headers
 /// of the request do not reach it.
 fn answer_of(state: &HttpRequest, action: Action) -> Response<Cursor<Vec<u8>>> {
@@ -220,24 +250,25 @@ fn answer_of(state: &HttpRequest, action: Action) -> Response<Cursor<Vec<u8>>> {
         tracing::info!("the guest paused the request, and a proxy would wait for it");
         return Response::from_string("the guest paused the request").with_status_code(504);
     }
-    let pairs = pairs(&state.headers);
     let mut body = String::new();
-    for (name, value) in &pairs {
+    for (name, value) in pairs(&state.headers) {
         use std::fmt::Write;
         let _ = writeln!(body, "{name}: {value}");
     }
     let mut answer = Response::from_string(body);
-    for (name, value) in pairs.iter().filter(|(name, _)| copied(name)) {
-        if let Ok(header) = Header::from_bytes(name.as_bytes(), value.as_bytes()) {
-            answer = answer.with_header(header);
-        }
+    for header in state
+        .headers
+        .fields()
+        .iter()
+        .filter(|header| copied(header))
+    {
+        answer = answer.with_header(header.clone());
     }
     answer
 }
 
-/// Whether a header of the request belongs in the answer.
-fn copied(name: &str) -> bool {
-    !name.starts_with(':') && name != "content-length" && name != "content-type"
+fn copied(header: &Header) -> bool {
+    !header.field.equiv("content-length") && !header.field.equiv("content-type")
 }
 
 /// Why the example has no guest.
@@ -278,7 +309,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let bytes = std::fs::read(&path)?;
     let engine = Engine::new()?;
     let module = Module::new(&engine, &bytes)?;
-    let services = VmServices::new(Arc::new(TracingSink));
+    let services = VmServices::new(Arc::new(TracingSink)).with_vm_id(*b"example");
     let spec = GuestSpec::new(&Host::new(&engine)?, &module, services, &Limits::default())?;
     let server = Server::http(ADDRESS)?;
     tracing::info!("listening on {ADDRESS} with the plugin {path}");
@@ -292,22 +323,24 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 fn run(server: &Server, spec: &GuestSpec) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut guest, mut root) = start(spec)?;
     loop {
-        let request = server.recv()?;
+        let mut request = server.recv()?;
         let span = tracing::info_span!("request", path = request.url());
         let _entered = span.enter();
-        let state = request_state(&request);
         tracing::info!("{} {}", request.method(), request.url());
+        let state = request_state(&mut request);
         let answer = match serve(&mut guest, root, state) {
             Ok(answer) => answer,
             Err(error) => {
                 tracing::error!("the guest failed: {error}");
-                let (fresh, fresh_root) = start(spec)?;
-                guest = fresh;
-                root = fresh_root;
-                tracing::info!("a new guest serves the next request");
                 Response::from_string("the guest failed").with_status_code(500)
             }
         };
+        if !guest.is_serving() {
+            let (fresh, fresh_root) = start(spec)?;
+            guest = fresh;
+            root = fresh_root;
+            tracing::info!("a new guest serves the next request");
+        }
         if let Err(error) = request.respond(answer) {
             tracing::warn!("the answer did not reach the client: {error}");
         }
