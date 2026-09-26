@@ -31,6 +31,9 @@ type CloseFn = TypedFunc<(i32, i32), ()>;
 type ForeignFn = TypedFunc<(i32, i32, i32), ()>;
 
 /// The callbacks this crate drives, resolved once at construction.
+/// Picks one callback out of the cache.
+pub(crate) type Select<P, R> = fn(&Callbacks) -> Option<&TypedFunc<P, R>>;
+
 pub(crate) struct Callbacks {
     pub(crate) context_create: Option<TypedFunc<(i32, i32), ()>>,
     pub(crate) vm_start: Option<TypedFunc<(i32, i32), i32>>,

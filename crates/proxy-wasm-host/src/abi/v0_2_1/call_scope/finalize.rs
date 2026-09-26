@@ -24,8 +24,14 @@ impl<H: StreamState> CallScope<'_, H> {
     pub fn on_done(&mut self, context: ContextId) -> Result<bool, GuestError> {
         self.guest.require_live()?;
         prologue::require(self.guest, context)?;
-        let func = self.guest.callbacks().done.clone();
-        let value = prologue::run(self.guest, context, Callback::Done, func, context.wire(), 1)?;
+        let value = prologue::run(
+            self.guest,
+            context,
+            Callback::Done,
+            |callbacks| callbacks.done.as_ref(),
+            context.wire(),
+            1,
+        )?;
         let done = prologue::boolean(Callback::Done, value)?;
         let state = if done {
             ContextState::Done
@@ -51,8 +57,14 @@ impl<H: StreamState> CallScope<'_, H> {
     pub fn on_log(&mut self, context: ContextId) -> Result<(), GuestError> {
         self.guest.require_live()?;
         prologue::require_done(self.guest, context)?;
-        let func = self.guest.callbacks().log.clone();
-        prologue::run(self.guest, context, Callback::Log, func, context.wire(), ())?;
+        prologue::run(
+            self.guest,
+            context,
+            Callback::Log,
+            |callbacks| callbacks.log.as_ref(),
+            context.wire(),
+            (),
+        )?;
         Ok(())
     }
 
@@ -113,12 +125,11 @@ impl<H: StreamState> CallScope<'_, H> {
             None => fail_open_callouts(self.guest, context, context)?,
             Some(_) => Vec::new(),
         };
-        let func = self.guest.callbacks().delete.clone();
         prologue::run(
             self.guest,
             context,
             Callback::Delete,
-            func,
+            |callbacks| callbacks.delete.as_ref(),
             context.wire(),
             (),
         )?;

@@ -3,8 +3,9 @@
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
 use crate::abi::v0_2_1::payload::Delivery;
-use wasmtime::{TypedFunc, WasmParams};
+use wasmtime::WasmParams;
 
+use crate::abi::v0_2_1::guest::Select;
 use crate::abi::v0_2_1::{
     Callback, CalloutId, CalloutKind, CalloutProblem, ContextId, GrpcStatus, Guest, GuestError,
     HttpCallResponse, QueueId, QueueProblem, StreamState,
@@ -89,8 +90,14 @@ impl<H: StreamState> CallScope<'_, H> {
         self.guest.require_live()?;
         prologue::require_root(self.guest, root)?;
         prologue::accepted(self.guest, root)?;
-        let func = self.guest.callbacks().tick.clone();
-        prologue::run(self.guest, root, Callback::Tick, func, root.wire(), ())?;
+        prologue::run(
+            self.guest,
+            root,
+            Callback::Tick,
+            |callbacks| callbacks.tick.as_ref(),
+            root.wire(),
+            (),
+        )?;
         Ok(())
     }
 
@@ -120,9 +127,15 @@ impl<H: StreamState> CallScope<'_, H> {
                 problem: QueueProblem::NotRegisteredBy(root),
             });
         }
-        let func = self.guest.callbacks().queue_ready.clone();
         let params = (root.wire(), queue.get().cast_signed());
-        prologue::run(self.guest, root, Callback::QueueReady, func, params, ())?;
+        prologue::run(
+            self.guest,
+            root,
+            Callback::QueueReady,
+            |callbacks| callbacks.queue_ready.as_ref(),
+            params,
+            (),
+        )?;
         Ok(())
     }
 }
@@ -146,8 +159,9 @@ pub(super) struct Delivered<P: WasmParams> {
     pub(super) delivery: Delivery,
     /// The callback to run.
     pub(super) callback: Callback,
-    /// The exported function, or `None` when the guest exports none.
-    pub(super) func: Option<TypedFunc<P, ()>>,
+    /// Picks the exported function out of the cache, which answers `None`
+    /// when the guest exports none.
+    pub(super) select: Select<P, ()>,
     /// The arguments of the callback.
     pub(super) params: P,
     /// Whether this delivery ends the callout.
@@ -183,7 +197,7 @@ pub(super) fn deliver<P: WasmParams>(
         guest,
         call.context,
         call.callback,
-        call.func,
+        call.select,
         call.params,
         (),
     );
@@ -211,7 +225,6 @@ pub(super) fn deliver_http_response(
         prologue::wire_size(response.body().len())?,
         prologue::wire_size(response.trailers().len())?,
     );
-    let func = guest.callbacks().http_call_response.clone();
     deliver(
         guest,
         Delivered {
@@ -219,7 +232,7 @@ pub(super) fn deliver_http_response(
             callout: Some(callout),
             delivery: Delivery::http_call_response(callout, response),
             callback: Callback::HttpCallResponse,
-            func,
+            select: |callbacks| callbacks.http_call_response.as_ref(),
             params: (
                 root.wire(),
                 callout.get().cast_signed(),
@@ -246,7 +259,6 @@ pub(super) fn deliver_grpc_close(
 ) -> Result<(), GuestError> {
     prologue::wire_size(status.message.len())?;
     let code = status.code.cast_signed();
-    let func = guest.callbacks().grpc_close.clone();
     deliver(
         guest,
         Delivered {
@@ -254,7 +266,7 @@ pub(super) fn deliver_grpc_close(
             callout: Some(callout),
             delivery: Delivery::grpc_close(callout, status),
             callback: Callback::GrpcClose,
-            func,
+            select: |callbacks| callbacks.grpc_close.as_ref(),
             params: (root.wire(), callout.get().cast_signed(), code),
             ends: true,
         },

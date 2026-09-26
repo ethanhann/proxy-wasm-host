@@ -35,13 +35,12 @@ impl<H: StreamState> CallScope<'_, H> {
     /// [`GuestError::GuestRejected`], [`GuestError::UnexpectedReturn`], and
     /// the [common runtime failures](CallScope#the-common-runtime-failures).
     pub fn on_new_connection(&mut self, context: ContextId) -> Result<Action, GuestError> {
-        let func = self.guest.callbacks().new_connection.clone();
         self.stream_action(
             context,
             StreamKind::Tcp,
             Callback::NewConnection,
             None,
-            func,
+            |callbacks| callbacks.new_connection.as_ref(),
             context.wire(),
         )
     }
@@ -67,14 +66,13 @@ impl<H: StreamState> CallScope<'_, H> {
         end_of_stream: bool,
     ) -> Result<Action, GuestError> {
         let size = prologue::wire_u32(data_size)?;
-        let func = self.guest.callbacks().downstream_data.clone();
         let params = (context.wire(), size, i32::from(end_of_stream));
         self.stream_action(
             context,
             StreamKind::Tcp,
             Callback::DownstreamData,
             Some((BufferType::DownstreamData, data_size)),
-            func,
+            |callbacks| callbacks.downstream_data.as_ref(),
             params,
         )
     }
@@ -95,14 +93,13 @@ impl<H: StreamState> CallScope<'_, H> {
         end_of_stream: bool,
     ) -> Result<Action, GuestError> {
         let size = prologue::wire_u32(data_size)?;
-        let func = self.guest.callbacks().upstream_data.clone();
         let params = (context.wire(), size, i32::from(end_of_stream));
         self.stream_action(
             context,
             StreamKind::Tcp,
             Callback::UpstreamData,
             Some((BufferType::UpstreamData, data_size)),
-            func,
+            |callbacks| callbacks.upstream_data.as_ref(),
             params,
         )
     }
@@ -124,9 +121,13 @@ impl<H: StreamState> CallScope<'_, H> {
         context: ContextId,
         peer: PeerType,
     ) -> Result<(), GuestError> {
-        let func = self.guest.callbacks().downstream_connection_close.clone();
         let params = (context.wire(), i32::from(peer));
-        self.stream_event(context, Callback::DownstreamConnectionClose, func, params)
+        self.stream_event(
+            context,
+            Callback::DownstreamConnectionClose,
+            |callbacks| callbacks.downstream_connection_close.as_ref(),
+            params,
+        )
     }
 
     /// Calls `proxy_on_upstream_connection_close` on a stream context of the
@@ -140,9 +141,13 @@ impl<H: StreamState> CallScope<'_, H> {
         context: ContextId,
         peer: PeerType,
     ) -> Result<(), GuestError> {
-        let func = self.guest.callbacks().upstream_connection_close.clone();
         let params = (context.wire(), i32::from(peer));
-        self.stream_event(context, Callback::UpstreamConnectionClose, func, params)
+        self.stream_event(
+            context,
+            Callback::UpstreamConnectionClose,
+            |callbacks| callbacks.upstream_connection_close.as_ref(),
+            params,
+        )
     }
 }
 

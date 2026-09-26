@@ -6,10 +6,11 @@
 //! with a panic on it.
 //! The TCP family is in `tcp.rs`.
 
-use wasmtime::{TypedFunc, WasmParams};
+use wasmtime::WasmParams;
 
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::call_scope::{CallScope, prologue};
+use crate::abi::v0_2_1::guest::Select;
 use crate::abi::v0_2_1::types::{Action, BufferType};
 use crate::abi::v0_2_1::{
     Callback, ContextId, ContextProblem, GuestError, StreamKind, StreamState,
@@ -66,7 +67,7 @@ impl<H: StreamState> CallScope<'_, H> {
         kind: StreamKind,
         callback: Callback,
         announced: Option<(BufferType, u32)>,
-        func: Option<TypedFunc<P, i32>>,
+        select: Select<P, i32>,
         params: P,
     ) -> Result<Action, GuestError> {
         self.guest.require_live()?;
@@ -81,7 +82,7 @@ impl<H: StreamState> CallScope<'_, H> {
             .state_mut()
             .abi_mut()
             .set_announced(announced);
-        let value = prologue::run(self.guest, context, callback, func, params, default);
+        let value = prologue::run(self.guest, context, callback, select, params, default);
         self.guest
             .instance_mut()
             .state_mut()
@@ -96,7 +97,7 @@ impl<H: StreamState> CallScope<'_, H> {
         &mut self,
         context: ContextId,
         callback: Callback,
-        func: Option<TypedFunc<P, ()>>,
+        select: Select<P, ()>,
         params: P,
     ) -> Result<(), GuestError> {
         let kind = StreamKind::Tcp;
@@ -106,7 +107,7 @@ impl<H: StreamState> CallScope<'_, H> {
         prologue::require_stream_kind(self.guest, context, kind)?;
         self.require_served(context)?;
         prologue::record_stream_kind(self.guest, context, kind);
-        prologue::run(self.guest, context, callback, func, params, ())?;
+        prologue::run(self.guest, context, callback, select, params, ())?;
         Ok(())
     }
 
@@ -132,14 +133,13 @@ impl<H: StreamState> CallScope<'_, H> {
         end_of_stream: bool,
     ) -> Result<Action, GuestError> {
         let count = prologue::wire_u32(num_headers)?;
-        let func = self.guest.callbacks().request_headers.clone();
         let params = (context.wire(), count, i32::from(end_of_stream));
         self.stream_action(
             context,
             StreamKind::Http,
             Callback::RequestHeaders,
             None,
-            func,
+            |callbacks| callbacks.request_headers.as_ref(),
             params,
         )
     }
@@ -163,14 +163,13 @@ impl<H: StreamState> CallScope<'_, H> {
         end_of_stream: bool,
     ) -> Result<Action, GuestError> {
         let size = prologue::wire_u32(body_size)?;
-        let func = self.guest.callbacks().request_body.clone();
         let params = (context.wire(), size, i32::from(end_of_stream));
         self.stream_action(
             context,
             StreamKind::Http,
             Callback::RequestBody,
             Some((BufferType::HttpRequestBody, body_size)),
-            func,
+            |callbacks| callbacks.request_body.as_ref(),
             params,
         )
     }
@@ -187,14 +186,13 @@ impl<H: StreamState> CallScope<'_, H> {
         num_trailers: u32,
     ) -> Result<Action, GuestError> {
         let count = prologue::wire_u32(num_trailers)?;
-        let func = self.guest.callbacks().request_trailers.clone();
         let params = (context.wire(), count);
         self.stream_action(
             context,
             StreamKind::Http,
             Callback::RequestTrailers,
             None,
-            func,
+            |callbacks| callbacks.request_trailers.as_ref(),
             params,
         )
     }
@@ -212,14 +210,13 @@ impl<H: StreamState> CallScope<'_, H> {
         end_of_stream: bool,
     ) -> Result<Action, GuestError> {
         let count = prologue::wire_u32(num_headers)?;
-        let func = self.guest.callbacks().response_headers.clone();
         let params = (context.wire(), count, i32::from(end_of_stream));
         self.stream_action(
             context,
             StreamKind::Http,
             Callback::ResponseHeaders,
             None,
-            func,
+            |callbacks| callbacks.response_headers.as_ref(),
             params,
         )
     }
@@ -241,14 +238,13 @@ impl<H: StreamState> CallScope<'_, H> {
         end_of_stream: bool,
     ) -> Result<Action, GuestError> {
         let size = prologue::wire_u32(body_size)?;
-        let func = self.guest.callbacks().response_body.clone();
         let params = (context.wire(), size, i32::from(end_of_stream));
         self.stream_action(
             context,
             StreamKind::Http,
             Callback::ResponseBody,
             Some((BufferType::HttpResponseBody, body_size)),
-            func,
+            |callbacks| callbacks.response_body.as_ref(),
             params,
         )
     }
@@ -265,14 +261,13 @@ impl<H: StreamState> CallScope<'_, H> {
         num_trailers: u32,
     ) -> Result<Action, GuestError> {
         let count = prologue::wire_u32(num_trailers)?;
-        let func = self.guest.callbacks().response_trailers.clone();
         let params = (context.wire(), count);
         self.stream_action(
             context,
             StreamKind::Http,
             Callback::ResponseTrailers,
             None,
-            func,
+            |callbacks| callbacks.response_trailers.as_ref(),
             params,
         )
     }

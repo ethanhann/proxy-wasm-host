@@ -101,7 +101,6 @@ impl<H: StreamState> CallScope<'_, H> {
         self.guest.require_live()?;
         let open = accepted(self.guest, context, callout, BOTH_KINDS)?;
         let count = prologue::wire_size(metadata.len())?;
-        let func = self.guest.callbacks().grpc_receive_initial_metadata.clone();
         deliver(
             self.guest,
             Delivered {
@@ -109,7 +108,7 @@ impl<H: StreamState> CallScope<'_, H> {
                 callout: Some(callout),
                 delivery: Delivery::grpc_initial_metadata(callout, metadata),
                 callback: Callback::GrpcReceiveInitialMetadata,
-                func,
+                select: |callbacks| callbacks.grpc_receive_initial_metadata.as_ref(),
                 params: (open.root.wire(), callout.get().cast_signed(), count),
                 ends: false,
             },
@@ -149,7 +148,6 @@ impl<H: StreamState> CallScope<'_, H> {
         self.guest.require_live()?;
         let open = accepted(self.guest, context, callout, BOTH_KINDS)?;
         let size = prologue::wire_size(message.len())?;
-        let func = self.guest.callbacks().grpc_receive.clone();
         deliver(
             self.guest,
             Delivered {
@@ -157,7 +155,7 @@ impl<H: StreamState> CallScope<'_, H> {
                 callout: Some(callout),
                 delivery: Delivery::grpc_message(callout, message),
                 callback: Callback::GrpcReceive,
-                func,
+                select: |callbacks| callbacks.grpc_receive.as_ref(),
                 params: (open.root.wire(), callout.get().cast_signed(), size),
                 ends: open.kind == CalloutKind::GrpcCall,
             },
@@ -191,11 +189,6 @@ impl<H: StreamState> CallScope<'_, H> {
         self.guest.require_live()?;
         let open = accepted(self.guest, context, callout, BOTH_KINDS)?;
         let count = prologue::wire_size(metadata.len())?;
-        let func = self
-            .guest
-            .callbacks()
-            .grpc_receive_trailing_metadata
-            .clone();
         deliver(
             self.guest,
             Delivered {
@@ -203,7 +196,7 @@ impl<H: StreamState> CallScope<'_, H> {
                 callout: Some(callout),
                 delivery: Delivery::grpc_trailing_metadata(callout, metadata),
                 callback: Callback::GrpcReceiveTrailingMetadata,
-                func,
+                select: |callbacks| callbacks.grpc_receive_trailing_metadata.as_ref(),
                 params: (open.root.wire(), callout.get().cast_signed(), count),
                 ends: false,
             },
