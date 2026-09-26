@@ -15,7 +15,8 @@ const SEPARATOR: u8 = 0;
 /// `[""]` encodes to no bytes.
 /// `["", ""]` encodes to one `0x00` byte.
 /// Both decode to no segments.
-pub fn encode_path<S: AsRef<[u8]>>(segments: &[S]) -> Vec<u8> {
+#[cfg(test)]
+pub(crate) fn encode_path<S: AsRef<[u8]>>(segments: &[S]) -> Vec<u8> {
     segments
         .iter()
         .map(AsRef::as_ref)

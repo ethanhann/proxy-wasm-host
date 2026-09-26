@@ -31,7 +31,7 @@ pub(super) fn proxy_set_effective_context(
     ctx: &mut impl AsContextMut<Data = HostState>,
     context_id: i32,
 ) -> Result<(), Failure> {
-    let id = ContextId::try_from(context_id)?;
+    let id = ContextId::try_from(context_id.cast_unsigned())?;
     let mut ctx = ctx.as_context_mut();
     let contexts = ctx.data_mut().abi_mut().contexts_mut();
     let Some(current) = contexts.effective() else {

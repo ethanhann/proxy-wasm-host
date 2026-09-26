@@ -56,13 +56,20 @@ impl StreamState for RecordingStream {
         self.operation_answer()
     }
 
-    fn property(&mut self, call: Invocation, path: &[&[u8]]) -> Result<Vec<u8>, Status> {
+    fn property(
+        &mut self,
+        call: Invocation,
+        path: &[&[u8]],
+        out: &mut Vec<u8>,
+    ) -> Result<(), Status> {
         let owned: Path = path.iter().map(|part| part.to_vec()).collect();
         self.property_reads.push((call, owned.clone()));
         if self.refuse_with_ok {
             return Err(Status::Ok);
         }
-        self.properties.get(&owned).cloned().ok_or(Status::NotFound)
+        let value = self.properties.get(&owned).ok_or(Status::NotFound)?;
+        out.extend_from_slice(value);
+        Ok(())
     }
 
     fn set_property(
@@ -83,13 +90,16 @@ impl StreamState for RecordingStream {
         &mut self,
         call: Invocation,
         request: ForeignCall<'_>,
-    ) -> Result<Vec<u8>, Status> {
+        out: &mut Vec<u8>,
+    ) -> Result<(), Status> {
         let name = request.name.clone().into_owned();
         self.foreign_calls.push((call, request.into_owned()));
         if self.refuse_with_ok {
             return Err(Status::Ok);
         }
-        self.foreign.get(&name).cloned().ok_or(Status::NotFound)
+        let results = self.foreign.get(&name).ok_or(Status::NotFound)?;
+        out.extend_from_slice(results);
+        Ok(())
     }
 
     fn send_local_response(

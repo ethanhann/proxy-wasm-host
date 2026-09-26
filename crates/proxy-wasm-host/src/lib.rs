@@ -5,10 +5,10 @@
 //! <https://github.com/mosn/proxy-wasm-go-host>.
 //!
 //! The ABI enumerations live under [`abi::v0_2_1::types`].
-//! The serialization rules for maps and property paths live under [`codec`].
 //! You lend your own header maps and buffers to the crate through the
 //! [`HeaderMap`] and [`Buffer`] traits.
-//! The [`runtime`] module compiles a guest and bounds its resources.
+//! [`Engine`], [`Module`], and [`Limits`] compile a guest and bound its
+//! resources.
 //! [`abi::v0_2_1::Host`] links the host functions of the ABI on an engine.
 //! [`abi::v0_2_1::Guest`] binds a guest to the ABI and drives its callbacks.
 //!
@@ -18,7 +18,9 @@
 //! You build and configure with [`Engine`], [`EngineConfig`], [`Module`], and
 //! [`Limits`].
 //! You lend your own storage through [`Buffer`], [`HeaderMap`], and
-//! [`VecHeaderMap`], and you refuse a write with [`NotAllowed`].
+//! [`VecHeaderMap`], you walk the pairs of a map with a [`PairVisitor`],
+//! [`HeaderMapExt`] reads a map through the trait, and you refuse a write
+//! with [`NotAllowed`].
 //! You read a failure of the runtime through [`Error`], [`Limit`], and
 //! [`MemoryError`].
 //! You ask which ABI a module speaks with [`AbiVersion`], and
@@ -30,16 +32,17 @@
 //! way.
 
 pub mod abi;
-pub mod buffer;
-pub mod codec;
-pub mod error;
-pub mod header_map;
-pub mod runtime;
+mod buffer;
+mod codec;
+mod error;
+mod header_map;
+mod runtime;
 
 pub use abi::AbiVersion;
 pub use buffer::Buffer;
+pub use codec::pairs::PairVisitor;
 pub use error::{Error, Limit, MemoryError};
-pub use header_map::{HeaderMap, VecHeaderMap};
+pub use header_map::{HeaderMap, HeaderMapExt, VecHeaderMap};
 pub use runtime::{Engine, EngineConfig, Limits, Module};
 
 /// The embedder refused a write to a header map or a buffer.

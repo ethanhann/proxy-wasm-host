@@ -33,12 +33,18 @@ pub enum Error {
         /// The runtime's own error.
         source: Box<dyn std::error::Error + Send + Sync>,
     },
-    /// The engine or the limits are configured in a way the runtime rejects.
-    #[error("invalid configuration: {message}")]
+    /// The engine or the limits are configured in a way the runtime rejects,
+    /// or a call asks the runtime for something it cannot do with the values
+    /// it was given.
+    #[error("the configuration is invalid: {message}")]
+    #[non_exhaustive]
     Config {
         /// What is wrong.
         message: String,
     },
+    /// The module was compiled on another engine than the host that runs it.
+    #[error("the module was compiled on another engine than the host")]
+    EngineMismatch,
     /// The module exports no memory named `memory`.
     #[error("the module exports no memory named \"memory\"")]
     MissingMemory,
@@ -59,6 +65,7 @@ pub enum Error {
     },
     /// The guest trapped.
     #[error("the guest trapped: {message}")]
+    #[non_exhaustive]
     Trap {
         /// The trap reason.
         message: String,
@@ -99,7 +106,7 @@ pub enum Error {
 }
 
 /// A resource limit that a guest can exceed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Limit {
     /// The CPU time limit, enforced through epoch interruption.

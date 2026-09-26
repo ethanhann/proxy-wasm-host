@@ -540,12 +540,16 @@ impl StreamState for StreamDouble {
         Ok(())
     }
 
-    fn property(&mut self, _: Invocation, segments: &[&[u8]]) -> Result<Vec<u8>, Status> {
+    fn property(
+        &mut self,
+        _: Invocation,
+        segments: &[&[u8]],
+        out: &mut Vec<u8>,
+    ) -> Result<(), Status> {
         self.refused(StreamCall::Property)?;
-        self.properties
-            .get(&path(segments))
-            .map(|value| value.as_bytes().to_vec())
-            .ok_or(Status::NotFound)
+        let value = self.properties.get(&path(segments)).ok_or(Status::NotFound)?;
+        out.extend_from_slice(value.as_bytes());
+        Ok(())
     }
 
     fn set_property(
@@ -565,13 +569,15 @@ impl StreamState for StreamDouble {
         &mut self,
         at: Invocation,
         request: ForeignCall<'_>,
-    ) -> Result<Vec<u8>, Status> {
+        out: &mut Vec<u8>,
+    ) -> Result<(), Status> {
         self.refused(StreamCall::CallForeignFunction)?;
         let event = Event::ForeignCall {
             name: text(&request.name),
             arguments: text(&request.arguments),
         };
         self.recorder.push(at, event);
-        Ok(b"pong".to_vec())
+        out.extend_from_slice(b"pong");
+        Ok(())
     }
 }

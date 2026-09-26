@@ -138,9 +138,9 @@ impl GuestSpec {
     /// Returns [`GuestError::UnsupportedAbi`] when the module exports no
     /// accepted `proxy_abi_version_*` marker.
     /// Returns [`GuestError::Runtime`] with
-    /// [`Error::Config`](crate::Error::Config) when the module was compiled on
-    /// another engine than the one of `host`, because no guest of that pair
-    /// can be built.
+    /// [`Error::EngineMismatch`](crate::Error::EngineMismatch) when the module
+    /// was compiled on another engine than the one of `host`, because no
+    /// guest of that pair can be built.
     pub fn new(
         host: &Host,
         module: &Module,
@@ -149,9 +149,7 @@ impl GuestSpec {
     ) -> Result<Self, GuestError> {
         AbiVersion::detect(module.abi_exports())?;
         if !wasmtime::Engine::same(host.engine().wasmtime(), module.wasmtime().engine()) {
-            return Err(GuestError::Runtime(Error::Config {
-                message: "the module was compiled on another engine than the host".to_owned(),
-            }));
+            return Err(GuestError::Runtime(Error::EngineMismatch));
         }
         Ok(Self {
             host: host.clone(),
@@ -318,8 +316,7 @@ mod tests {
         // Assert
         assert!(matches!(
             spec,
-            Err(GuestError::Runtime(Error::Config { message }))
-                if message == "the module was compiled on another engine than the host"
+            Err(GuestError::Runtime(Error::EngineMismatch))
         ));
     }
 

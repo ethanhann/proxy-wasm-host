@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn the_default_service_refuses_an_http_call_as_failed() {
         // Arrange
-        let request = HttpCall::new(Cow::Borrowed(b"authz"));
+        let request = HttpCall::new(Cow::Borrowed(&b"authz"[..]));
 
         // Act
         let answer = NoCallouts.http_call(call(), callout(), request);
@@ -258,14 +258,14 @@ mod tests {
     fn the_two_grpc_openers_refuse_as_failed() {
         // Arrange
         let unary = GrpcCall::new(
-            Cow::Borrowed(b"authz"),
-            Cow::Borrowed(b"svc"),
-            Cow::Borrowed(b"Check"),
+            Cow::Borrowed(&b"authz"[..]),
+            Cow::Borrowed(&b"svc"[..]),
+            Cow::Borrowed(&b"Check"[..]),
         );
         let stream = GrpcStream::new(
-            Cow::Borrowed(b"authz"),
-            Cow::Borrowed(b"svc"),
-            Cow::Borrowed(b"Watch"),
+            Cow::Borrowed(&b"authz"[..]),
+            Cow::Borrowed(&b"svc"[..]),
+            Cow::Borrowed(&b"Watch"[..]),
         );
 
         // Act
@@ -287,23 +287,23 @@ mod tests {
 
         // Act
         let counted = warnings(|| {
-            let _ = service.http_call(call(), callout(), HttpCall::new(Cow::Borrowed(b"a")));
+            let _ = service.http_call(call(), callout(), HttpCall::new(Cow::Borrowed(&b"a"[..])));
             let _ = service.grpc_call(
                 call(),
                 callout(),
                 GrpcCall::new(
-                    Cow::Borrowed(b"a"),
-                    Cow::Borrowed(b"s"),
-                    Cow::Borrowed(b"m"),
+                    Cow::Borrowed(&b"a"[..]),
+                    Cow::Borrowed(&b"s"[..]),
+                    Cow::Borrowed(&b"m"[..]),
                 ),
             );
             let _ = service.grpc_stream(
                 call(),
                 callout(),
                 GrpcStream::new(
-                    Cow::Borrowed(b"a"),
-                    Cow::Borrowed(b"s"),
-                    Cow::Borrowed(b"m"),
+                    Cow::Borrowed(&b"a"[..]),
+                    Cow::Borrowed(&b"s"[..]),
+                    Cow::Borrowed(&b"m"[..]),
                 ),
             );
             service.grpc_send(call(), callout(), message, true);

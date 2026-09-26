@@ -164,7 +164,7 @@ fn a_module_with_no_accepted_version_is_refused_by_name() {
     // Assert
     assert!(matches!(
         result,
-        Err(GuestError::UnsupportedAbi(UnsupportedAbi { found })) if found == ["proxy_abi_version_0_1_0"]
+        Err(GuestError::UnsupportedAbi(UnsupportedAbi { found, .. })) if found == ["proxy_abi_version_0_1_0"]
     ));
 }
 
@@ -197,9 +197,9 @@ fn an_embedder_names_the_grpc_surface_in_its_own_signatures() {
         }
     }
     let request = GrpcCall::new(
-        std::borrow::Cow::Borrowed(b"authz"),
-        std::borrow::Cow::Borrowed(b"example.Authz"),
-        std::borrow::Cow::Borrowed(b"Check"),
+        &b"authz"[..],
+        &b"example.Authz"[..],
+        &b"Check"[..],
     );
     let call = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
 

@@ -68,9 +68,15 @@ impl Instance {
         let budget = Budget::new(limits, engine);
         let mut store = Store::new(engine.wasmtime(), HostState::new(abi));
         budget.refill(&mut store)?;
-        let mut builder = StoreLimitsBuilder::new();
+        let mut builder = StoreLimitsBuilder::new()
+            .memories(1)
+            .tables(1)
+            .instances(1);
         if let Some(bytes) = limits.memory_bytes() {
             builder = builder.memory_size(bytes);
+        }
+        if let Some(elements) = limits.table_elements() {
+            builder = builder.table_elements(elements);
         }
         store.data_mut().set_store_limits(builder.build());
         store.data_mut().set_guest_limits(limits);
@@ -175,6 +181,7 @@ impl Instance {
     /// [`Error::MissingExport`] when there is no such export,
     /// [`Error::ExportTypeMismatch`] when it is not a function of that type,
     /// and the mapped error when the call fails, which poisons the instance.
+    #[cfg(test)]
     pub(crate) fn call<P: WasmParams, R: WasmResults>(
         &mut self,
         name: &str,

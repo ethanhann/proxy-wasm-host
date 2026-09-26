@@ -11,13 +11,15 @@ use crate::abi::v0_2_1::types::Status;
 /// Each case is a status that every guest SDK accepts from
 /// `proxy_http_call`, so a refusal is an error value in the guest and never
 /// a trap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 #[non_exhaustive]
 pub enum HttpCallRefusal {
     /// You do not know the upstream, which the guest reads as `BAD_ARGUMENT`.
+    #[error("the upstream is not known")]
     UnknownUpstream,
     /// You cannot send the request, which the guest reads as
     /// `INTERNAL_FAILURE`.
+    #[error("the call could not be made")]
     Failed,
 }
 
@@ -54,9 +56,9 @@ pub struct HttpCall<'a> {
 impl<'a> HttpCall<'a> {
     /// A call to `upstream` with no header, no body, no trailer, and a
     /// timeout of zero, for a test of your own service.
-    pub fn new(upstream: Cow<'a, [u8]>) -> Self {
+    pub fn new(upstream: impl Into<Cow<'a, [u8]>>) -> Self {
         Self {
-            upstream,
+            upstream: upstream.into(),
             headers: Vec::new(),
             body: Cow::Borrowed(&[]),
             trailers: Vec::new(),
@@ -73,8 +75,8 @@ impl<'a> HttpCall<'a> {
 
     /// Sets the body.
     #[must_use]
-    pub fn with_body(mut self, body: Cow<'a, [u8]>) -> Self {
-        self.body = body;
+    pub fn with_body(mut self, body: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.body = body.into();
         self
     }
 
@@ -139,9 +141,9 @@ mod tests {
     fn an_owned_call_keeps_every_field() {
         // Arrange
         let upstream = b"authz".to_vec();
-        let call = HttpCall::new(Cow::Borrowed(&upstream))
+        let call = HttpCall::new(Cow::Borrowed(upstream.as_slice()))
             .with_headers(pairs(&[(b":path", b"/check")]))
-            .with_body(Cow::Borrowed(b"body"))
+            .with_body(Cow::Borrowed(&b"body"[..]))
             .with_trailers(pairs(&[(b"t", b"v")]))
             .with_timeout(Duration::from_millis(250));
         let expected = call.clone();

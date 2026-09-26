@@ -101,7 +101,7 @@
 //! |---|---|---|
 //! | The pairs one map a guest sends may declare | 1024 | [`Limits::with_max_decoded_pairs`](crate::Limits::with_max_decoded_pairs) |
 //! | The bytes one map a guest sends may hold | 1 MiB | [`Limits::with_max_decoded_map_bytes`](crate::Limits::with_max_decoded_map_bytes) |
-//! | The callouts one guest may hold open | 1024 | [`VmServices::with_max_open_callouts`] |
+//! | The callouts one guest may hold open | 1024 | [`Limits::with_max_open_callouts`](crate::Limits::with_max_open_callouts) |
 //! | The shared queues and metrics one guest may hold | 1024 | [`Limits::with_max_shared_names`](crate::Limits::with_max_shared_names) |
 //! | The bytes of one name or key a guest sends | 4096 | [`Limits::with_max_name_bytes`](crate::Limits::with_max_name_bytes) |
 //! | The bytes of one message a guest logs | 1 MiB | [`Limits::with_max_log_bytes`](crate::Limits::with_max_log_bytes) |
@@ -111,7 +111,8 @@
 //! | The queues of the shared store | 4096 | [`InMemoryStore::with_limits`] |
 //! | The metrics of the shared store | 4096 | [`InMemoryStore::with_limits`] |
 //! | The CPU time of one guest call | one second | [`Limits::with_cpu_time`](crate::Limits::with_cpu_time) |
-//! | The memory of one instance | 128 MiB | [`Limits::with_memory_bytes`](crate::Limits::with_memory_bytes) |
+//! | The memory of one instance, which has one linear memory | 128 MiB | [`Limits::with_memory_bytes`](crate::Limits::with_memory_bytes) |
+//! | The elements of the table of one instance | 10,000 | [`Limits::with_table_elements`](crate::Limits::with_table_elements) |
 //! | The WASI functions a guest may import | the eight the ABI defines | fixed |
 //!
 //! The first three rows match the most widely used Proxy-Wasm host, so a
@@ -217,8 +218,6 @@
 //! [`InMemoryStoreLimits`], and the values involved are [`SharedValue`],
 //! [`QueueId`], [`MetricId`], [`InvalidQueueId`], and [`InvalidMetricId`].
 //! The enumerations the ABI defines are under [`types`].
-//! [`WasmParams`] and [`WasmResults`] bound the types of
-//! [`Guest::call_export`].
 
 pub mod types;
 
@@ -269,13 +268,6 @@ pub use shared_services::{
 };
 pub use stream_state::values::{ForeignCall, HeaderPairs, LocalResponse};
 pub use stream_state::{Access, Invocation, NoStream, StreamState};
-/// The traits that bound the parameters and the results of
-/// [`Guest::call_export`].
-///
-/// A change of the wasmtime major version is a breaking change of this
-/// crate.
-#[doc(no_inline)]
-pub use wasmtime::{WasmParams, WasmResults};
 
 pub(crate) use context::table::ContextTable;
 pub(crate) use state::{AbiAccess, AbiState};

@@ -85,7 +85,7 @@ pub(super) fn proxy_enqueue_shared_queue(
     value_data: i32,
     value_size: i32,
 ) -> Result<(), Failure> {
-    let queue = QueueId::try_from(queue_id).map_err(|_| Status::NotFound)?;
+    let queue = QueueId::try_from(queue_id.cast_unsigned()).map_err(|_| Status::NotFound)?;
     let value = GuestSlice::try_from((value_data, value_size))?;
     let (memory, state) = split(ctx)?;
     let value = memory.read(value)?;
@@ -106,7 +106,7 @@ pub(super) fn proxy_dequeue_shared_queue(
     return_value_data: i32,
     return_value_size: i32,
 ) -> Result<(), Failure> {
-    let queue = QueueId::try_from(queue_id).map_err(|_| Status::NotFound)?;
+    let queue = QueueId::try_from(queue_id.cast_unsigned()).map_err(|_| Status::NotFound)?;
     let data_ptr = GuestPtr::try_from(return_value_data)?;
     let size_ptr = GuestPtr::try_from(return_value_size)?;
     let (memory, state) = split(ctx)?;
@@ -591,7 +591,7 @@ mod tests {
         assert!(
             mine.state()
                 .abi()
-                .holds_queue(QueueId::try_from(queue).unwrap())
+                .holds_queue(QueueId::try_from(queue.cast_unsigned()).unwrap())
         );
     }
 

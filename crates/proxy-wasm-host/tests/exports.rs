@@ -15,8 +15,8 @@
 
 // What no ABI version owns.
 use proxy_wasm_host::{
-    AbiVersion, Buffer, Engine, EngineConfig, Error, HeaderMap, Limit, Limits, MemoryError, Module,
-    NotAllowed, VecHeaderMap,
+    AbiVersion, Buffer, Engine, EngineConfig, Error, HeaderMap, HeaderMapExt, Limit, Limits,
+    MemoryError, Module, NotAllowed, PairVisitor, VecHeaderMap,
 };
 // What ABI v0.2.1 defines.
 use proxy_wasm_host::abi::UnsupportedAbi;
@@ -31,20 +31,11 @@ use proxy_wasm_host::abi::v0_2_1::{
     InvalidContextId, InvalidMetricId, InvalidQueueId, Invocation, LocalResponse, LogContext,
     LogSink, MetricId, NoStream, OpenCallout, PluginConfig, QueueEnqueued, QueueId, QueueProblem,
     QueueRegistration, SharedServices, SharedValue, Started, StreamKind, StreamState, SystemClock,
-    VmServices, WasmParams, WasmResults,
+    VmServices,
 };
-// The codec types that appear in a signature an embedder writes.
-use proxy_wasm_host::codec::pairs::{EncodeError, PairVisitor, Pairs};
 
 // The rest of the public surface, which an embedder uses less often.
-use proxy_wasm_host::abi::v0_2_1::types::{
-    PeerType, UnknownValue, WasiClockId, WasiErrno, WasiFdId,
-};
-use proxy_wasm_host::codec::pairs::{
-    COUNT_SIZE, DecodeError, Field, PairLimits, PairSource, decode_pairs, encode_pairs,
-    encode_visited, encoded_size, pair_encoded_size, total_size,
-};
-use proxy_wasm_host::codec::path::{decode_path, encode_path};
+use proxy_wasm_host::abi::v0_2_1::types::{PeerType, UnknownValue};
 
 /// Every `pub use` statement of `source`, on one line each.
 ///
@@ -88,8 +79,9 @@ fn the_crate_root_exports_only_names_that_no_abi_version_owns() {
         [
             "pub use abi::AbiVersion;",
             "pub use buffer::Buffer;",
+            "pub use codec::pairs::PairVisitor;",
             "pub use error::{Error, Limit, MemoryError};",
-            "pub use header_map::{HeaderMap, VecHeaderMap};",
+            "pub use header_map::{HeaderMap, HeaderMapExt, VecHeaderMap};",
             "pub use runtime::{Engine, EngineConfig, Limits, Module};",
         ]
     );
@@ -139,9 +131,7 @@ fn the_versioned_module_exports_the_names_listed_here() {
             "pub use shared_services::{ InMemoryStore, InMemoryStoreLimits, InvalidMetricId, InvalidQueueId, MetricId, QueueEnqueued, QueueId, QueueProblem, SharedServices, SharedValue, };",
             "pub use stream_state::values::{ForeignCall, HeaderPairs, LocalResponse};",
             "pub use stream_state::{Access, Invocation, NoStream, StreamState};",
-            "pub use wasmtime::{WasmParams, WasmResults};",
             "pub use proxy::{Action, BufferType, LogLevel, MapType, MetricType, PeerType, Status, StreamType};",
-            "pub use wasi::{WasiClockId, WasiErrno, WasiFdId};",
         ]
     );
 }

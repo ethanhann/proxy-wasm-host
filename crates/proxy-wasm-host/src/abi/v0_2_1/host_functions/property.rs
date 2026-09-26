@@ -87,7 +87,9 @@ pub(super) fn proxy_get_property(
         Served::Crate(name) => well_known(state, name)?,
         Served::Embedder => {
             let (call, stream) = with_stream(state, Status::NotFound)?;
-            from_embedder("property", stream.property(call, &path))?
+            let mut value = Vec::new();
+            from_embedder("property", stream.property(call, &path, &mut value))?;
+            value
         }
     };
     write_return(ctx, &value, data_ptr, size_ptr)?;

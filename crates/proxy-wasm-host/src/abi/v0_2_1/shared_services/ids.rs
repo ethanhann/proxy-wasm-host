@@ -34,16 +34,6 @@ macro_rules! shared_id {
             }
         }
 
-        impl TryFrom<i32> for $name {
-            type Error = $invalid;
-
-            /// Reads the raw bits as unsigned, because the ABI types the
-            /// argument as unsigned, and rejects zero.
-            fn try_from(value: i32) -> Result<Self, $invalid> {
-                Self::try_from(value.cast_unsigned())
-            }
-        }
-
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "{}", self.0)
@@ -53,6 +43,7 @@ macro_rules! shared_id {
         #[doc = concat!("A value that cannot be a ", $what, " identifier.")]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
         #[error($message)]
+        #[non_exhaustive]
         pub struct $invalid {
             /// The value that was rejected.
             pub value: u32,
@@ -97,7 +88,7 @@ mod tests {
     #[test]
     fn an_identifier_reads_its_bits_as_unsigned_and_rejects_zero() {
         // Arrange
-        let values = [1, -1, 0];
+        let values = [1_u32, u32::MAX, 0];
 
         // Act
         let results = values.map(QueueId::try_from);

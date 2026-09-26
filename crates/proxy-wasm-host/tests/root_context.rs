@@ -264,7 +264,7 @@ fn a_grpc_stream_runs_from_its_metadata_to_its_close() {
     let stream = callout(2);
     let replies = Replies {
         initial: vec![pair("k", "v")],
-        message: Cow::Borrowed(b"reply"),
+        message: Cow::Borrowed(&b"reply"[..]),
         trailing: vec![pair("t", "done")],
         status: GrpcStatus::new(14, "unavailable"),
     };

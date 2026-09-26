@@ -10,7 +10,7 @@ use crate::Buffer;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::types::{BufferType, MapType, Status, StreamType};
 use crate::abi::v0_2_1::{Access, ForeignCall, Invocation, LocalResponse};
-use crate::header_map::HeaderMap;
+use crate::header_map::{HeaderMap, HeaderMapExt};
 use crate::runtime::HostState;
 
 /// The segments of one property path.

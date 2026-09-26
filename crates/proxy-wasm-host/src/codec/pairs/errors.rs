@@ -3,7 +3,7 @@
 use std::fmt;
 
 /// Which half of a pair an error refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Field {
     /// The key of the pair.
     Key,
@@ -83,13 +83,6 @@ pub enum DecodeError {
 }
 
 impl DecodeError {
-    /// Whether a limit refused the input rather than its shape.
-    ///
-    /// A map that breaks a limit is well formed, so an embedder that wants
-    /// to raise a limit rather than refuse a guest reads this.
-    pub fn is_limit(&self) -> bool {
-        matches!(self, Self::PairLimit { .. } | Self::ByteLimit { .. })
-    }
 }
 
 /// Why a map could not be encoded.

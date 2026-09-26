@@ -1,12 +1,16 @@
 //! What a guest exports beside the ABI's own callbacks.
 
 use crate::Error;
-use crate::abi::v0_2_1::{AbiAccess, Guest, GuestError};
+use crate::abi::v0_2_1::{AbiAccess, Guest};
+#[cfg(test)]
+use crate::abi::v0_2_1::GuestError;
 
 /// Every callback and every allocator the ABI defines starts with this.
+#[cfg(test)]
 const ABI_PREFIX: &str = "proxy_";
 
 /// The allocator a guest may export in place of `proxy_on_memory_allocate`.
+#[cfg(test)]
 const LIBC_ALLOCATOR: &str = "malloc";
 
 impl Guest {
@@ -56,29 +60,19 @@ impl Guest {
     }
 
     /// Whether the guest exports `name`.
-    pub fn exports(&self, name: &str) -> bool {
+    pub fn has_export(&self, name: &str) -> bool {
         self.instance.has_export(name)
     }
 
-    /// Calls an export the ABI does not name.
+    /// Calls an export the ABI does not define, so a test can make a guest
+    /// call host functions outside a callback.
     ///
-    /// The ABI's own callbacks run through [`Guest::enter`] and
-    /// [`Guest::with`], which keep the context table and the running callback
-    /// in step with the guest.
-    /// This is for an export beside them, such as a reactor's initializer.
     /// The call runs with no stream state, so a host function the export
     /// calls reports the unavailable status of its family.
-    ///
-    /// # Errors
-    ///
-    /// Every failure is a [`GuestError::Runtime`].
-    /// The error inside is [`Error::Config`] for a name that starts with
-    /// `proxy_` and for `malloc`, because the crate calls those itself and a
-    /// call from you would leave the guest and the context table disagreeing.
-    /// It is [`Error::Poisoned`] after an earlier failure, which includes a
-    /// callback that never returned.
-    /// It is the error of the guest call otherwise.
-    pub fn call_export<P: wasmtime::WasmParams, R: wasmtime::WasmResults>(
+    /// A name that starts with `proxy_` and `malloc` are refused with
+    /// [`Error::Config`], because the crate calls those itself.
+    #[cfg(test)]
+    pub(crate) fn call_export<P: wasmtime::WasmParams, R: wasmtime::WasmResults>(
         &mut self,
         name: &str,
         params: P,
@@ -225,7 +219,7 @@ mod tests {
         let guest = guest(&engine);
 
         // Act
-        let observed = (guest.exports("add"), guest.exports("absent"));
+        let observed = (guest.has_export("add"), guest.has_export("absent"));
 
         // Assert
         assert_eq!(observed, (true, false));

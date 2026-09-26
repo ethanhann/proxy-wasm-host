@@ -14,7 +14,7 @@ const DEFAULT_EPOCH_PERIOD: Duration = Duration::from_millis(10);
 /// The settings of an [`Engine`].
 ///
 /// Fuel metering and the wasm stack size are engine properties in wasmtime.
-/// They live here and not in [`crate::runtime::Limits`].
+/// They live here and not in [`crate::Limits`].
 /// The struct is non exhaustive, so build it with [`EngineConfig::new`] and
 /// the `with_*` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +65,7 @@ impl EngineConfig {
         self
     }
 
-    /// Enables fuel metering, so that [`crate::runtime::Limits::with_fuel`]
+    /// Enables fuel metering, so that [`crate::Limits::with_fuel`]
     /// can bound a guest call.
     ///
     /// A store on a metered engine starts with no fuel, so every guest you
@@ -88,8 +88,8 @@ impl EngineConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Config`] for a zero epoch period, and
-    /// [`Error::Instantiate`] when wasmtime rejects the configuration.
+    /// Returns [`Error::Config`] for a zero epoch period and when wasmtime
+    /// rejects the configuration.
     pub fn build(self) -> Result<Engine, Error> {
         if self.epoch_period.is_zero() {
             return Err(Error::Config {
@@ -98,12 +98,13 @@ impl EngineConfig {
         }
         let mut config = Config::new();
         config.epoch_interruption(true);
+        config.wasm_multi_memory(false);
         config.consume_fuel(self.fuel_enabled);
         if let Some(bytes) = self.max_wasm_stack {
             config.max_wasm_stack(bytes);
         }
-        let engine = wasmtime::Engine::new(&config).map_err(|source| Error::Instantiate {
-            source: source.into(),
+        let engine = wasmtime::Engine::new(&config).map_err(|source| Error::Config {
+            message: source.to_string(),
         })?;
         let ticks = Arc::new(AtomicU64::new(0));
         let ticker = if self.external_ticks {

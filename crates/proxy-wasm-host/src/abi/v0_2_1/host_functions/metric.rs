@@ -50,7 +50,7 @@ pub(super) fn proxy_record_metric(
     metric_id: i32,
     value: i64,
 ) -> Result<(), Failure> {
-    let metric = MetricId::try_from(metric_id).map_err(|_| Status::NotFound)?;
+    let metric = MetricId::try_from(metric_id.cast_unsigned()).map_err(|_| Status::NotFound)?;
     let (_, state) = split(ctx)?;
     settle(state);
     if !state.abi().holds_metric(metric) {
@@ -68,7 +68,7 @@ pub(super) fn proxy_increment_metric(
     metric_id: i32,
     delta: i64,
 ) -> Result<(), Failure> {
-    let metric = MetricId::try_from(metric_id).map_err(|_| Status::NotFound)?;
+    let metric = MetricId::try_from(metric_id.cast_unsigned()).map_err(|_| Status::NotFound)?;
     let (_, state) = split(ctx)?;
     settle(state);
     if !state.abi().holds_metric(metric) {
@@ -86,7 +86,7 @@ pub(super) fn proxy_get_metric(
     metric_id: i32,
     return_value: i32,
 ) -> Result<(), Failure> {
-    let metric = MetricId::try_from(metric_id).map_err(|_| Status::NotFound)?;
+    let metric = MetricId::try_from(metric_id.cast_unsigned()).map_err(|_| Status::NotFound)?;
     let return_value = GuestPtr::try_from(return_value)?;
     let (memory, state) = split(ctx)?;
     memory.read_u64(return_value)?;

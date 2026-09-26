@@ -4,7 +4,8 @@
 //! When a guest asks for a request header, the host functions call the
 //! [`HeaderMap`] that you supply.
 //! The trait asks for a lookup, a visitor over the pairs, and four writes.
-//! The other methods are provided over the visitor.
+//! [`HeaderMapExt`] reads any map through the visitor, and the crate
+//! serializes a map through the visitor too.
 //! You can therefore implement the trait on a map that computes its keys as
 //! well as on stored pairs.
 
@@ -63,6 +64,28 @@ pub trait HeaderMap {
     /// Returns [`NotAllowed`] when the embedder refuses the write.
     fn replace_all(&mut self, pairs: &[(&[u8], &[u8])]) -> Result<(), NotAllowed>;
 
+    /// The number of pairs.
+    fn len(&self) -> usize {
+        let mut count = 0;
+        let _ = self.for_each_pair(&mut |_, _| {
+            count += 1;
+            ControlFlow::Continue(())
+        });
+        count
+    }
+
+    /// Whether the map has no pairs.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// The reads that every [`HeaderMap`] gets from its visitor.
+///
+/// The crate implements this trait for every map, so you cannot override
+/// these methods, and a map that stores its pairs in another shape still
+/// answers them through [`HeaderMap::for_each_pair`].
+pub trait HeaderMapExt: HeaderMap {
     /// Every value for `key` in order.
     fn get_all(&self, key: &[u8]) -> Vec<Vec<u8>> {
         let mut values = Vec::new();
@@ -96,46 +119,31 @@ pub trait HeaderMap {
         pairs
     }
 
-    /// The number of pairs.
-    fn len(&self) -> usize {
-        let mut count = 0;
-        let _ = self.for_each_pair(&mut |_, _| {
-            count += 1;
-            ControlFlow::Continue(())
-        });
-        count
-    }
+}
 
-    /// Whether the map has no pairs.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+impl<M: HeaderMap + ?Sized> HeaderMapExt for M {}
 
-    /// The size of the map when serialized with [`crate::codec::pairs`].
-    ///
-    /// An empty map has size zero.
-    fn encoded_size(&self) -> usize {
-        let mut count = 0usize;
-        let mut pairs_size = 0usize;
-        let _ = self.for_each_pair(&mut |k, v| {
-            count += 1;
-            pairs_size = pairs_size.saturating_add(pair_encoded_size(k.len(), v.len()));
-            ControlFlow::Continue(())
-        });
-        total_size(count, pairs_size)
-    }
+/// The size of `map` when serialized with the pair codec.
+///
+/// An empty map has size zero.
+pub(crate) fn encoded_size_of(map: &dyn HeaderMap) -> usize {
+    let mut count = 0usize;
+    let mut pairs_size = 0usize;
+    let _ = map.for_each_pair(&mut |k, v| {
+        count += 1;
+        pairs_size = pairs_size.saturating_add(pair_encoded_size(k.len(), v.len()));
+        ControlFlow::Continue(())
+    });
+    total_size(count, pairs_size)
+}
 
-    /// Serializes the map with [`crate::codec::pairs`], without an owned
-    /// copy of any pair.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EncodeError`] when a key or a value is longer than `u32::MAX`
-    /// bytes, when there are more than `u32::MAX` pairs, or when the map
-    /// changed while it was being walked.
-    fn encode(&self) -> Result<Vec<u8>, EncodeError> {
-        encode_visited(&mut |visitor| self.for_each_pair(visitor))
-    }
+/// Serializes `map` with the pair codec, without an owned copy of any pair.
+///
+/// Fails when a key or a value is longer than `u32::MAX` bytes, when there
+/// are more than `u32::MAX` pairs, or when the map changed while it was
+/// walked.
+pub(crate) fn encode_map(map: &dyn HeaderMap) -> Result<Vec<u8>, EncodeError> {
+    encode_visited(&mut |visitor| map.for_each_pair(visitor))
 }
 
 /// A header map stored as a vector of pairs in insertion order.
@@ -433,8 +441,8 @@ mod tests {
 
         // Act
         let observed = [
-            (empty.len(), empty.is_empty(), empty.encoded_size()),
-            (full.len(), full.is_empty(), full.encoded_size()),
+            (empty.len(), empty.is_empty(), encoded_size_of(&empty)),
+            (full.len(), full.is_empty(), encoded_size_of(&full)),
         ];
 
         // Assert
@@ -450,7 +458,7 @@ mod tests {
         let expected = encode_pairs(&map.pairs()).unwrap();
 
         // Act
-        let encoded = map.encode();
+        let encoded = encode_map(&map);
 
         // Assert
         assert_eq!(encoded, Ok(expected));
@@ -513,7 +521,7 @@ mod tests {
         assert_eq!(observed.1, Some(b"yes-10".to_vec()));
         assert_eq!(observed.2, Err(NotAllowed));
         assert_eq!(
-            computed.encode(),
+            encode_map(&computed),
             Ok(encode_pairs(&owned_str(&[("x-computed", "yes-10")])).unwrap())
         );
     }

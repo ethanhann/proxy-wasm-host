@@ -211,10 +211,14 @@ pub trait StreamState: Any + Send {
         Err(Status::Unimplemented)
     }
 
-    /// The value of a property, or the status to report instead.
+    /// Writes the value of a property into `out`, or reports the status
+    /// instead.
     ///
     /// The path arrives as the segments the guest serialized, so the path
     /// `route.name` arrives as two slices.
+    /// `out` arrives empty, and the crate passes what you append to the
+    /// guest, so a value you hold as bytes costs one copy and no allocation
+    /// of yours.
     /// The crate answers `plugin_name`, `plugin_root_id`, and
     /// `plugin_vm_id` itself from the plugin of the root and from the host
     /// services, so you never see those three.
@@ -228,9 +232,14 @@ pub trait StreamState: Any + Send {
     /// you hold and cannot serialize.
     /// A guest built with the Rust SDK reads `NOT_FOUND` as an absent value
     /// and stops on anything else.
-    fn property(&mut self, call: Invocation, path: &[&[u8]]) -> Result<Vec<u8>, Status> {
+    fn property(
+        &mut self,
+        call: Invocation,
+        path: &[&[u8]],
+        out: &mut Vec<u8>,
+    ) -> Result<(), Status> {
         unserved("property");
-        let _ = (call, path);
+        let _ = (call, path, out);
         Err(Status::NotFound)
     }
 
@@ -256,9 +265,11 @@ pub trait StreamState: Any + Send {
         Err(Status::NotFound)
     }
 
-    /// Runs a function of yours that the ABI does not name.
+    /// Runs a function of yours that the ABI does not define, and writes its
+    /// result into `out`.
     ///
-    /// The result may be empty, and the guest reads an empty result as a
+    /// `out` arrives empty.
+    /// The result may stay empty, and the guest reads an empty result as a
     /// present value of no bytes.
     ///
     /// # Errors
@@ -269,9 +280,10 @@ pub trait StreamState: Any + Send {
         &mut self,
         call: Invocation,
         request: ForeignCall<'_>,
-    ) -> Result<Vec<u8>, Status> {
+        out: &mut Vec<u8>,
+    ) -> Result<(), Status> {
         unserved("call_foreign_function");
-        let _ = (call, request);
+        let _ = (call, request, out);
         Err(Status::NotFound)
     }
 }
@@ -348,12 +360,13 @@ mod tests {
 
     fn not_found_answers(stream: &mut dyn StreamState) -> [Option<Status>; 3] {
         [
-            stream.property(call(), &[b"route"]).err(),
+            stream.property(call(), &[b"route"], &mut Vec::new()).err(),
             stream.set_property(call(), &[b"route"], b"main").err(),
             stream
                 .call_foreign_function(
                     call(),
-                    ForeignCall::new(Cow::Borrowed(b"echo"), Cow::Borrowed(b"")),
+                    ForeignCall::new(Cow::Borrowed(&b"echo"[..]), Cow::Borrowed(&b""[..])),
+                    &mut Vec::new(),
                 )
                 .err(),
         ]

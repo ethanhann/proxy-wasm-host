@@ -53,6 +53,7 @@ impl fmt::Display for AbiVersion {
 /// advertises, and [`AbiVersion::detect`] reads that list.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("no supported proxy_abi_version export, found {found:?}")]
+#[non_exhaustive]
 pub struct UnsupportedAbi {
     /// The `proxy_abi_version_*` exports the module has.
     pub found: Vec<String>,

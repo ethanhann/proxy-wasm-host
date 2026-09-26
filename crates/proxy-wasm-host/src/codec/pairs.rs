@@ -78,7 +78,8 @@ pub const fn total_size(count: usize, pairs_size: usize) -> usize {
 }
 
 /// The size that [`encode_pairs`] would produce, without building it.
-pub fn encoded_size<K: AsRef<[u8]>, V: AsRef<[u8]>>(pairs: &[(K, V)]) -> usize {
+#[cfg(test)]
+pub(crate) fn encoded_size<K: AsRef<[u8]>, V: AsRef<[u8]>>(pairs: &[(K, V)]) -> usize {
     let pairs_size = pairs.iter().fold(0usize, |sum, (key, value)| {
         sum.saturating_add(pair_encoded_size(key.as_ref().len(), value.as_ref().len()))
     });
@@ -94,7 +95,8 @@ pub fn encoded_size<K: AsRef<[u8]>, V: AsRef<[u8]>>(pairs: &[(K, V)]) -> usize {
 ///
 /// Returns [`EncodeError`] when a key or a value is longer than `u32::MAX`
 /// bytes or when there are more than `u32::MAX` pairs.
-pub fn encode_pairs<K: AsRef<[u8]>, V: AsRef<[u8]>>(
+#[cfg(test)]
+pub(crate) fn encode_pairs<K: AsRef<[u8]>, V: AsRef<[u8]>>(
     pairs: &[(K, V)],
 ) -> Result<Vec<u8>, EncodeError> {
     encode_visited(&mut |visitor| {

@@ -13,16 +13,18 @@ use crate::abi::v0_2_1::types::Status;
 /// Each case is a status that every guest SDK accepts from `proxy_grpc_call`
 /// and from `proxy_grpc_stream`, so a refusal is an error value in the guest
 /// and never a trap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 #[non_exhaustive]
 pub enum GrpcOpenRefusal {
     /// You do not know the upstream, which the guest reads as
     /// `PARSE_FAILURE`.
     /// The ABI specifies that status for a gRPC callout, where an HTTP call gets
     /// `BAD_ARGUMENT`.
+    #[error("the upstream is not known")]
     UnknownUpstream,
     /// You cannot reach the server, which the guest reads as
     /// `INTERNAL_FAILURE`.
+    #[error("the call could not be made")]
     Failed,
 }
 
@@ -62,11 +64,15 @@ pub struct GrpcCall<'a> {
 impl<'a> GrpcCall<'a> {
     /// A call to `method` of `service` on `upstream`, with no metadata, no
     /// message, and a timeout of zero, for a test of your own service.
-    pub fn new(upstream: Cow<'a, [u8]>, service: Cow<'a, [u8]>, method: Cow<'a, [u8]>) -> Self {
+    pub fn new(
+        upstream: impl Into<Cow<'a, [u8]>>,
+        service: impl Into<Cow<'a, [u8]>>,
+        method: impl Into<Cow<'a, [u8]>>,
+    ) -> Self {
         Self {
-            upstream,
-            service,
-            method,
+            upstream: upstream.into(),
+            service: service.into(),
+            method: method.into(),
             initial_metadata: Vec::new(),
             message: Cow::Borrowed(&[]),
             timeout: Duration::ZERO,
@@ -82,8 +88,8 @@ impl<'a> GrpcCall<'a> {
 
     /// Sets the message.
     #[must_use]
-    pub fn with_message(mut self, message: Cow<'a, [u8]>) -> Self {
-        self.message = message;
+    pub fn with_message(mut self, message: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.message = message.into();
         self
     }
 
@@ -132,11 +138,15 @@ pub struct GrpcStream<'a> {
 impl<'a> GrpcStream<'a> {
     /// A stream to `method` of `service` on `upstream`, with no metadata, for
     /// a test of your own service.
-    pub fn new(upstream: Cow<'a, [u8]>, service: Cow<'a, [u8]>, method: Cow<'a, [u8]>) -> Self {
+    pub fn new(
+        upstream: impl Into<Cow<'a, [u8]>>,
+        service: impl Into<Cow<'a, [u8]>>,
+        method: impl Into<Cow<'a, [u8]>>,
+    ) -> Self {
         Self {
-            upstream,
-            service,
-            method,
+            upstream: upstream.into(),
+            service: service.into(),
+            method: method.into(),
             initial_metadata: Vec::new(),
         }
     }
@@ -204,12 +214,12 @@ mod tests {
         // Arrange
         let upstream = b"authz".to_vec();
         let call = GrpcCall::new(
-            Cow::Borrowed(&upstream),
-            Cow::Borrowed(b"example.Authz"),
-            Cow::Borrowed(b"Check"),
+            Cow::Borrowed(upstream.as_slice()),
+            Cow::Borrowed(&b"example.Authz"[..]),
+            Cow::Borrowed(&b"Check"[..]),
         )
         .with_initial_metadata(pairs(&[(b"k", b"v")]))
-        .with_message(Cow::Borrowed(b"body"))
+        .with_message(Cow::Borrowed(&b"body"[..]))
         .with_timeout(Duration::from_millis(250));
         let expected = call.clone();
 
@@ -228,9 +238,9 @@ mod tests {
         // Arrange
         let upstream = b"authz".to_vec();
         let stream = GrpcStream::new(
-            Cow::Borrowed(&upstream),
-            Cow::Borrowed(b"example.Authz"),
-            Cow::Borrowed(b"Watch"),
+            Cow::Borrowed(upstream.as_slice()),
+            Cow::Borrowed(&b"example.Authz"[..]),
+            Cow::Borrowed(&b"Watch"[..]),
         )
         .with_initial_metadata(pairs(&[(b"k", b"v")]));
         let expected = stream.clone();

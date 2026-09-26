@@ -429,7 +429,7 @@ mod tests {
 
     fn received() -> HttpCallResponse<'static> {
         HttpCallResponse::received(pairs(&[(b":status", b"200"), (b"x", b"y")]))
-            .with_body(Cow::Borrowed(b"hello"))
+            .with_body(Cow::Borrowed(&b"hello"[..]))
             .with_trailers(pairs(&[(b"t", b"v")]))
     }
 
@@ -484,7 +484,7 @@ mod tests {
         // Arrange
         let (mut guest, root, stream) = with_stream();
         let callout = open(&mut guest, stream, root);
-        let no_header = HttpCallResponse::received(Vec::new()).with_body(Cow::Borrowed(b"x"));
+        let no_header = HttpCallResponse::received(Vec::new()).with_body(Cow::Borrowed(&b"x"[..]));
         let mut scope = guest.enter_root();
 
         // Act

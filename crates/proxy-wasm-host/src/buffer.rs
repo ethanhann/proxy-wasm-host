@@ -70,7 +70,7 @@ pub trait Buffer {
 /// The end is `start` plus `size`, saturating, and then clamped to `len`.
 /// Use this in your own [`Buffer`] implementation so that it follows the same
 /// rule as the one for `Vec<u8>`.
-pub fn clamp_range(len: usize, start: usize, size: usize) -> Range<usize> {
+pub(crate) fn clamp_range(len: usize, start: usize, size: usize) -> Range<usize> {
     let start = start.min(len);
     let end = start.saturating_add(size).min(len);
     start..end

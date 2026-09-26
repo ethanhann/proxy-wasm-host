@@ -54,16 +54,14 @@ pub(super) fn proxy_call_foreign_function(
     let arguments = memory.read(arguments)?;
     let request = ForeignCall::new(Cow::Borrowed(name), Cow::Borrowed(arguments));
     let (call, stream) = with_stream(state, Status::NotFound)?;
-    let results = match from_embedder(
+    let mut results = Vec::new();
+    if let Err(refusal) = from_embedder(
         "call_foreign_function",
-        stream.call_foreign_function(call, request),
+        stream.call_foreign_function(call, request, &mut results),
     ) {
-        Ok(results) => results,
-        Err(refusal) => {
-            write_optional_return(ctx, &[], data_ptr, size_ptr)?;
-            return Err(refusal);
-        }
-    };
+        write_optional_return(ctx, &[], data_ptr, size_ptr)?;
+        return Err(refusal);
+    }
     write_optional_return(ctx, &results, data_ptr, size_ptr)?;
     Ok(())
 }

@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::ops::ControlFlow;
 
-use proxy_wasm_host::codec::pairs::PairVisitor;
+use proxy_wasm_host::PairVisitor;
 use proxy_wasm_host::{HeaderMap, NotAllowed};
 
 /// Request headers with the rules of a proxy: names are stored in lower case,

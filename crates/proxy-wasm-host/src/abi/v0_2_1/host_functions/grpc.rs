@@ -156,7 +156,7 @@ enum Found {
 /// A guest can therefore learn that a number was given out, which the
 /// rustdoc of the three functions states.
 fn find(state: &HostState, id: i32) -> Result<Found, Failure> {
-    let callout = CalloutId::try_from(id).map_err(|_| Status::NotFound)?;
+    let callout = CalloutId::try_from(id.cast_unsigned()).map_err(|_| Status::NotFound)?;
     let abi = state.abi();
     let Some(entry) = abi.callouts().get(callout) else {
         if abi.callouts().issued(callout) {
@@ -269,7 +269,9 @@ mod tests {
     use crate::abi::v0_2_1::test_support::callouts::{
         GrpcAsk, RecordingCallouts, callout_hosted, callout_hosted_with_limits, services_with,
     };
-    use crate::abi::v0_2_1::test_support::{engine, instance_with, outcome, wat_bytes, write};
+    use crate::abi::v0_2_1::test_support::{
+        engine, instance_with, instance_with_limits, outcome, wat_bytes, write,
+    };
     use crate::abi::v0_2_1::{Callback, ContextId, GrpcOpenRefusal, Invocation};
     use crate::codec::pairs::encode_pairs;
     use crate::runtime::{Engine, Instance, Limits, Module};
@@ -629,8 +631,9 @@ mod tests {
         let engine = engine();
         let service = Arc::new(RecordingCallouts::new());
         let module = Module::new(&engine, &wat_bytes(GUEST)).unwrap();
-        let services = services_with(service.clone()).with_max_open_callouts(2);
-        let mut instance = instance_with(&engine, &module, services).unwrap();
+        let services = services_with(service.clone());
+        let limits = Limits::default().with_max_open_callouts(2);
+        let mut instance = instance_with_limits(&engine, &module, services, &limits).unwrap();
         let root = instance
             .state_mut()
             .abi_mut()

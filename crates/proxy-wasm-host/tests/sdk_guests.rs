@@ -12,7 +12,6 @@
 //! attribute.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -317,7 +316,7 @@ fn the_auth_guest_opens_a_callout_and_resumes_on_an_even_byte() {
             context,
             callout(1),
             HttpCallResponse::received(vec![pair(":status", "200")])
-                .with_body(Cow::Borrowed(b"\x02")),
+                .with_body(&b"\x02"[..]),
         )
     });
 
@@ -354,7 +353,7 @@ fn the_auth_guest_answers_403_on_an_odd_byte() {
             context,
             callout(1),
             HttpCallResponse::received(vec![pair(":status", "200")])
-                .with_body(Cow::Borrowed(b"\x03")),
+                .with_body(&b"\x03"[..]),
         )
     });
 
