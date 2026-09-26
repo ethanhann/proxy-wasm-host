@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in improving proxy-wasm-host.
+This page says what you need to build the crate, how to check a change, and what the tests and the guests expect.
 
 ## What you need
 

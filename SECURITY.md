@@ -78,11 +78,13 @@ Use `Guest::open_callouts` to find those requests, end them, and then build a re
 ### Watch the rate of rebuilds
 
 A plugin that traps on every request costs you a rebuild on every request.
-`GuestSpec::poisoned_guests` counts the poisoned guests you have dropped, so you can compare it after each rebuild and stop serving the plugin if it climbs faster than you are comfortable with.
+`GuestSpec::poisoned_guests` counts the poisoned guests you have dropped, so you can compare it after each rebuild and stop serving the plugin when it rises faster than you accept.
 
 ## The limits you can change
 
 The module documentation of `proxy_wasm_host::abi::v0_2_1` has a table of every limit, its default, and the method that changes it.
-`Limits` carries what one guest may spend and how many callouts it may hold open, `EngineConfig` carries the fuel switch and the stack size of the engine, and `InMemoryStoreLimits` carries what `InMemoryStore` keeps.
+`Limits` sets what one guest may spend and how many callouts it may hold open.
+`EngineConfig` sets the fuel switch and the stack size of the engine.
+`InMemoryStoreLimits` sets what `InMemoryStore` keeps.
 You can remove most `Limits` values by passing `None`, and a guest then meets no bound of the crate on that call.
 The CPU time, the open callouts, and the store limits always have a value.

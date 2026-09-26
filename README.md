@@ -59,7 +59,7 @@ INFO request{path="/"}: http_server: GET /
 INFO request{path="/"}: guest: adding header plugin=example context=2
 ```
 
-The answer lists the headers, and it carries the header the plugin added.
+The answer lists the headers, and it includes the header the plugin added.
 `cargo run --example http_workers` serves requests through a pool of workers, where each worker has its own guest of a plugin that also uses a shared queue.
 
 ## Security
