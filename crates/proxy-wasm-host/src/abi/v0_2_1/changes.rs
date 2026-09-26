@@ -60,3 +60,42 @@ impl QueueRegistration {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::time::Duration;
+
+    use super::*;
+
+    fn context(value: u32) -> ContextId {
+        ContextId::try_from(value).unwrap()
+    }
+
+    #[test]
+    fn a_change_of_either_kind_makes_the_value_not_empty() {
+        // Arrange
+        let with_period = Changes {
+            tick_periods: BTreeMap::from([(context(1), Some(Duration::from_secs(1)))]),
+            queues: BTreeSet::new(),
+        };
+        let with_queue = Changes {
+            tick_periods: BTreeMap::new(),
+            queues: BTreeSet::from([QueueRegistration::new(
+                QueueId::try_from(1).unwrap(),
+                context(1),
+                b"q",
+            )]),
+        };
+
+        // Act
+        let observed = (
+            Changes::default().is_empty(),
+            with_period.is_empty(),
+            with_queue.is_empty(),
+        );
+
+        // Assert
+        assert_eq!(observed, (true, false, false));
+    }
+}

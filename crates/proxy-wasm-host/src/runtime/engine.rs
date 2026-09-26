@@ -374,6 +374,49 @@ mod tests {
     }
 
     #[test]
+    fn a_dropped_ticker_moves_the_counter_no_more() {
+        // Arrange
+        let period = Duration::from_millis(10);
+        let engine = EngineConfig::new()
+            .with_external_ticks(true)
+            .build()
+            .unwrap();
+        let ticks = Arc::new(AtomicU64::new(0));
+        let ticker = Ticker::start(engine.wasmtime().clone(), Arc::clone(&ticks), period);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while ticks.load(Ordering::Relaxed) == 0 && Instant::now() < deadline {
+            std::thread::sleep(period);
+        }
+
+        // Act
+        drop(ticker);
+
+        // Assert
+        let after_drop = ticks.load(Ordering::Relaxed);
+        assert!(after_drop > 0, "the ticker ran before the drop");
+        std::thread::sleep(period * 5);
+        assert_eq!(ticks.load(Ordering::Relaxed), after_drop);
+    }
+
+    #[test]
+    fn an_engine_describes_its_settings_in_debug_output() {
+        // Arrange
+        let engine = EngineConfig::new()
+            .with_external_ticks(true)
+            .build()
+            .unwrap();
+
+        // Act
+        let text = format!("{engine:?}");
+
+        // Assert
+        assert_eq!(
+            text,
+            "Engine { epoch_period: 10ms, fuel_enabled: false, has_ticker: false, .. }"
+        );
+    }
+
+    #[test]
     fn dropping_the_engine_stops_the_ticker_within_one_period() {
         // Arrange
         let engine = EngineConfig::new()

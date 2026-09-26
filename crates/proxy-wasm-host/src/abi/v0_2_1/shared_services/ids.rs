@@ -125,4 +125,17 @@ mod tests {
         assert_eq!(messages.0, "0 is not a valid queue identifier");
         assert_eq!(messages.1, "0 is not a valid metric identifier");
     }
+
+    #[test]
+    fn a_queue_problem_displays_the_context_that_did_not_register() {
+        // Arrange
+        let problem =
+            QueueProblem::NotRegisteredBy(crate::abi::v0_2_1::ContextId::try_from(3).unwrap());
+
+        // Act
+        let text = problem.to_string();
+
+        // Assert
+        assert_eq!(text, "was not registered by context 3");
+    }
 }

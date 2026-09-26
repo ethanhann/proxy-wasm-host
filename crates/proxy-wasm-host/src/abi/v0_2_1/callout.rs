@@ -386,4 +386,16 @@ mod tests {
         // Assert
         assert_eq!(answers, [true, true, false], "{first} {second} {third}");
     }
+
+    #[test]
+    fn a_callout_identifier_displays_its_number() {
+        // Arrange
+        let id = CalloutId::try_from(7_u32).unwrap();
+
+        // Act
+        let text = id.to_string();
+
+        // Assert
+        assert_eq!(text, "7");
+    }
 }

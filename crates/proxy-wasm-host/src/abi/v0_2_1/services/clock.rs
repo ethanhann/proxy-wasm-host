@@ -42,3 +42,25 @@ impl Clock for SystemClock {
         nanos(monotonic_origin().elapsed())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn the_system_clock_moves_between_two_reads() {
+        // Arrange
+        let clock = SystemClock;
+        let first = clock.monotonic_nanos();
+        std::thread::sleep(Duration::from_millis(10));
+
+        // Act
+        let second = clock.monotonic_nanos();
+
+        // Assert
+        assert!(second - first >= 10_000_000, "{first} then {second}");
+        assert!(clock.realtime_nanos() > 1_600_000_000_000_000_000);
+    }
+}

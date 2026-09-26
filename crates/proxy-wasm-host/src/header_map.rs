@@ -533,4 +533,49 @@ mod tests {
             Ok(encode_pairs(&owned_str(&[("x-computed", "yes-10")])).unwrap())
         );
     }
+
+    /// A map that computes `count` pairs and stores nothing.
+    struct Counted(usize);
+
+    impl HeaderMap for Counted {
+        fn get(&self, _: &[u8]) -> Option<Cow<'_, [u8]>> {
+            None
+        }
+
+        fn for_each_pair(&self, f: &mut PairVisitor<'_>) -> ControlFlow<()> {
+            for index in 0..self.0 {
+                f(format!("k{index}").as_bytes(), b"v")?;
+            }
+            ControlFlow::Continue(())
+        }
+
+        fn set(&mut self, _: &[u8], _: &[u8]) -> Result<(), NotAllowed> {
+            Err(NotAllowed)
+        }
+
+        fn add(&mut self, _: &[u8], _: &[u8]) -> Result<(), NotAllowed> {
+            Err(NotAllowed)
+        }
+
+        fn remove(&mut self, _: &[u8]) -> Result<(), NotAllowed> {
+            Err(NotAllowed)
+        }
+
+        fn replace_all(&mut self, _: &[(&[u8], &[u8])]) -> Result<(), NotAllowed> {
+            Err(NotAllowed)
+        }
+    }
+
+    #[test]
+    fn the_default_len_counts_every_pair_of_a_computed_map() {
+        // Arrange
+        let maps = [Counted(0), Counted(2), Counted(5)];
+
+        // Act
+        let observed: Vec<(usize, bool)> =
+            maps.iter().map(|map| (map.len(), map.is_empty())).collect();
+
+        // Assert
+        assert_eq!(observed, [(0, true), (2, false), (5, false)]);
+    }
 }

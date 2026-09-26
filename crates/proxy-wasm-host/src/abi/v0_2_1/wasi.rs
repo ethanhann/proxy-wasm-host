@@ -631,6 +631,42 @@ mod tests {
     }
 
     #[test]
+    fn random_get_fills_a_request_at_the_bound_and_refuses_one_byte_more() {
+        // Arrange
+        let engine = engine();
+        let wat = r#"(module
+            (import "wasi_snapshot_preview1" "random_get" (func $r (param i32 i32) (result i32)))
+            (memory (export "memory") 2)
+            (func (export "proxy_on_memory_allocate") (param i32) (result i32) i32.const 1024)
+            (func (export "random") (param i32 i32) (result i32) (call $r (local.get 0) (local.get 1))))"#;
+        let mut instance = instance(&engine, wat).unwrap();
+
+        // Act
+        let results = [
+            instance
+                .call::<(i32, i32), i32>("random", (0, 2048))
+                .unwrap(),
+            instance
+                .call::<(i32, i32), i32>("random", (0, 65_536))
+                .unwrap(),
+            instance
+                .call::<(i32, i32), i32>("random", (0, 65_537))
+                .unwrap(),
+        ];
+
+        // Assert
+        assert_eq!(results, [0, 0, i32::from(WasiErrno::Inval)]);
+        let memory = instance.memory().unwrap();
+        let filled = memory
+            .read(GuestSlice::new(ptr(0), 65_536).unwrap())
+            .unwrap();
+        assert!(
+            filled.iter().any(|byte| *byte != 0),
+            "the bytes at the bound were filled"
+        );
+    }
+
+    #[test]
     fn random_get_fills_in_place_and_bounds_the_length() {
         // Arrange
         let engine = engine();

@@ -82,6 +82,23 @@ mod tests {
     use crate::runtime::test_support::{engine, wat_bytes};
 
     #[test]
+    fn a_module_describes_its_abi_exports_in_debug_output() {
+        // Arrange
+        let engine = engine();
+        let wat = r#"(module (func (export "proxy_abi_version_0_2_1")))"#;
+        let module = Module::new(&engine, &wat_bytes(wat)).unwrap();
+
+        // Act
+        let text = format!("{module:?}");
+
+        // Assert
+        assert_eq!(
+            text,
+            "Module { abi_exports: [\"proxy_abi_version_0_2_1\"], .. }"
+        );
+    }
+
+    #[test]
     fn abi_exports_lists_the_version_markers_in_name_order() {
         // Arrange
         let engine = engine();

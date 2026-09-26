@@ -715,6 +715,40 @@ mod tests {
     }
 
     #[test]
+    fn a_resolve_at_the_limit_refuses_a_new_name_and_accepts_a_held_one() {
+        // Arrange
+        let engine = engine();
+        let shared: Arc<dyn SharedServices> = Arc::new(InMemoryStore::new());
+        let other = Invocation::new(GuestId::next(), ContextId::try_from(1).unwrap());
+        shared.register_shared_queue(other, VM_ID, b"one").unwrap();
+        shared.register_shared_queue(other, VM_ID, b"two").unwrap();
+        let limits = Limits::default().with_max_shared_names(1);
+        let (mut instance, _) = shared_hosted_with_limits(&engine, GUEST, shared, &limits);
+        let (_, vm_len) = write(&mut instance, VM, VM_ID);
+        let (_, one_len) = write(&mut instance, NAME, b"one");
+        let resolve = |instance: &mut Instance, name_len: i32| {
+            status(
+                instance
+                    .call::<(i32, i32, i32, i32, i32), i32>(
+                        "resolve",
+                        (VM, vm_len, NAME, name_len, RETURN_ID),
+                    )
+                    .unwrap(),
+            )
+        };
+        assert_eq!(resolve(&mut instance, one_len), Status::Ok);
+
+        // Act
+        let (_, two_len) = write(&mut instance, NAME, b"two");
+        let new_name = resolve(&mut instance, two_len);
+        let (_, one_len) = write(&mut instance, NAME, b"one");
+        let held_name = resolve(&mut instance, one_len);
+
+        // Assert
+        assert_eq!((new_name, held_name), (Status::InternalFailure, Status::Ok));
+    }
+
+    #[test]
     fn a_resolved_queue_spends_a_share_of_the_names() {
         // Arrange
         let engine = engine();

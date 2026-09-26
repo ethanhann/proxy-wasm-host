@@ -556,6 +556,46 @@ mod tests {
     }
 
     #[test]
+    fn a_source_that_grows_on_the_second_pass_encodes_the_measured_pairs() {
+        // Arrange
+        let mut passes = 0;
+        let mut source = |visitor: &mut PairVisitor<'_>| {
+            passes += 1;
+            let _ = visitor(b"k", b"v");
+            if passes > 1 {
+                let _ = visitor(b"k2", b"v2");
+            }
+            ControlFlow::Continue(())
+        };
+
+        // Act
+        let result = encode_visited(&mut source);
+
+        // Assert
+        assert_eq!(result, encode_pairs(&[(b"k".as_slice(), b"v".as_slice())]));
+    }
+
+    #[test]
+    fn a_decode_error_reports_the_index_of_the_pair_it_found() {
+        // Arrange
+        let mut bytes = encode_pairs(&[(b"a".as_slice(), b"1".as_slice()), (b"b", b"2")]).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] = b'x';
+
+        // Act
+        let result = decode_pairs(&bytes, PairLimits::unlimited());
+
+        // Assert
+        assert_eq!(
+            result,
+            Err(DecodeError::MissingTerminator {
+                pair: 1,
+                field: Field::Value,
+            })
+        );
+    }
+
+    #[test]
     fn a_source_that_changes_between_the_two_passes_is_refused() {
         // Arrange
         let mut passes = 0;

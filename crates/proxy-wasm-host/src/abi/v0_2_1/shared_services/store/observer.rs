@@ -141,4 +141,16 @@ mod tests {
         // Assert
         assert_eq!(counts, [1, 0]);
     }
+
+    #[test]
+    fn an_observer_shows_its_name_in_debug_output() {
+        // Arrange
+        let observer = super::Observer(Arc::new(|_| {}));
+
+        // Act
+        let text = format!("{observer:?}");
+
+        // Assert
+        assert_eq!(text, "Observer");
+    }
 }
