@@ -3,7 +3,7 @@
 use std::io::Cursor;
 use std::sync::mpsc::Receiver;
 
-use proxy_wasm_host::HeaderMap;
+use proxy_wasm_host::abi::v0_2_1::types::Action;
 use proxy_wasm_host::abi::v0_2_1::{
     Callback, ContextId, Guest, GuestError, GuestId, GuestSpec, PluginConfig, QueueId, Started,
     StreamKind,
@@ -12,6 +12,26 @@ use tiny_http::{Request, Response};
 
 use crate::request::{HttpRequest, answer_of, request_state};
 use crate::routes::QueueRoutes;
+
+/// Answers each request with no guest, as the request arrived.
+///
+/// A run with `--no-wasm` uses this in place of [`Worker`], so a measurement
+/// shows the cost of the HTTP server and the dispatch alone.
+pub fn serve_baseline(jobs: &Receiver<Job>, authority: &str) {
+    while let Ok(job) = jobs.recv() {
+        if let Job::Request(request) = job {
+            let answer = baseline_answer(&request, authority);
+            if let Err(error) = request.respond(answer) {
+                tracing::warn!("the answer did not reach the client: {error}");
+            }
+        }
+    }
+}
+
+/// The answer a guest that continues the request would give.
+pub fn baseline_answer(request: &Request, authority: &str) -> Response<Cursor<Vec<u8>>> {
+    answer_of(&request_state(request, authority), Action::Continue)
+}
 
 /// What a worker receives.
 pub enum Job {
@@ -27,6 +47,7 @@ pub struct Worker {
     spec: GuestSpec,
     plugin: PluginConfig,
     routes: QueueRoutes,
+    authority: String,
     guest: Option<(Guest, ContextId)>,
 }
 
@@ -49,12 +70,14 @@ impl Worker {
         spec: &GuestSpec,
         plugin: PluginConfig,
         routes: &QueueRoutes,
+        authority: &str,
     ) -> Result<Self, Failure> {
         let mut worker = Self {
             index,
             spec: spec.clone(),
             plugin,
             routes: routes.clone(),
+            authority: authority.to_owned(),
             guest: None,
         };
         worker.rebuild()?;
@@ -88,7 +111,7 @@ impl Worker {
     fn handle(&mut self, job: Job) {
         match job {
             Job::Request(request) => {
-                let state = request_state(&request);
+                let state = request_state(&request, &self.authority);
                 let answer = self.serve(state);
                 if let Err(error) = request.respond(answer) {
                     tracing::warn!("the answer did not reach the client: {error}");

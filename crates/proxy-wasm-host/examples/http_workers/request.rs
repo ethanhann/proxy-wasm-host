@@ -8,15 +8,14 @@ use std::fmt::Write as _;
 use std::io::Cursor;
 use std::ops::ControlFlow;
 
+use proxy_wasm_host::HeaderMap;
 use proxy_wasm_host::abi::v0_2_1::types::{Action, LogLevel, MapType, Status};
 use proxy_wasm_host::abi::v0_2_1::{
     Access, Invocation, LocalResponse, LogContext, LogSink, StreamState,
 };
-use proxy_wasm_host::{HeaderMap, VecHeaderMap};
 use tiny_http::{Header, Request, Response};
 
-/// The address the example listens on, which a guest reads as `:authority`.
-pub const ADDRESS: &str = "127.0.0.1:2045";
+use crate::headers::ProxyHeaders;
 
 /// Emits one `tracing` event for a guest line.
 ///
@@ -97,7 +96,7 @@ pub struct Local {
 #[derive(Default)]
 pub struct HttpRequest {
     /// The request headers, which the guest reads and changes.
-    pub headers: VecHeaderMap,
+    pub headers: ProxyHeaders,
     local: Option<Local>,
 }
 
@@ -128,15 +127,18 @@ impl StreamState for HttpRequest {
 }
 
 /// The request headers, with the pseudo headers a guest expects first.
-pub fn request_state(request: &Request) -> HttpRequest {
+///
+/// `authority` is the address the server listens on, which a guest reads as
+/// `:authority`.
+pub fn request_state(request: &Request, authority: &str) -> HttpRequest {
     let mut headers: Vec<(Vec<u8>, Vec<u8>)> = vec![
         (b":method".to_vec(), request.method().as_str().into()),
         (b":path".to_vec(), request.url().into()),
-        (b":authority".to_vec(), ADDRESS.into()),
+        (b":authority".to_vec(), authority.into()),
     ];
     for header in request.headers() {
         headers.push((
-            header.field.as_str().as_str().to_lowercase().into(),
+            header.field.as_str().as_str().into(),
             header.value.as_str().into(),
         ));
     }
@@ -197,3 +199,7 @@ pub fn answer_of(state: &HttpRequest, action: Action) -> Response<Cursor<Vec<u8>
 fn copied(name: &str) -> bool {
     !name.starts_with(':') && name != "content-length" && name != "content-type"
 }
+
+#[cfg(test)]
+#[path = "request_tests.rs"]
+mod tests;

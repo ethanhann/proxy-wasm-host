@@ -1,10 +1,11 @@
 //! The checks and the call every callback method shares.
 
-use wasmtime::{TypedFunc, WasmParams, WasmResults};
+use wasmtime::{WasmParams, WasmResults};
 
 use crate::Error;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::GuestError;
+use crate::abi::v0_2_1::guest::Select;
 use crate::abi::v0_2_1::{
     Callback, ContextId, ContextProblem, ContextState, ContextType, Guest, StreamKind,
 };
@@ -152,17 +153,14 @@ pub(super) fn run<P: WasmParams, R: WasmResults>(
     guest: &mut Guest,
     context: ContextId,
     callback: Callback,
-    func: Option<TypedFunc<P, R>>,
+    select: Select<P, R>,
     params: P,
     default: R,
 ) -> Result<R, Error> {
     let state = guest.instance_mut().state_mut();
     state.abi_mut().contexts_mut().set_effective(context);
     state.abi_mut().set_current_callback(Some(callback));
-    let result = match func {
-        None => Ok(default),
-        Some(func) => guest.instance_mut().call_typed(&func, params),
-    };
+    let result = guest.call_callback(select, params, default);
     guest
         .instance_mut()
         .state_mut()

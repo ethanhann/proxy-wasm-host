@@ -40,13 +40,12 @@ impl<H: StreamState> CallScope<'_, H> {
             .abi_mut()
             .contexts_mut()
             .create(parent)?;
-        let func = self.guest.callbacks().context_create.clone();
         let parent = parent.map_or(0, ContextId::wire);
         prologue::run(
             self.guest,
             id,
             Callback::ContextCreate,
-            func,
+            |callbacks| callbacks.context_create.as_ref(),
             (id.wire(), parent),
             (),
         )?;
@@ -82,12 +81,11 @@ impl<H: StreamState> CallScope<'_, H> {
             .vm_configuration()
             .len();
         let size = prologue::wire_size(length)?;
-        let func = self.guest.callbacks().vm_start.clone();
         let value = prologue::run(
             self.guest,
             root,
             Callback::VmStart,
-            func,
+            |callbacks| callbacks.vm_start.as_ref(),
             (root.wire(), size),
             1,
         )?;
@@ -144,12 +142,11 @@ impl<H: StreamState> CallScope<'_, H> {
             .abi_mut()
             .contexts_mut()
             .set_plugin(root, plugin);
-        let func = self.guest.callbacks().configure.clone();
         let value = prologue::run(
             self.guest,
             root,
             Callback::Configure,
-            func,
+            |callbacks| callbacks.configure.as_ref(),
             (root.wire(), size),
             1,
         )?;

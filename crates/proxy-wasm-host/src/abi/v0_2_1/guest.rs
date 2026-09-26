@@ -11,6 +11,7 @@ pub(crate) mod start;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::Error;
 use crate::abi::AbiVersion;
 use crate::abi::v0_2_1::AbiAccess;
 use crate::abi::v0_2_1::VmServices;
@@ -18,7 +19,9 @@ use crate::abi::v0_2_1::guest_spec::BuildCounters;
 use crate::abi::v0_2_1::{CallScope, Callback, GuestError, Host, NoStream, StreamState};
 use crate::runtime::{Instance, Limits, Module};
 use callbacks::Callbacks;
+pub(crate) use callbacks::Select;
 use identity::GuestId;
+use wasmtime::{WasmParams, WasmResults};
 
 /// A running guest and the ABI conversation with it.
 ///
@@ -287,8 +290,22 @@ impl Guest {
         self.enter(NoStream)
     }
 
-    pub(crate) fn callbacks(&self) -> &Callbacks {
-        &self.callbacks
+    /// Calls the cached callback that `select` picks, or answers `default`
+    /// when the guest does not export it.
+    ///
+    /// The callback is borrowed from the cache rather than copied, because a
+    /// `TypedFunc` holds its function type, which makes a copy for each call
+    /// expensive.
+    pub(crate) fn call_callback<P: WasmParams, R: WasmResults>(
+        &mut self,
+        select: Select<P, R>,
+        params: P,
+        default: R,
+    ) -> Result<R, Error> {
+        match select(&self.callbacks) {
+            None => Ok(default),
+            Some(func) => self.instance.call_typed(func, params),
+        }
     }
 }
 

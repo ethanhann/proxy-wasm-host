@@ -1,21 +1,23 @@
 //! The tests of the worker of the `http_workers` example.
 
-use std::io::Write;
+use std::io::Read;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex, PoisonError};
 
-use proxy_wasm_host::abi::v0_2_1::types::LogLevel;
-use proxy_wasm_host::abi::v0_2_1::{GuestId, Host, InMemoryStore, LogContext, LogSink, VmServices};
+use proxy_wasm_host::abi::v0_2_1::{Host, InMemoryStore, VmServices};
 use proxy_wasm_host::{Engine, Limits, Module};
 use tiny_http::{Header, TestRequest};
 
 use crate::routes::observer;
 
-use crate::request::{HttpRequest, TracingSink, pairs, request_state};
+use crate::request::{HttpRequest, TracingSink, request_state};
 
 use super::*;
 
 const GUEST: &[u8] = include_bytes!("../../tests/fixtures/http-example.wasm");
+
+/// The authority of a server on the default port.
+const AUTHORITY: &str = "127.0.0.1:2045";
 
 /// A pool of `count` workers on one store, in the order they started.
 struct Pool {
@@ -48,7 +50,7 @@ fn pool(count: usize) -> Pool {
     let plugin = PluginConfig::new().with_name(*b"example");
     let workers = (0..count)
         .map(|index| {
-            Worker::start(index, &spec, plugin.clone(), &routes)
+            Worker::start(index, &spec, plugin.clone(), &routes, AUTHORITY)
                 .ok()
                 .unwrap()
         })
@@ -65,7 +67,7 @@ fn test_request(headers: &[(&str, &str)]) -> Request {
 }
 
 fn request(headers: &[(&str, &str)]) -> HttpRequest {
-    request_state(&test_request(headers))
+    request_state(&test_request(headers), AUTHORITY)
 }
 
 #[test]
@@ -223,93 +225,53 @@ fn the_answer_carries_no_length_or_type_of_the_request() {
 }
 
 #[test]
-fn the_request_state_holds_the_three_pseudo_headers() {
+fn a_baseline_answer_lists_the_request_as_it_arrived() {
     // Arrange
-    let source = test_request(&[]);
+    let source = test_request(&[("x-trace", "7")]);
 
     // Act
-    let state = request_state(&source);
+    let answer = baseline_answer(&source, AUTHORITY);
 
     // Assert
-    let names: Vec<String> = pairs(&state.headers)
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect();
-    assert_eq!(names[..3], [":method", ":path", ":authority"]);
-    assert_eq!(pairs(&state.headers)[1].1, "/example");
+    let mut body = String::new();
+    answer.into_reader().read_to_string(&mut body).unwrap();
+    assert_eq!(
+        body,
+        ":method: GET\n:path: /example\n:authority: 127.0.0.1:2045\nx-trace: 7\ncontent-length: 0\n",
+        "a test request carries a content-length of its own"
+    );
 }
 
 #[test]
-fn the_sink_maps_each_level_to_its_tracing_level() {
+fn a_baseline_worker_takes_every_request_and_stops_when_the_channel_closes() {
     // Arrange
-    let lines = Lines::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(lines.clone())
-        .with_ansi(false)
-        .with_max_level(tracing::Level::TRACE)
-        .finish();
-    let context = LogContext::new(b"vm", GuestId::next());
-    let levels = [
-        LogLevel::Trace,
-        LogLevel::Debug,
-        LogLevel::Info,
-        LogLevel::Warn,
-        LogLevel::Error,
-        LogLevel::Critical,
-    ];
+    let (sender, receiver) = channel();
+    sender.send(Job::Request(test_request(&[]))).unwrap();
+    sender.send(Job::Request(test_request(&[]))).unwrap();
+    drop(sender);
 
     // Act
-    tracing::subscriber::with_default(subscriber, || {
-        for level in levels {
-            TracingSink.log(context.clone(), level, b"line");
-        }
-    });
+    serve_baseline(&receiver, AUTHORITY);
 
     // Assert
-    let text = lines.text();
-    let seen: Vec<&str> = text
-        .lines()
-        .filter_map(|line| line.split_whitespace().nth(1))
-        .collect();
-    assert_eq!(seen, ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "ERROR"]);
-    assert_eq!(text.matches("guest: line").count(), 6, "{text}");
+    assert_eq!(
+        receiver.try_recv().map(|_| ()),
+        Err(std::sync::mpsc::TryRecvError::Disconnected),
+        "the worker took both requests and returned when the channel closed"
+    );
 }
 
-/// A writer that keeps every line a subscriber writes.
-#[derive(Clone, Default)]
-struct Lines(Arc<Mutex<Vec<u8>>>);
+#[test]
+fn a_missing_plugin_file_is_reported_with_its_path() {
+    // Arrange
+    let path = std::path::Path::new("/no/such/plugin.wasm");
 
-impl Lines {
-    fn text(&self) -> String {
-        let bytes = self
-            .0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        String::from_utf8(bytes).unwrap()
-    }
-}
+    // Act
+    let result = crate::start_workers(&crate::options::Options::default(), path, AUTHORITY);
 
-impl Write for Lines {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Lines {
-    type Writer = Self;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
+    // Assert
+    let message = result.map(|_| ()).unwrap_err().to_string();
+    assert!(message.contains("/no/such/plugin.wasm"), "{message}");
 }
 
 #[test]

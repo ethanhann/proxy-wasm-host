@@ -48,7 +48,6 @@ impl<H: StreamState> CallScope<'_, H> {
         prologue::require(self.guest, context)?;
         prologue::accepted(self.guest, context)?;
         let size = prologue::wire_size(arguments.len())?;
-        let func = self.guest.callbacks().foreign_function.clone();
         deliver(
             self.guest,
             Delivered {
@@ -56,7 +55,7 @@ impl<H: StreamState> CallScope<'_, H> {
                 callout: None,
                 delivery: Delivery::foreign_arguments(arguments),
                 callback: Callback::ForeignFunction,
-                func,
+                select: |callbacks| callbacks.foreign_function.as_ref(),
                 params: (context.wire(), function_id.cast_signed(), size),
                 ends: false,
             },

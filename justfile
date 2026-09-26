@@ -172,6 +172,14 @@ check-guest-sources:
 
 # Run the benchmarks.
 bench:
+    #!/usr/bin/env bash
+    # A busy machine gives numbers that also measure the other work, so this
+    # warns when the load average of the last minute is 2 or more.
+    set -euo pipefail
+    load="$(uptime | sed -E 's/.*load averages?: *([0-9.]+).*/\1/')"
+    if awk -v load="$load" 'BEGIN { exit !(load >= 2) }'; then
+        echo "warning: the load average is $load, so the results also measure other work"
+    fi
     cargo bench --workspace --locked
 
 # Run docs site locally
