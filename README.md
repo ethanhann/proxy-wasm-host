@@ -1,6 +1,8 @@
 # proxy-wasm-host
 
 [![CI](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/ethanhann/proxy-wasm-host/gh-pages/tests.json)](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/ethanhann/proxy-wasm-host/gh-pages/coverage.json)](https://github.com/ethanhann/proxy-wasm-host/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/ethanhann/proxy-wasm-host/blob/main/LICENSE)
 
 A [Proxy-Wasm](https://github.com/proxy-wasm/spec) ABI v0.2.1 host library for Rust, built on [wasmtime](https://wasmtime.dev/).

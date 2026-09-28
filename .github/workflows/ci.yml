@@ -2,9 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
   schedule:
     # Run every week even if there is no activity on the repo.
     - cron: '0 6 * * 1'
@@ -59,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [ macos-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -99,3 +99,61 @@ jobs:
         with:
           name: criterion
           path: target/criterion
+
+  badges:
+    name: badges
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [ check ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/test-guests
+      - uses: extractions/setup-just@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - run: just build-guests
+
+      - name: Count tests
+        run: |
+          TESTS=$(cargo test --workspace --all-targets --locked -- --list 2>/dev/null \
+            | grep -c ': test$' || echo 0)
+          echo "TEST_COUNT=${TESTS}" >> "$GITHUB_ENV"
+
+      - name: Measure coverage
+        run: |
+          cargo llvm-cov \
+            --workspace --locked \
+            --ignore-filename-regex 'tests/|examples/' \
+            --json --output-path coverage.json
+          PCT=$(jq '.data[0].totals.lines.percent | . * 10 | floor | . / 10' coverage.json)
+          echo "COVERAGE_PCT=${PCT}" >> "$GITHUB_ENV"
+
+      - name: Generate badge JSON
+        run: |
+          mkdir -p badges
+          jq -n --arg count "$TEST_COUNT" \
+            '{schemaVersion:1,label:"tests",message:($count+" passed"),color:"brightgreen"}' \
+            > badges/tests.json
+          jq -n --arg pct "$COVERAGE_PCT" \
+            '{schemaVersion:1,label:"coverage",message:($pct+"%"),color:(
+              if ($pct|tonumber) >= 80 then "brightgreen"
+              elif ($pct|tonumber) >= 60 then "yellow"
+              else "red" end)}' \
+            > badges/coverage.json
+
+      - name: Deploy badges
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./badges
