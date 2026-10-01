@@ -4,6 +4,7 @@ members = [
     "add-request-header",
     "exercise-all",
     "http-example",
+    "plugin-services",
     "sdk-envoy-filter-metadata",
     "sdk-grpc-auth-random",
     "sdk-hello-world",
