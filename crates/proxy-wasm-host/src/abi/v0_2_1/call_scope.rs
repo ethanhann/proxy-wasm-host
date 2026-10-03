@@ -672,6 +672,26 @@ mod tests {
     }
 
     #[test]
+    fn a_root_has_stream_contexts_until_its_last_stream_is_deleted() {
+        // Arrange
+        let engine = engine();
+        let (mut guest, root, stream) = with_stream(&engine, RECORDER);
+        let while_open = guest.has_stream_contexts(root);
+        let mut scope = guest.enter_root();
+        assert!(scope.on_done(stream).unwrap());
+        scope.on_delete(stream).unwrap();
+
+        // Act
+        let after_delete = scope.guest().has_stream_contexts(root);
+
+        // Assert
+        assert!(while_open);
+        assert!(!after_delete);
+        assert!(!scope.guest().has_stream_contexts(stream));
+        assert!(!scope.guest().has_stream_contexts(id(9)));
+    }
+
+    #[test]
     fn absent_callbacks_answer_their_defaults_without_entering_the_guest() {
         // Arrange
         let engine = engine();

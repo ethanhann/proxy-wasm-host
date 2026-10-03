@@ -106,6 +106,17 @@ impl Guest {
         self.instance.state().abi().contexts().parent(context)
     }
 
+    /// Whether the root context `root` still has stream contexts.
+    ///
+    /// [`CallScope::on_delete`](crate::abi::v0_2_1::CallScope::on_delete)
+    /// refuses a root while this is `true`, so check it before you end a
+    /// root.
+    /// The answer is `false` for a stream context and for a context this
+    /// guest does not hold.
+    pub fn has_stream_contexts(&self, root: ContextId) -> bool {
+        self.instance.state().abi().contexts().has_children(root)
+    }
+
     /// The plugin of the root context of `context`.
     ///
     /// [`CallScope::on_configure`](crate::abi::v0_2_1::CallScope::on_configure) records it, so this is `None` until that
