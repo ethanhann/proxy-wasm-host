@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-03
+
+### Added
+
+- `Guest::has_stream_contexts`, which tells you whether a root context still has stream contexts. This allows for ending a root without relying on `proxy_on_delete`.
+
 ## [0.1.0] - 2026-09-26
 
 ### Added
@@ -16,4 +22,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Recovery after a guest traps, with `GuestSpec` to build a replacement and a count of the poisoned guests you drop.
 - Two example proxies in the repository, one with a single guest and one with a pool of workers.
 
+[Unreleased]: https://github.com/ethanhann/proxy-wasm-host/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/ethanhann/proxy-wasm-host/releases/tag/v0.1.0
