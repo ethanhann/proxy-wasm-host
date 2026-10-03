@@ -27,5 +27,6 @@ missing_docs = "deny"
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 must_use_candidate = "allow"
+assert_is_empty = "allow"
 unwrap_used = "deny"
 expect_used = "deny"
