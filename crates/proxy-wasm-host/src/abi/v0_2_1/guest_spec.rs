@@ -102,7 +102,7 @@ pub(crate) struct BuildCounters {
 }
 
 fn raise(counter: &AtomicU64) {
-    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+    let _ = counter.try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
         Some(count.saturating_add(1))
     });
 }
